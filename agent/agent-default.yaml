@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doops-agent
+  namespace: default
+  labels:
+    app: doops-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: doops-agent
+  template:
+    metadata:
+      labels:
+        app: doops-agent
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      imagePullSecrets:
+        - name: harbor-pull
+      containers:
+        - name: doops-agent
+          image: docker.cnb.cool/l8ai/ai/doops.sh:v1.1
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -lc
+            - exec /app/agent-entrypoint.sh -token "$DOOPS_AGENT_TOKEN"
+          env:
+            - name: DOOPS_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: doops-agent-runtime
+                  key: token
+            - name: KUBECONFIG
+              value: /root/.kube/config
+            - name: NODE_TLS_REJECT_UNAUTHORIZED
+              value: "0"
+            - name: REGISTRY_URL
+              value: registry.example.com
+            - name: REGISTRY_USER
+              valueFrom:
+                secretKeyRef:
+                  name: registry-credentials
+                  key: username
+            - name: REGISTRY_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: registry-credentials
+                  key: password
+            - name: DO_AGENT_PORT
+              value: "9000"
+            - name: DO_AGENT_URL
+              value: http://127.0.0.1:9000
+            - name: DO_AGENT_MODEL
+              value: openai/gpt-5.4
+            - name: API_BASE_URL
+              value: https://api.example.com/v1
+          ports:
+            - name: api
+              containerPort: 42222
+              hostPort: 42222
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 42222
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 42222
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /etc/rancher/k3s/k3s.yaml
+              readOnly: true
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+            - name: agent-home
+              mountPath: /root
+            - name: containerd-run
+              mountPath: /run/containerd
+            - name: containerd-lib
+              mountPath: /var/lib/containerd
+            - name: nerdctl-lib
+              mountPath: /var/lib/nerdctl
+            - name: doagent-config
+              mountPath: /opt/doagent_config
+              readOnly: true
+            - name: nerdctl-bin
+              mountPath: /usr/local/bin/nerdctl
+              readOnly: true
+            - name: nerdctl-real-bin
+              mountPath: /usr/local/bin/nerdctl.real
+              readOnly: true
+            - name: buildkit-sock
+              mountPath: /run/buildkit
+      volumes:
+        - name: k3s-kubeconfig
+          hostPath:
+            path: /etc/rancher/k3s/k3s.yaml
+        - name: agent-home
+          hostPath:
+            path: /home/iict/data/doops-agent-home
+            type: DirectoryOrCreate
+        - name: containerd-run
+          hostPath:
+            path: /run/containerd
+            type: Directory
+        - name: containerd-lib
+          hostPath:
+            path: /var/lib/containerd
+            type: Directory
+        - name: nerdctl-lib
+          hostPath:
+            path: /var/lib/nerdctl
+            type: DirectoryOrCreate
+        - name: doagent-config
+          configMap:
+            name: doagent-config
+        - name: nerdctl-bin
+          hostPath:
+            path: /usr/local/bin/nerdctl
+        - name: nerdctl-real-bin
+          hostPath:
+            path: /usr/local/bin/nerdctl.real
+        - name: buildkit-sock
+          hostPath:
+            path: /run/buildkit
+            type: DirectoryOrCreate

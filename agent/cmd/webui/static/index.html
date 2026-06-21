@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>doops 控制台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚙</span>
+      <span>doops 控制台</span>
+    </div>
+    <div id="session-pill" class="pill hidden"></div>
+  </header>
+
+  <main class="layout">
+    <!-- 左侧：连接 + 目标 -->
+    <aside class="sidebar">
+      <section class="card" id="connect-card">
+        <h2>1 · 连接网关</h2>
+        <label>Gateway 地址
+          <input id="gateway" type="text" placeholder="http://203.0.113.10:42222" autocomplete="off" />
+        </label>
+
+        <div class="tabs">
+          <button class="tab active" data-mode="password">账号密码</button>
+          <button class="tab" data-mode="token">直接用 Token</button>
+        </div>
+
+        <div id="password-fields">
+          <label>用户名 <input id="username" type="text" autocomplete="username" /></label>
+          <label>密码 <input id="password" type="password" autocomplete="current-password" /></label>
+        </div>
+        <div id="token-fields" class="hidden">
+          <label>User Token <input id="token" type="password" placeholder="粘贴 gateway user token" /></label>
+        </div>
+
+        <button id="connect-btn" class="primary">连接</button>
+        <p id="connect-status" class="status"></p>
+      </section>
+
+      <section class="card hidden" id="targets-card">
+        <h2>2 · 选择实例</h2>
+        <button id="refresh-targets" class="ghost small">刷新</button>
+        <ul id="targets-list" class="targets"></ul>
+      </section>
+    </aside>
+
+    <!-- 右侧：ask 会话 -->
+    <section class="chat">
+      <div class="chat-header">
+        <h2>3 · ask 对话</h2>
+        <div id="active-target" class="muted">未选择实例</div>
+        <div id="ws-state" class="pill state-idle">未连接</div>
+      </div>
+
+      <div id="stream" class="stream">
+        <div class="placeholder">先连接网关并选择一个在线实例，然后在下方输入你的运维意图。</div>
+      </div>
+
+      <form id="ask-form" class="composer">
+        <textarea id="instruction" rows="3" placeholder="例如：只读巡检集群节点状态并给出结论" disabled></textarea>
+        <button id="send-btn" class="primary" disabled>发送 ask</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

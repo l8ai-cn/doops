@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: doagent-config
+  namespace: ai
+data:
+  settings.json: |
+    {
+      "model": "openai/gpt-5.4",
+      "provider": {
+        "openai": {
+          "options": {
+            "baseURL": "https://api.example.com/v1",
+            "apiKey": "REPLACE_WITH_OPENAI_API_KEY"
+          },
+          "models": {
+            "gpt-5.4": {
+              "name": "GPT-5.4",
+              "limit": { "context": 1050000, "output": 128000 },
+              "options": { "store": false }
+            },
+            "gpt-5.4-mini": {
+              "name": "GPT-5.4 Mini",
+              "limit": { "context": 400000, "output": 128000 },
+              "options": { "store": false }
+            }
+          }
+        }
+      },
+      "model_tiers": {
+        "high":    "openai/gpt-5.4",
+        "default": "openai/gpt-5.4",
+        "low":     "openai/gpt-5.4-mini"
+      },
+      "mcp_servers": [],
+      "verbose": false,
+      "working_dir": "/root/ws",
+      "memory": {
+        "enabled": true,
+        "path": "/root/.agent/memory.json",
+        "consolidation_interval": 24,
+        "max_memories": 1000
+      },
+      "voice": {
+        "enabled": false,
+        "push_to_talk": false,
+        "silence_threshold": 0.01,
+        "sample_rate": 16000
+      },
+      "plugins": {
+        "enabled": false,
+        "plugin_dir": "/root/.agent/plugins",
+        "auto_update": false
+      }
+    }

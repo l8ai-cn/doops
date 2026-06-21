@@ -1,0 +1,44 @@
+# ========================================
+# 编译产物 (绝对禁止入库)
+# ========================================
+# CLI 二进制（勿使用裸 doops，否则会忽略 cli/doops 源码目录）
+/doops
+bin/doops
+bin/doops-gateway
+bin/doops-webui
+/bin/
+skills/doops-cli/doops
+
+# Agent 二进制 (所有变体)
+**/doops-agent
+**/doops-agent-*
+**/agent-mcp-linux-*
+/agent/agent
+
+# 打包发行物
+dist/*
+!skills/doops-cli/bin/
+!skills/doops-cli/bin/*
+
+# ========================================
+# 运行时临时文件
+# ========================================
+*.log
+__pycache__/
+*.py[cod]
+.doops/
+.agents/
+.agent/skills/doops/auth.json
+.agent/skills/doops/config.json
+.agent/skills/doops/history.jsonl
+.agent/skills/doops/sessions.json
+skills/doops-cli/.doops/
+tmp_agent/
+tmp-openwork/
+
+# ========================================
+# 操作系统 / 编辑器
+# ========================================
+.DS_Store
+*.swp
+*.swo

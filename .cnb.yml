@@ -1,0 +1,98 @@
+master:
+  pull_request:
+    - name: ai-review
+      stages:
+        - name: AI code review
+          image: cnbcool/code-review:latest
+          settings:
+            comment: true
+            max_comments: 10
+            fail_on_critical: false
+  push:
+    - name: ci
+      runner:
+        cpus: 2
+      docker:
+        image: golang:1.24-alpine
+      stages:
+        - name: prepare tools
+          script: apk add --no-cache bash git
+        - name: agent tests
+          script: |
+            cd agent
+            go test ./...
+        - name: gateway tests
+          script: |
+            cd gateway
+            go test ./...
+        - name: cli tests
+          script: |
+            cd skills/doops-cli
+            go test ./...
+
+$:
+  tag_push:
+    - name: release-image
+      runner:
+        cpus: 4
+      services:
+        - docker
+      docker:
+        volumes:
+          - /data/codewiki/${CNB_REPO_SLUG}:data
+      stages:
+        - name: validate release tag
+          script: |
+            case "${CNB_BRANCH}" in
+              v[0-9]*)
+                echo "release tag: ${CNB_BRANCH}"
+                ;;
+              *)
+                echo "release image tags must come from release tags like v1 or v1.2.3" >&2
+                exit 1
+                ;;
+            esac
+        - name: build base-light image
+          script: |
+            BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${CNB_BRANCH}"
+            BASE_LATEST_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:latest"
+            docker build \
+              -f Dockerfile.base.light \
+              -t "${BASE_IMAGE}" \
+              -t "${BASE_LATEST_IMAGE}" \
+              .
+            echo "##[set-output DOOPS_AGENT_BASE_IMAGE=${BASE_IMAGE}]"
+          exports:
+            DOOPS_AGENT_BASE_IMAGE: DOOPS_AGENT_BASE_IMAGE
+        - name: push base-light image
+          script: |
+            BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${CNB_BRANCH}"
+            BASE_LATEST_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:latest"
+            docker push "${BASE_IMAGE}"
+            docker push "${BASE_LATEST_IMAGE}"
+        - name: build app image
+          script: |
+            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
+            APP_LATEST_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
+            docker build \
+              --build-arg DOOPS_AGENT_BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE}" \
+              -t "${APP_IMAGE}" \
+              -t "${APP_LATEST_IMAGE}" \
+              .
+        - name: push app image
+          script: |
+            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
+            APP_LATEST_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
+            docker push "${APP_IMAGE}"
+            docker push "${APP_LATEST_IMAGE}"
+        - name: create release
+          type: git:release
+          options:
+            tag: ${CNB_BRANCH}
+            title: ${CNB_BRANCH}
+            description: "Release ${CNB_BRANCH}"
+        - name: generate codewiki
+          timeout: 10h
+          image: cnbcool/codewiki:latest
+          settings:
+            git_doc_dir: /data/codewiki/${CNB_REPO_SLUG}
