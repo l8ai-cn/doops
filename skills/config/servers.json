@@ -1,0 +1,14 @@
+[
+    {
+        "name": "gw-silicon",
+        "aliases": [
+            "silicon",
+            "硅谷"
+        ],
+        "gateway": "http://203.0.113.10:42222",
+        "cluster": "doops-silicon",
+        "instance": "vm-49",
+        "use": "Silicon Valley via gateway",
+        "token": "<GATEWAY_USER_TOKEN>"
+    }
+]
