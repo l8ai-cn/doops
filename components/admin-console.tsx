@@ -65,7 +65,7 @@ export function AdminConsole({ session }: { session: Session }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex shrink-0 gap-1 border-b bg-card px-2">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
         {ADMIN_TABS.map((t) => {
           const Icon = t.icon
           const active = tab === t.id
@@ -73,7 +73,7 @@ export function AdminConsole({ session }: { session: Session }) {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
+              className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
                 active
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"

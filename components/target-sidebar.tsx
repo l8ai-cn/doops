@@ -1,7 +1,7 @@
 "use client"
 
 import type { Target } from "@/lib/client"
-import { RefreshIcon, ServerIcon } from "./icons"
+import { RefreshIcon, ServerIcon, CloseIcon } from "./icons"
 
 function statusColor(t: Target): { dot: string; label: string } {
   if (t.busy) return { dot: "bg-destructive", label: "忙碌" }
@@ -16,6 +16,8 @@ export function TargetSidebar({
   onRefresh,
   loading,
   error,
+  mobileOpen = false,
+  onClose,
 }: {
   targets: Target[]
   selectedKey: string | null
@@ -23,26 +25,50 @@ export function TargetSidebar({
   onRefresh: () => void
   loading: boolean
   error: string
+  mobileOpen?: boolean
+  onClose?: () => void
 }) {
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r bg-card">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="flex items-center gap-2">
-          <ServerIcon width={16} height={16} className="text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">在线目标</span>
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-            {targets.length}
-          </span>
-        </div>
+    <>
+      {/* 移动端遮罩 */}
+      {mobileOpen && (
         <button
-          onClick={onRefresh}
-          disabled={loading}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-          aria-label="刷新目标列表"
-        >
-          <RefreshIcon width={16} height={16} className={loading ? "animate-spin" : ""} />
-        </button>
-      </div>
+          aria-label="关闭目标列表"
+          onClick={onClose}
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex h-full w-72 max-w-[85vw] shrink-0 flex-col border-r bg-card transition-transform lg:static lg:z-auto lg:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <ServerIcon width={16} height={16} className="text-muted-foreground" />
+            <span className="text-sm font-medium text-foreground">在线目标</span>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              {targets.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onRefresh}
+              disabled={loading}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+              aria-label="刷新目标列表"
+            >
+              <RefreshIcon width={16} height={16} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+              aria-label="关闭目标列表"
+            >
+              <CloseIcon width={16} height={16} />
+            </button>
+          </div>
+        </div>
 
       <div className="flex-1 overflow-y-auto p-2">
         {error && (
@@ -60,7 +86,10 @@ export function TargetSidebar({
             return (
               <li key={t.key}>
                 <button
-                  onClick={() => onSelect(t)}
+                  onClick={() => {
+                    onSelect(t)
+                    onClose?.()
+                  }}
                   className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
                     active
                       ? "border-primary/50 bg-primary/10"
@@ -91,6 +120,7 @@ export function TargetSidebar({
           })}
         </ul>
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }

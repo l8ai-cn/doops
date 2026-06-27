@@ -191,8 +191,8 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     <div className="flex h-full min-h-0 flex-col lg:flex-row">
       {/* 左：配置库 */}
       <section className="flex min-h-0 flex-1 flex-col border-b lg:border-b-0 lg:border-r">
-        <div className="flex items-center justify-between gap-2 border-b bg-card/50 px-4 py-3">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-card/50 px-4 py-3">
+          <div className="min-w-0">
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               <LayersIcon width={16} height={16} className="text-primary" /> 配置中心
             </h2>
@@ -201,13 +201,13 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => startNew("model")}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <PlusIcon width={14} height={14} /> 大模型
             </button>
             <button
               onClick={() => startNew("file")}
-              className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
             >
               <PlusIcon width={14} height={14} /> 配置文件
             </button>

@@ -25,6 +25,7 @@ import {
   ShieldIcon,
   ActivityIcon,
   HelpIcon,
+  MenuIcon,
 } from "./icons"
 
 type Tab = "overview" | "ask" | "files" | "config" | "audit" | "terminal"
@@ -53,6 +54,7 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -134,18 +136,27 @@ export function ConsoleShell() {
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
+        <div className="flex min-w-0 items-center gap-2">
+          {view === "console" && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+              aria-label="打开目标列表"
+            >
+              <MenuIcon width={18} height={18} />
+            </button>
+          )}
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <ServerIcon width={16} height={16} />
           </div>
-          <span className="text-sm font-semibold text-foreground">Doops Console</span>
-          <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
+          <span className="truncate text-sm font-semibold text-foreground">Doops Console</span>
+          <span className="hidden font-mono text-xs text-muted-foreground lg:inline">
             {session.gateway}
           </span>
-          <div className="ml-2 flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+          <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
             <button
               onClick={() => setView("console")}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "console"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -155,7 +166,7 @@ export function ConsoleShell() {
             </button>
             <button
               onClick={() => setView("admin")}
-              className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "admin"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -165,22 +176,23 @@ export function ConsoleShell() {
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           {session.username && (
-            <span className="text-xs text-muted-foreground">{session.username}</span>
+            <span className="hidden text-xs text-muted-foreground sm:inline">{session.username}</span>
           )}
           <button
             onClick={() => setShowGuide(true)}
             title="新手引导"
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
           >
-            <HelpIcon width={14} height={14} /> 帮助
+            <HelpIcon width={14} height={14} /> <span className="hidden sm:inline">帮助</span>
           </button>
           <button
             onClick={logout}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            title="断开连接"
+            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
           >
-            <LogoutIcon width={14} height={14} /> 断开
+            <LogoutIcon width={14} height={14} /> <span className="hidden sm:inline">断开</span>
           </button>
         </div>
       </header>
@@ -198,6 +210,8 @@ export function ConsoleShell() {
           onRefresh={refresh}
           loading={loading}
           error={error}
+          mobileOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
