@@ -8,6 +8,7 @@ export interface Session {
   gateway: string
   token: string
   username?: string
+  demo?: boolean
 }
 
 export type RpcEvent =
@@ -41,6 +42,10 @@ export async function login(
 }
 
 export async function fetchTargets(s: Session): Promise<Target[]> {
+  if (s.demo) {
+    const { DEMO_TARGETS } = await import("./demo")
+    return DEMO_TARGETS
+  }
   const res = await fetch("/api/targets", { headers: authHeaders(s) })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "查询目标失败")
@@ -51,6 +56,13 @@ export async function fetchAudit(
   s: Session,
   params: Record<string, string>,
 ): Promise<{ events?: AuditEvent[]; error?: string; status?: number }> {
+  if (s.demo) {
+    const { DEMO_AUDIT } = await import("./demo")
+    const inst = params.instance
+    return {
+      events: inst ? DEMO_AUDIT.filter((e) => !e.instance || e.instance === inst) : DEMO_AUDIT,
+    }
+  }
   const qs = new URLSearchParams(params)
   const res = await fetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
   const data = await res.json()
@@ -70,6 +82,11 @@ export async function callTool(
   },
   onEvent: (ev: RpcEvent) => void,
 ): Promise<void> {
+  if (s.demo) {
+    const { demoCallTool } = await import("./demo")
+    await demoCallTool({ tool: opts.tool, arguments: opts.arguments, signal: opts.signal }, onEvent)
+    return
+  }
   const res = await fetch("/api/rpc", {
     method: "POST",
     headers: authHeaders(s),

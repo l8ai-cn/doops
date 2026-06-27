@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { login, fetchTargets, type Session } from "@/lib/client"
-import { PlugIcon, ServerIcon } from "./icons"
+import { DEMO_TOKEN } from "@/lib/demo"
+import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
 
 export function ConnectScreen({
   defaultGateway,
@@ -18,6 +19,10 @@ export function ConnectScreen({
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+
+  function enterDemo() {
+    onConnected({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
+  }
 
   async function connect() {
     setError("")
@@ -135,6 +140,20 @@ export function ConnectScreen({
           >
             <PlugIcon width={16} height={16} />
             {busy ? "连接中…" : "连接"}
+          </button>
+
+          <div className="my-4 flex items-center gap-3">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">或</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
+          <button
+            onClick={enterDemo}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+          >
+            <SparkIcon width={16} height={16} />
+            进入演示模式（无需连接 gateway）
           </button>
         </div>
 
