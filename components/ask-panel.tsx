@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { SparkIcon, SendIcon, StopIcon, PlusIcon, ChevronRightIcon, KeyIcon, CopyIcon, CheckIcon } from "./icons"
+import { listRepos, type GitRepo } from "@/lib/admin"
+import {
+  SparkIcon,
+  SendIcon,
+  StopIcon,
+  PlusIcon,
+  ChevronRightIcon,
+  KeyIcon,
+  CopyIcon,
+  CheckIcon,
+  GitIcon,
+} from "./icons"
 import { Markdown } from "./markdown"
 
 interface Turn {
@@ -32,6 +43,18 @@ function deployTemplate(sessionId: string) {
 所有命令必须可追溯。`
 }
 
+function deployFromRepo(sessionId: string, repo: GitRepo) {
+  const auth = repo.has_password
+    ? `使用已配置的凭据（用户名 ${repo.username || "见环境"}）进行认证拉取`
+    : `按公开仓库 / SSH 部署密钥方式拉取`
+  return `你正在部署代码仓库「${repo.name}」。只能在 /root/ws/${sessionId} 内工作。
+1. 克隆 ${repo.url}（分支 ${repo.branch}），${auth}。
+2. 检查项目结构；如果已有 deploy.sh，优先使用它。
+3. 使用 BuildKit 构建镜像；Kubernetes 变更必须先 server-side dry-run，再真实 apply。
+4. 等待 rollout 完成，把最终报告写入 /root/ws/${sessionId}/doops-report.md。
+所有命令必须可追溯。`
+}
+
 export function AskPanel({
   session,
   target,
@@ -45,6 +68,7 @@ export function AskPanel({
   const [turns, setTurns] = useState<Turn[]>([])
   const [running, setRunning] = useState(false)
   const [activeModel, setActiveModel] = useState<string | null>(null)
+  const [repos, setRepos] = useState<GitRepo[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -80,6 +104,19 @@ export function AskPanel({
       cancelled = true
     }
   }, [session, target.cluster, target.instance, sessionId])
+
+  // 加载已关联仓库，供部署时一键选用
+  useEffect(() => {
+    let cancelled = false
+    listRepos(session)
+      .then((r) => {
+        if (!cancelled) setRepos(r)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [session])
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" })
@@ -207,6 +244,39 @@ export function AskPanel({
                 填入标准部署指令模板
               </button>
             </div>
+
+            {repos.length > 0 && (
+              <div className="mt-3 w-full max-w-md">
+                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <GitIcon width={13} height={13} className="text-primary" />
+                  从已关联仓库部署
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {repos.map((repo) => (
+                    <button
+                      key={repo.id}
+                      onClick={() => useQuick(deployFromRepo(sessionId, repo))}
+                      className="group flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-muted"
+                    >
+                      <GitIcon width={14} height={14} className="shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium text-foreground">
+                          {repo.name}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                          {repo.url} · {repo.branch}
+                        </span>
+                      </span>
+                      <ChevronRightIcon
+                        width={13}
+                        height={13}
+                        className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5">

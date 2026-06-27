@@ -337,3 +337,24 @@ export function ChevronDownIcon(p: IconProps) {
     </svg>
   )
 }
+
+export function GitIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </svg>
+  )
+}
+
+export function ExternalLinkIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  )
+}

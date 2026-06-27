@@ -92,6 +92,18 @@ export interface SchedulerIssue {
   created_at?: string
 }
 
+export interface GitRepo {
+  id: string
+  name: string
+  url: string
+  branch: string
+  username: string
+  has_password: boolean // 密码/令牌仅写入，不回传
+  description: string
+  last_used_at?: string
+  created_at?: string
+}
+
 export const ALL_ACTIONS = [
   "exec",
   "ask",
@@ -256,4 +268,51 @@ export async function listJobIssues(s: Session, jobId?: string): Promise<Schedul
   if (s.demo) return (await import("./demo")).demoListJobIssues(jobId)
   const qs = jobId ? `?id=${encodeURIComponent(jobId)}` : ""
   return (await req<{ issues: SchedulerIssue[] }>(s, `jobs/issues${qs}`)).issues || []
+}
+
+// ---------- 代码仓库 ----------
+export interface GitRepoInput {
+  name: string
+  url: string
+  branch?: string
+  username?: string
+  password?: string
+  description?: string
+}
+
+export async function listRepos(s: Session): Promise<GitRepo[]> {
+  if (s.demo) return (await import("./demo")).demoListRepos()
+  return (await req<{ repos: GitRepo[] }>(s, "repos")).repos || []
+}
+
+export async function createRepo(s: Session, body: GitRepoInput): Promise<GitRepo> {
+  if (s.demo) return (await import("./demo")).demoCreateRepo(body)
+  return req<GitRepo>(s, "repos", { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function updateRepo(
+  s: Session,
+  id: string,
+  body: Partial<GitRepoInput>,
+): Promise<GitRepo> {
+  if (s.demo) return (await import("./demo")).demoUpdateRepo(id, body)
+  return req<GitRepo>(s, `repos?id=${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteRepo(s: Session, id: string): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoDeleteRepo(id)
+  await req(s, `repos?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export async function testRepo(
+  s: Session,
+  id: string,
+): Promise<{ ok: boolean; message: string }> {
+  if (s.demo) return (await import("./demo")).demoTestRepo(id)
+  return req<{ ok: boolean; message: string }>(s, `repos/test?id=${encodeURIComponent(id)}`, {
+    method: "POST",
+  })
 }

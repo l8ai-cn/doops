@@ -10,6 +10,8 @@ import type {
   AdminOperation,
   SchedulerJob,
   SchedulerIssue,
+  GitRepo,
+  GitRepoInput,
 } from "./admin"
 
 // 演示模式：内置 mock 数据 + 模拟流式输出，无需连接真实 gateway
@@ -672,4 +674,80 @@ export function demoRunJobNow(id: string): string {
 export function demoListJobIssues(jobId?: string): SchedulerIssue[] {
   const list = jobId ? demoIssues.filter((i) => i.job_id === jobId) : demoIssues
   return list.map((i) => ({ ...i }))
+}
+
+// ---------- 代码仓库 ----------
+const demoRepos: GitRepo[] = [
+  {
+    id: "repo_app",
+    name: "doops-app",
+    url: "https://github.com/l8ai-cn/doops-app.git",
+    branch: "main",
+    username: "deploy-bot",
+    has_password: true,
+    description: "主应用，AI 部署默认仓库",
+    last_used_at: ago(2),
+    created_at: ago(120),
+  },
+  {
+    id: "repo_web",
+    name: "官网",
+    url: "https://gitee.com/l8ai/website.git",
+    branch: "release",
+    username: "ci",
+    has_password: true,
+    description: "市场官网，Gitee 托管",
+    last_used_at: ago(40),
+    created_at: ago(200),
+  },
+  {
+    id: "repo_infra",
+    name: "infra 配置",
+    url: "git@gitlab.internal:ops/infra.git",
+    branch: "main",
+    username: "",
+    has_password: false,
+    description: "自建 GitLab，SSH 部署密钥",
+    created_at: ago(300),
+  },
+]
+
+let repoSeq = 100
+
+export function demoListRepos(): GitRepo[] {
+  return demoRepos.map((r) => ({ ...r }))
+}
+export function demoCreateRepo(body: GitRepoInput): GitRepo {
+  const repo: GitRepo = {
+    id: `repo_demo${repoSeq++}`,
+    name: body.name || "新仓库",
+    url: body.url || "",
+    branch: body.branch || "main",
+    username: body.username || "",
+    has_password: !!body.password,
+    description: body.description || "",
+    created_at: nowISO(),
+  }
+  demoRepos.unshift(repo)
+  return { ...repo }
+}
+export function demoUpdateRepo(id: string, body: Partial<GitRepoInput>): GitRepo {
+  const r = demoRepos.find((x) => x.id === id)
+  if (!r) throw new Error("仓库不存在")
+  if (body.name !== undefined) r.name = body.name
+  if (body.url !== undefined) r.url = body.url
+  if (body.branch !== undefined) r.branch = body.branch
+  if (body.username !== undefined) r.username = body.username
+  if (body.description !== undefined) r.description = body.description
+  if (body.password) r.has_password = true
+  return { ...r }
+}
+export function demoDeleteRepo(id: string): void {
+  const idx = demoRepos.findIndex((r) => r.id === id)
+  if (idx >= 0) demoRepos.splice(idx, 1)
+}
+export function demoTestRepo(id: string): { ok: boolean; message: string } {
+  const r = demoRepos.find((x) => x.id === id)
+  if (r) r.last_used_at = nowISO()
+  return { ok: true, message: "(演示) 连接成功，已读取到远端分支 main / release / dev" }
 }
