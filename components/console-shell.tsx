@@ -13,6 +13,7 @@ import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
+import { OnboardingGuide } from "./onboarding-guide"
 import {
   TerminalIcon,
   SparkIcon,
@@ -23,6 +24,7 @@ import {
   ServerIcon,
   ShieldIcon,
   ActivityIcon,
+  HelpIcon,
 } from "./icons"
 
 type Tab = "overview" | "terminal" | "ask" | "files" | "config" | "audit"
@@ -38,6 +40,7 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
 
 const GW_KEY = "doops.gateway"
 const DEMO_KEY = "doops.demo"
+const ONBOARD_KEY = "doops.onboarded"
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)
@@ -49,6 +52,7 @@ export function ConsoleShell() {
   const [view, setView] = useState<"console" | "admin">("console")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [showGuide, setShowGuide] = useState(false)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -61,6 +65,7 @@ export function ConsoleShell() {
     if (wantsDemo) {
       localStorage.setItem(DEMO_KEY, "1")
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
+      if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
     }
   }, [])
 
@@ -100,6 +105,12 @@ export function ConsoleShell() {
       localStorage.removeItem(DEMO_KEY)
     }
     setSession(s)
+    if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
+  }
+
+  function closeGuide() {
+    setShowGuide(false)
+    localStorage.setItem(ONBOARD_KEY, "1")
   }
 
   function logout() {
@@ -157,6 +168,13 @@ export function ConsoleShell() {
             <span className="text-xs text-muted-foreground">{session.username}</span>
           )}
           <button
+            onClick={() => setShowGuide(true)}
+            title="新手引导"
+            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+          >
+            <HelpIcon width={14} height={14} /> 帮助
+          </button>
+          <button
             onClick={logout}
             className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
           >
@@ -164,6 +182,8 @@ export function ConsoleShell() {
           </button>
         </div>
       </header>
+
+      {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
       {view === "admin" ? (
         <AdminConsole session={session} />

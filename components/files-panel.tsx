@@ -200,6 +200,40 @@ export function FilesPanel({
     setStatus({ kind: "ok", text: "输入内容后点击保存即可创建" })
   }
 
+  async function runMaintenance(kind: "check" | "clean") {
+    if (kind === "clean" && !confirm("确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。")) {
+      return
+    }
+    setMaint({ tool: kind, lines: [], running: true })
+    const tool = kind === "check" ? TOOLS.checkDeployment : TOOLS.cleanWorkspace
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool,
+          arguments: { session_id: sessionId },
+        },
+        (ev) => {
+          if (ev.type === "output") {
+            setMaint((p) => (p ? { ...p, lines: [...p.lines, ev.data] } : p))
+          } else if (ev.type === "result") {
+            const text = extractText(ev.result)
+            if (text) setMaint((p) => (p ? { ...p, lines: [...p.lines, text] } : p))
+          } else if (ev.type === "error") {
+            setMaint((p) => (p ? { ...p, lines: [...p.lines, `错误：${ev.error}`] } : p))
+          }
+        },
+      )
+    } catch (err) {
+      setMaint((p) => (p ? { ...p, lines: [...p.lines, `错误：${(err as Error).message}`] } : p))
+    } finally {
+      setMaint((p) => (p ? { ...p, running: false } : p))
+      if (kind === "clean") list(cwd)
+    }
+  }
+
   // 通过 doops_file_write 逐个写入文件，子目录先 mkdir -p
   async function writeRemoteFile(path: string, text: string) {
     let err: string | null = null
@@ -363,8 +397,53 @@ export function FilesPanel({
           >
             <CopyIcon width={14} height={14} /> 上传命令
           </button>
+          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+          <button
+            onClick={() => runMaintenance("check")}
+            disabled={maint?.running}
+            title="检查当前部署的版本与健康状态"
+            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <RocketIcon width={14} height={14} /> 检查部署
+          </button>
+          <button
+            onClick={() => runMaintenance("clean")}
+            disabled={maint?.running}
+            title="清理工作区临时文件与旧版本"
+            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <TrashIcon width={14} height={14} /> 清理工作区
+          </button>
         </div>
       </div>
+
+      {/* 维护动作结果 */}
+      {maint && (
+        <div className="shrink-0 border-b bg-muted/30 px-3 py-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              {maint.tool === "check" ? (
+                <RocketIcon width={13} height={13} className="text-primary" />
+              ) : (
+                <TrashIcon width={13} height={13} className="text-primary" />
+              )}
+              {maint.tool === "check" ? "部署检查" : "工作区清理"}
+              {maint.running && <span className="text-muted-foreground">· 执行中…</span>}
+            </p>
+            {!maint.running && (
+              <button
+                onClick={() => setMaint(null)}
+                className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                关闭
+              </button>
+            )}
+          </div>
+          <pre className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
+            {maint.lines.join("") || "正在执行…"}
+          </pre>
+        </div>
+      )}
 
       {/* push 命令面板 */}
       {showCmd && (

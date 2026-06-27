@@ -1,5 +1,5 @@
-import { ConsoleShell } from "@/components/console-shell"
+import { LandingPage } from "@/components/landing-page"
 
 export default function Page() {
-  return <ConsoleShell />
+  return <LandingPage />
 }
