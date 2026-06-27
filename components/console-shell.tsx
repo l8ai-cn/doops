@@ -11,7 +11,6 @@ import { TerminalPanel } from "./terminal-panel"
 import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
-import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
@@ -22,7 +21,6 @@ import {
   FileIcon,
   FileTextIcon,
   HistoryIcon,
-  KeyIcon,
   LogoutIcon,
   ServerIcon,
   ShieldIcon,
@@ -30,14 +28,13 @@ import {
   HelpIcon,
 } from "./icons"
 
-type Tab = "overview" | "ask" | "files" | "kb" | "config" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "files" | "kb" | "audit" | "terminal"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "ask", label: "AI 助手", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
   { id: "kb", label: "知识库", icon: FileTextIcon },
-  { id: "config", label: "配置文件", icon: KeyIcon },
   { id: "audit", label: "审计", icon: HistoryIcon },
   { id: "terminal", label: "终端", icon: TerminalIcon, secondary: true },
 ]
@@ -313,14 +310,6 @@ export function ConsoleShell() {
                 {tab === "kb" && (
                   <KnowledgeBase
                     key={`kb-${selected.key}`}
-                    session={session}
-                    target={selected}
-                    sessionId={sessionId}
-                  />
-                )}
-                {tab === "config" && (
-                  <ConfigPanel
-                    key={`config-${selected.key}-${sessionId}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
