@@ -264,7 +264,7 @@ export async function demoCallTool(
         "[observe] 磁盘 37%，无 error 级日志\n",
         "[done] 巡检完成，节点健康。\n",
       ]
-      summary = "巡检结果：负载正常、服务全部 active、磁盘 37%、无错误日志。"
+      summary = "巡检结果：负载正常��服务全部 active、磁盘 37%、无错误日志。"
     } else if (/回滚|rollback|上一个版本|恢复/.test(p)) {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -322,4 +322,134 @@ export async function demoCallTool(
   await sleep(150)
   onEvent({ type: "result", result: { content: [{ type: "text", text: "(演示模式) 已执行" }] } })
   onEvent({ type: "done" })
+}
+
+// ===================== 管理后台演示数据（可变，便于体验增删） =====================
+import type { AdminUser, AdminGrant, AdminToken, AdminInstance, AdminOperation } from "./admin"
+
+const nowISO = () => new Date().toISOString()
+const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString()
+
+const demoUsers: AdminUser[] = [
+  { id: "usr_admin01", name: "admin", disabled: false, has_password: true, grant_count: 1, is_admin: true, created_at: ago(720) },
+  { id: "usr_ops01", name: "ops-zhang", disabled: false, has_password: true, grant_count: 2, is_admin: false, created_at: ago(240) },
+  { id: "usr_dev01", name: "dev-li", disabled: false, has_password: true, grant_count: 1, is_admin: false, created_at: ago(72) },
+  { id: "usr_bot01", name: "ci-bot", disabled: true, has_password: false, grant_count: 1, is_admin: false, created_at: ago(48) },
+]
+
+const demoGrants: AdminGrant[] = [
+  { id: 1, user_id: "usr_admin01", user_name: "admin", cluster: "*", instance: "*", actions: ["admin"], created_at: ago(720) },
+  { id: 2, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "*", actions: ["exec", "ask", "read", "write", "info", "check"], created_at: ago(240) },
+  { id: 3, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "staging", instance: "*", actions: ["exec", "ask", "read"], created_at: ago(120) },
+  { id: 4, user_id: "usr_dev01", user_name: "dev-li", cluster: "staging", instance: "db-01", actions: ["read", "info"], created_at: ago(72) },
+  { id: 5, user_id: "usr_bot01", user_name: "ci-bot", cluster: "prod-cn", instance: "*", actions: ["push", "pull"], created_at: ago(48) },
+]
+
+const demoTokens: AdminToken[] = [
+  { id: "tok_a1", kind: "user", user_id: "usr_ops01", user_name: "ops-zhang", name: "笔记本", prefix: "dgw_user_3f2a", revoked: false, created_at: ago(240), expires_at: ago(-480) },
+  { id: "tok_a2", kind: "user", user_id: "usr_dev01", user_name: "dev-li", name: "CLI", prefix: "dgw_user_88c1", revoked: false, created_at: ago(72) },
+  { id: "tok_g1", kind: "agent", name: "prod-cn/web-01", prefix: "dgw_agent_aa01", cluster: "prod-cn", instance: "web-01", revoked: false, created_at: ago(700) },
+  { id: "tok_g2", kind: "agent", name: "prod-cn/web-02", prefix: "dgw_agent_aa02", cluster: "prod-cn", instance: "web-02", revoked: false, created_at: ago(700) },
+  { id: "tok_g3", kind: "agent", name: "staging/db-01", prefix: "dgw_agent_bb01", cluster: "staging", instance: "db-01", revoked: true, created_at: ago(400) },
+]
+
+const demoInstances: AdminInstance[] = [
+  { cluster: "prod-cn", instance: "web-01", status: "online", remote: "10.0.1.11:51820", busy: false, active_ops: 1, queued_ops: 0, connected_at: ago(6), last_seen: nowISO() },
+  { cluster: "prod-cn", instance: "web-02", status: "online", remote: "10.0.1.12:51820", busy: true, active_ops: 2, queued_ops: 1, connected_at: ago(6), last_seen: nowISO() },
+  { cluster: "staging", instance: "db-01", status: "offline", remote: "10.0.2.21:51820", busy: false, active_ops: 0, queued_ops: 0, connected_at: ago(48), last_seen: ago(2) },
+]
+
+const demoOps: AdminOperation[] = [
+  { id: "op_1", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-01", action: "ask", kind: "doops_agent_prompt", command_summary: "巡检节点状态", started_at: ago(0.02), age_seconds: 72 },
+  { id: "op_2", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-02", action: "exec", kind: "doops_shell", command_summary: "systemctl restart nginx", started_at: ago(0.01), age_seconds: 36 },
+]
+
+let grantSeq = 100
+let userSeq = 100
+
+export function demoListUsers(): AdminUser[] {
+  return demoUsers.map((u) => ({ ...u }))
+}
+export function demoCreateUser(body: { name: string; admin?: boolean }): void {
+  demoUsers.push({
+    id: `usr_demo${userSeq++}`,
+    name: body.name,
+    disabled: false,
+    has_password: true,
+    grant_count: 1,
+    is_admin: !!body.admin,
+    created_at: nowISO(),
+  })
+}
+export function demoSetUserDisabled(body: { user_id: string; disabled: boolean }): void {
+  const u = demoUsers.find((x) => x.id === body.user_id)
+  if (u) u.disabled = body.disabled
+}
+export function demoListGrants(user?: string): AdminGrant[] {
+  const list = user ? demoGrants.filter((g) => g.user_id === user) : demoGrants
+  return list.map((g) => ({ ...g }))
+}
+export function demoCreateGrant(body: { user_id: string; cluster: string; instance: string; actions: string[] }): void {
+  const u = demoUsers.find((x) => x.id === body.user_id)
+  demoGrants.push({
+    id: grantSeq++,
+    user_id: body.user_id,
+    user_name: u?.name,
+    cluster: body.cluster || "*",
+    instance: body.instance || "*",
+    actions: body.actions.length ? body.actions : ["exec", "ask", "read"],
+    created_at: nowISO(),
+  })
+  if (u) u.grant_count += 1
+}
+export function demoDeleteGrant(id: number): void {
+  const idx = demoGrants.findIndex((g) => g.id === id)
+  if (idx >= 0) {
+    const [g] = demoGrants.splice(idx, 1)
+    const u = demoUsers.find((x) => x.id === g.user_id)
+    if (u && u.grant_count > 0) u.grant_count -= 1
+  }
+}
+export function demoListTokens(kind?: string): AdminToken[] {
+  const list = kind ? demoTokens.filter((t) => t.kind === kind) : demoTokens
+  return list.map((t) => ({ ...t }))
+}
+export function demoCreateToken(body: { kind?: string; cluster?: string; instance?: string; name?: string }): {
+  token: string
+  token_id: string
+} {
+  const id = `tok_demo${randomToken(4)}`
+  const kind = body.kind === "agent" ? "agent" : "user"
+  demoTokens.unshift({
+    id,
+    kind,
+    name: body.name || (kind === "agent" ? `${body.cluster}/${body.instance}` : "新令牌"),
+    prefix: `dgw_${kind}_${randomToken(4)}`,
+    cluster: body.cluster,
+    instance: body.instance,
+    revoked: false,
+    created_at: nowISO(),
+  })
+  return { token: `dgw_${kind}_demo_${id}_${randomToken(32)}`, token_id: id }
+}
+export function demoRevokeToken(id: string): void {
+  const t = demoTokens.find((x) => x.id === id)
+  if (t) t.revoked = true
+}
+export function demoListInstances(): AdminInstance[] {
+  return demoInstances.map((i) => ({ ...i }))
+}
+export function demoListOperations(): AdminOperation[] {
+  return demoOps.map((o) => ({ ...o }))
+}
+export function demoCancelOperation(id: string): void {
+  const idx = demoOps.findIndex((o) => o.id === id)
+  if (idx >= 0) demoOps.splice(idx, 1)
+}
+
+function randomToken(n: number): string {
+  const chars = "0123456789abcdef"
+  let out = ""
+  for (let i = 0; i < n; i++) out += chars[Math.floor(Math.random() * chars.length)]
+  return out
 }

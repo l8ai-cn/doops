@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,9 +184,12 @@ type gatewayLoginResponse struct {
 }
 
 type gatewayAdminTokenCreateRequest struct {
-	User    string `json:"user"`
-	Name    string `json:"name,omitempty"`
-	Expires string `json:"expires,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	User     string `json:"user"`
+	Name     string `json:"name,omitempty"`
+	Cluster  string `json:"cluster,omitempty"`
+	Instance string `json:"instance,omitempty"`
+	Expires  string `json:"expires,omitempty"`
 }
 
 func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
@@ -231,6 +235,11 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
+	mux.HandleFunc("/v1/admin/users", h.HandleAdminUsers)
+	mux.HandleFunc("/v1/admin/users/password", h.HandleAdminUserPassword)
+	mux.HandleFunc("/v1/admin/users/disable", h.HandleAdminUserDisable)
+	mux.HandleFunc("/v1/admin/grants", h.HandleAdminGrants)
+	mux.HandleFunc("/v1/admin/instances", h.HandleAdminInstances)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
 	mux.HandleFunc("/v1/admin/jobs", h.HandleAdminJobs)
 	mux.HandleFunc("/v1/admin/jobs/run", h.HandleAdminJobRun)
@@ -280,10 +289,6 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	auth, err := h.authenticateUser(r)
 	if err != nil {
 		h.writeUserAuthError(w, r)
@@ -291,6 +296,37 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		tokens, err := h.store.ListTokens(TokenKind(strings.TrimSpace(r.URL.Query().Get("kind"))))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"tokens": tokens})
+		return
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := h.store.RevokeToken(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "token not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"id": id, "revoked": true})
+		return
+	case http.MethodPost:
+		// 继续向下执行创建逻辑
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	auditID, _ := h.store.StartAudit(AuditEvent{
@@ -316,13 +352,30 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
-	user, err := h.store.FindUserByName(req.User)
-	if err != nil {
-		finishAudit("not_found", "user not found")
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+	kind := TokenKindUser
+	if strings.EqualFold(strings.TrimSpace(req.Kind), string(TokenKindAgent)) {
+		kind = TokenKindAgent
 	}
-	createReq := CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: req.Name}
+	createReq := CreateTokenRequest{Kind: kind, Name: req.Name}
+	var username string
+	if kind == TokenKindAgent {
+		if strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "" {
+			finishAudit("error", "agent token requires cluster and instance")
+			http.Error(w, "agent token requires cluster and instance", http.StatusBadRequest)
+			return
+		}
+		createReq.Cluster = req.Cluster
+		createReq.Instance = req.Instance
+	} else {
+		user, err := h.store.FindUserByName(req.User)
+		if err != nil {
+			finishAudit("not_found", "user not found")
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		createReq.UserID = user.ID
+		username = user.Name
+	}
 	if strings.TrimSpace(req.Expires) != "" {
 		ttl, err := time.ParseDuration(strings.TrimSpace(req.Expires))
 		if err != nil {
@@ -347,8 +400,8 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSONHTTP(w, gatewayLoginResponse{
 		Token:     token.Plaintext,
 		TokenID:   token.ID,
-		TokenType: string(TokenKindUser),
-		Username:  user.Name,
+		TokenType: string(kind),
+		Username:  username,
 	})
 }
 

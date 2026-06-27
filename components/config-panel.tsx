@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
+import { loadConfigs, upsertConfig, newConfigId, type ModelConfig } from "@/lib/model-configs"
 import {
   KeyIcon,
   SaveIcon,
@@ -11,6 +12,7 @@ import {
   EyeOffIcon,
   PlusIcon,
   TrashIcon,
+  LayersIcon,
 } from "./icons"
 
 const SETTINGS_PATH = "/root/.agent/settings.json"
@@ -43,6 +45,49 @@ export function ConfigPanel({
   const [loaded, setLoaded] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+  const [configs, setConfigs] = useState<ModelConfig[]>([])
+  const [selectedCfg, setSelectedCfg] = useState("")
+
+  useEffect(() => {
+    setConfigs(loadConfigs())
+  }, [])
+
+  function applyPreset(id: string) {
+    const cfg = configs.find((c) => c.id === id)
+    if (!cfg) return
+    setObj((p) => ({
+      ...p,
+      provider: cfg.provider ?? p.provider,
+      model: cfg.model ?? p.model,
+      base_url: cfg.base_url ?? p.base_url,
+      api_key: cfg.api_key || p.api_key,
+      temperature: cfg.temperature ?? p.temperature,
+      max_tokens: cfg.max_tokens ?? p.max_tokens,
+      models: cfg.models && cfg.models.length ? cfg.models : p.models,
+    }))
+    setDirty(true)
+    setMode("form")
+    setStatus({ kind: "ok", text: `已套用配置「${cfg.name}」，点击保存写入节点` })
+  }
+
+  function saveAsPreset() {
+    const name = window.prompt("为当前配置命名（保存到配置库，可应用到其他节点）：")
+    if (!name) return
+    const list = upsertConfig({
+      id: newConfigId(),
+      name: name.trim(),
+      provider: obj.provider,
+      model: obj.model,
+      base_url: obj.base_url,
+      api_key: obj.api_key as string | undefined,
+      temperature: obj.temperature,
+      max_tokens: obj.max_tokens,
+      models: obj.models,
+      updated_at: new Date().toISOString(),
+    })
+    setConfigs(list)
+    setStatus({ kind: "ok", text: `已保存到配置库：${name.trim()}` })
+  }
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -219,6 +264,40 @@ export function ConfigPanel({
           />
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-4">
+            <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-muted/40 p-3">
+              <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <LayersIcon width={15} height={15} className="text-primary" /> 模型配置库
+                </span>
+                <select
+                  value={selectedCfg}
+                  onChange={(e) => setSelectedCfg(e.target.value)}
+                  className="input"
+                >
+                  <option value="">选择一个预设…</option>
+                  {configs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.model ? ` · ${c.model}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={() => selectedCfg && applyPreset(selectedCfg)}
+                disabled={!selectedCfg}
+                className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                套用到表单
+              </button>
+              <button
+                onClick={saveAsPreset}
+                className="rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+              >
+                当前另存为
+              </button>
+            </div>
+
             <Field label="Provider" hint="模型提供方，如 openai-compatible / anthropic">
               <input
                 value={obj.provider ?? ""}
