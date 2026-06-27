@@ -112,8 +112,11 @@ export function CasesPage() {
             <Link href="/#how" className="transition-colors hover:text-foreground">
               快速上手
             </Link>
+            <Link href="/docs/deploy" className="transition-colors hover:text-foreground">
+              部署文档
+            </Link>
             <Link href="/cases" className="text-foreground">
-              客户案例
+              使用案例
             </Link>
             <Link href="/#faq" className="transition-colors hover:text-foreground">
               常见问题
@@ -141,7 +144,7 @@ export function CasesPage() {
         <div className="mx-auto max-w-6xl px-4 py-20 text-center md:py-24">
           <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
             <RocketIcon width={13} height={13} />
-            客户案例
+            使用案例
           </div>
           <h1 className="mx-auto max-w-3xl text-balance text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
             他们这样用 Doops 把运维交给 AI
@@ -342,7 +345,7 @@ export function CasesPage() {
               首页
             </Link>
             <Link href="/cases" className="transition-colors hover:text-foreground">
-              客户案例
+              使用案例
             </Link>
             <Link href="/console" className="transition-colors hover:text-foreground">
               控制台
