@@ -14,6 +14,7 @@ import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
 import { DeployGuideBody } from "./deploy-guide"
+import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
 import {
   TerminalIcon,
@@ -27,6 +28,7 @@ import {
   ActivityIcon,
   HelpIcon,
   RocketIcon,
+  GitIcon,
 } from "./icons"
 
 type Tab = "overview" | "ask" | "files" | "kb" | "audit" | "terminal"
@@ -51,7 +53,7 @@ export function ConsoleShell() {
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
-  const [view, setView] = useState<"console" | "deploy" | "admin">("console")
+  const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
@@ -174,6 +176,16 @@ export function ConsoleShell() {
               <RocketIcon width={13} height={13} /> 部署 Agent
             </button>
             <button
+              onClick={() => setView("cicd")}
+              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "cicd"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <GitIcon width={13} height={13} /> CI/CD
+            </button>
+            <button
               onClick={() => setView("admin")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "admin"
@@ -218,6 +230,10 @@ export function ConsoleShell() {
               refresh()
             }}
           />
+        </div>
+      ) : view === "cicd" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <CicdGuide session={session} />
         </div>
       ) : (
       <div className="flex min-h-0 flex-1">
