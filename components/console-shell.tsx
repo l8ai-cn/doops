@@ -5,7 +5,7 @@ import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
-import { TargetSidebar } from "./target-sidebar"
+import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
 import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
@@ -25,7 +25,6 @@ import {
   ShieldIcon,
   ActivityIcon,
   HelpIcon,
-  MenuIcon,
 } from "./icons"
 
 type Tab = "overview" | "ask" | "files" | "config" | "audit" | "terminal"
@@ -54,7 +53,6 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -125,7 +123,7 @@ export function ConsoleShell() {
   function selectTarget(t: Target) {
     setSelected(t)
     setSessionId(randomSession())
-    // AI 优先：从侧边栏选中机器后，默认进入 AI 助手而非终端
+    // AI 优先：切换机器后，默认进入 AI 助手而非终端
     setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
   }
 
@@ -137,22 +135,21 @@ export function ConsoleShell() {
     <div className="flex h-dvh flex-col">
       <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          {view === "console" && (
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
-              aria-label="打开目标列表"
-            >
-              <MenuIcon width={18} height={18} />
-            </button>
-          )}
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <ServerIcon width={16} height={16} />
           </div>
-          <span className="truncate text-sm font-semibold text-foreground">Doops Console</span>
-          <span className="hidden font-mono text-xs text-muted-foreground lg:inline">
-            {session.gateway}
+          <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
+            Doops Console
           </span>
+          {view === "console" && (
+            <TargetSwitcher
+              targets={targets}
+              selected={selected}
+              onSelect={selectTarget}
+              onRefresh={refresh}
+              loading={loading}
+            />
+          )}
           <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
             <button
               onClick={() => setView("console")}
@@ -203,17 +200,6 @@ export function ConsoleShell() {
         <AdminConsole session={session} />
       ) : (
       <div className="flex min-h-0 flex-1">
-        <TargetSidebar
-          targets={targets}
-          selectedKey={selected?.key || null}
-          onSelect={selectTarget}
-          onRefresh={refresh}
-          loading={loading}
-          error={error}
-          mobileOpen={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-        />
-
         <main className="flex min-w-0 flex-1 flex-col">
           <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
             {TABS.map((t) => {
@@ -260,7 +246,7 @@ export function ConsoleShell() {
           ) : !selected ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
               <ServerIcon width={32} height={32} />
-              <p className="text-sm">请先从左侧选择一台机器，再使用此功能</p>
+              <p className="text-sm">暂无在线机器，接入 runner 后即可使用此功能</p>
               <button
                 onClick={() => setTab("overview")}
                 className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
@@ -270,13 +256,7 @@ export function ConsoleShell() {
             </div>
           ) : (
             <>
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-card px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">{selected.instance}</span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {selected.cluster}
-                  </span>
-                </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   session
                   <input

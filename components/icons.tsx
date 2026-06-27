@@ -329,3 +329,11 @@ export function CloseIcon(p: IconProps) {
     </svg>
   )
 }
+
+export function ChevronDownIcon(p: IconProps) {
+  return (
+    <svg {...base} {...p}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  )
+}
