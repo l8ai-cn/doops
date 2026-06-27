@@ -11,6 +11,7 @@ import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
 import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
+import { AdminConsole } from "./admin-console"
 import {
   TerminalIcon,
   SparkIcon,
@@ -19,6 +20,7 @@ import {
   KeyIcon,
   LogoutIcon,
   ServerIcon,
+  ShieldIcon,
 } from "./icons"
 
 type Tab = "terminal" | "ask" | "files" | "config" | "audit"
@@ -41,6 +43,7 @@ export function ConsoleShell() {
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("terminal")
+  const [view, setView] = useState<"console" | "admin">("console")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
@@ -123,6 +126,28 @@ export function ConsoleShell() {
           <span className="hidden font-mono text-xs text-muted-foreground sm:inline">
             {session.gateway}
           </span>
+          <div className="ml-2 flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+            <button
+              onClick={() => setView("console")}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "console"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              控制台
+            </button>
+            <button
+              onClick={() => setView("admin")}
+              className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "admin"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <ShieldIcon width={13} height={13} /> 管理
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {session.username && (
@@ -137,6 +162,9 @@ export function ConsoleShell() {
         </div>
       </header>
 
+      {view === "admin" ? (
+        <AdminConsole session={session} />
+      ) : (
       <div className="flex min-h-0 flex-1">
         <TargetSidebar
           targets={targets}
@@ -239,6 +267,7 @@ export function ConsoleShell() {
           )}
         </main>
       </div>
+      )}
     </div>
   )
 }
