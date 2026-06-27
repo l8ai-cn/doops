@@ -47,7 +47,22 @@ type TokenInfo struct {
 
 // ListUsers 返回全部用户，并附带授权数量及是否具备 admin 权限。
 func (s *GatewayStore) ListUsers() ([]UserSummary, error) {
-	rows, err := s.db.Query(`SELECT id, name, password_hash, disabled, created_at FROM users ORDER BY created_at`)
+	rows, err := s.db.Query(`SELECT
+			u.id,
+			u.name,
+			u.password_hash,
+			u.disabled,
+			u.created_at,
+			COUNT(g.id) AS grant_count,
+			COALESCE(MAX(CASE
+				WHEN g.actions_json LIKE '%"admin"%'
+					OR g.actions_json LIKE '%"*"%' THEN 1
+				ELSE 0
+			END), 0) AS is_admin
+		FROM users u
+		LEFT JOIN grants g ON g.user_id = u.id
+		GROUP BY u.id, u.name, u.password_hash, u.disabled, u.created_at
+		ORDER BY u.created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,14 +73,14 @@ func (s *GatewayStore) ListUsers() ([]UserSummary, error) {
 		var passwordHash string
 		var disabled int
 		var created string
-		if err := rows.Scan(&u.ID, &u.Name, &passwordHash, &disabled, &created); err != nil {
+		var isAdmin int
+		if err := rows.Scan(&u.ID, &u.Name, &passwordHash, &disabled, &created, &u.GrantCount, &isAdmin); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
 		u.HasPasswrd = strings.TrimSpace(passwordHash) != ""
 		u.CreatedAt, _ = parseTime(created)
-		u.GrantCount = s.countGrants(u.ID)
-		u.IsAdmin = s.UserHasAction(u.ID, ActionAdmin)
+		u.IsAdmin = isAdmin != 0
 		users = append(users, u)
 	}
 	return users, rows.Err()

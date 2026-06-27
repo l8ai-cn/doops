@@ -107,6 +107,61 @@ func TestGatewayStoreUserDefaultsToNoTargetAccess(t *testing.T) {
 	}
 }
 
+func TestGatewayStoreListUsersDoesNotDeadlockWithSingleSQLiteConnection(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	alice, err := store.CreateUser("alice")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := store.CreateUser("bob")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	if err := store.GrantUser(alice.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+		t.Fatalf("grant alice: %v", err)
+	}
+	if err := store.GrantUser(bob.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionRead}}); err != nil {
+		t.Fatalf("grant bob: %v", err)
+	}
+
+	type result struct {
+		users []UserSummary
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		users, err := store.ListUsers()
+		done <- result{users: users, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("list users: %v", got.err)
+		}
+		if len(got.users) != 2 {
+			t.Fatalf("expected two users, got %#v", got.users)
+		}
+		byName := map[string]UserSummary{}
+		for _, u := range got.users {
+			byName[u.Name] = u
+		}
+		if !byName["alice"].IsAdmin || byName["alice"].GrantCount != 1 {
+			t.Fatalf("alice summary mismatch: %#v", byName["alice"])
+		}
+		if byName["bob"].IsAdmin || byName["bob"].GrantCount != 1 {
+			t.Fatalf("bob summary mismatch: %#v", byName["bob"])
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ListUsers deadlocked while rows were still open")
+	}
+}
+
 func TestGatewayStoreTokenIDFastPathAndExpiredCleanup(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
