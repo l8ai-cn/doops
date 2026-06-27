@@ -76,6 +76,7 @@ export function ConfigPanel({
     const list = upsertConfig({
       id: newConfigId(),
       name: name.trim(),
+      kind: "model",
       provider: obj.provider,
       model: obj.model,
       base_url: obj.base_url,
@@ -274,8 +275,10 @@ export function ConfigPanel({
                   onChange={(e) => setSelectedCfg(e.target.value)}
                   className="input"
                 >
-                  <option value="">选择一个预设…</option>
-                  {configs.map((c) => (
+                <option value="">选择一个预设…</option>
+                {configs
+                  .filter((c) => (c.kind ?? "model") === "model")
+                  .map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                       {c.model ? ` · ${c.model}` : ""}

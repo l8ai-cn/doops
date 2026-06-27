@@ -43,7 +43,7 @@ type AdminTab = "instances" | "config" | "users" | "grants" | "tokens" | "operat
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "instances", label: "实例", icon: ServerIcon },
-  { id: "config", label: "配置下发", icon: LayersIcon },
+  { id: "config", label: "配置中心", icon: LayersIcon },
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "grants", label: "权限", icon: ShieldIcon },
   { id: "tokens", label: "令牌", icon: KeyIcon },
@@ -468,7 +468,7 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删除该授权？")) return
+    if (!window.confirm("确认删���该授权？")) return
     setError("")
     try {
       await deleteGrant(session, id)
