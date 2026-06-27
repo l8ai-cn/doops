@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import Link from "next/link"
 import { fetchAudit, type Session, type Target, type AuditEvent } from "@/lib/client"
 import {
   ServerIcon,
@@ -9,6 +8,7 @@ import {
   TerminalIcon,
   SparkIcon,
   FileIcon,
+  FileTextIcon,
   RefreshIcon,
   ChevronRightIcon,
   RocketIcon,
@@ -17,7 +17,7 @@ import {
   HelpIcon,
 } from "./icons"
 
-type QuickTab = "terminal" | "ask" | "files" | "config"
+type QuickTab = "terminal" | "ask" | "files" | "kb"
 
 export function DashboardPanel({
   session,
@@ -25,12 +25,14 @@ export function DashboardPanel({
   loading,
   onRefresh,
   onOpenTab,
+  onDeployAgent,
 }: {
   session: Session
   targets: Target[]
   loading: boolean
   onRefresh: () => void
   onOpenTab: (tab: QuickTab, target?: Target) => void
+  onDeployAgent: () => void
 }) {
   const [audit, setAudit] = useState<AuditEvent[]>([])
 
@@ -85,7 +87,7 @@ export function DashboardPanel({
         </div>
 
         {targets.length === 0 ? (
-          <EmptyState />
+          <EmptyState onDeployAgent={onDeployAgent} />
         ) : (
           <>
             {/* 统计卡 */}
@@ -135,10 +137,10 @@ export function DashboardPanel({
                     onClick={() => onOpenTab("files", single)}
                   />
                   <QuickAction
-                    icon={RocketIcon}
-                    title="配置文件"
-                    desc="编辑并发布节点配置"
-                    onClick={() => onOpenTab("config", single)}
+                    icon={FileTextIcon}
+                    title="知识库"
+                    desc="在线编写运维文档"
+                    onClick={() => onOpenTab("kb", single)}
                   />
                   <QuickAction
                     icon={TerminalIcon}
@@ -341,7 +343,7 @@ function StatusTag({ status }: { status?: string }) {
   return <span className={`shrink-0 text-xs ${cls}`}>{label}</span>
 }
 
-function EmptyState() {
+function EmptyState({ onDeployAgent }: { onDeployAgent: () => void }) {
   return (
     <div className="rounded-xl border bg-card p-8 text-center">
       <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -354,9 +356,9 @@ function EmptyState() {
 
       {/* 两条路径 */}
       <div className="mx-auto mt-5 grid max-w-lg gap-3 text-left sm:grid-cols-2">
-        <Link
-          href="/docs/deploy"
-          className="group flex flex-col rounded-lg border bg-background p-4 transition-colors hover:border-primary/50 hover:bg-muted"
+        <button
+          onClick={onDeployAgent}
+          className="group flex flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted"
         >
           <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
             <RocketIcon width={16} height={16} className="text-primary" />
@@ -373,7 +375,7 @@ function EmptyState() {
               className="transition-transform group-hover:translate-x-0.5"
             />
           </span>
-        </Link>
+        </button>
         <div className="flex flex-col rounded-lg border bg-background p-4">
           <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
             <HelpIcon width={16} height={16} className="text-primary" />

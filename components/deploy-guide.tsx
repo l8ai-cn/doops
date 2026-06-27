@@ -13,6 +13,7 @@ import {
   HelpIcon,
   ChevronRightIcon,
   PlugIcon,
+  RefreshIcon,
 } from "./icons"
 
 // 可复制命令块
@@ -163,29 +164,11 @@ const TROUBLE = [
   },
 ]
 
-export function DeployGuide() {
+// 正文：公开文档页与控制台内「部署 Agent」视图共用
+// onEnterConsole 提供时（控制台内嵌），底部 CTA 变为「刷新机器列表」回调；否则链接到 /console
+export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => void }) {
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      {/* 顶栏 */}
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <ServerIcon width={16} height={16} />
-            </span>
-            Doops
-          </Link>
-          <Link
-            href="/console"
-            className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-          >
-            进入控制台
-            <ChevronRightIcon width={15} height={15} />
-          </Link>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-3xl px-5 py-10">
+    <div className="mx-auto max-w-3xl px-5 py-10">
         {/* 标题 */}
         <div className="mb-8">
           <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground">
@@ -281,16 +264,51 @@ export function DeployGuide() {
 
         {/* 底部 CTA */}
         <div className="mt-12 flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center">
-          <p className="text-sm text-muted-foreground">机器已接入？回到控制台开始运维</p>
+          <p className="text-sm text-muted-foreground">机器已接入？开始运维</p>
+          {onEnterConsole ? (
+            <button
+              onClick={onEnterConsole}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <RefreshIcon width={16} height={16} />
+              刷新机器列表
+            </button>
+          ) : (
+            <Link
+              href="/console"
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <ServerIcon width={16} height={16} />
+              进入控制台
+            </Link>
+          )}
+        </div>
+    </div>
+  )
+}
+
+// 公开文档页：带营销顶栏，复用上方正文
+export function DeployGuide() {
+  return (
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
+        <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
+          <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <ServerIcon width={16} height={16} />
+            </span>
+            Doops
+          </Link>
           <Link
             href="/console"
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
           >
-            <ServerIcon width={16} height={16} />
             进入控制台
+            <ChevronRightIcon width={15} height={15} />
           </Link>
         </div>
-      </div>
+      </header>
+      <DeployGuideBody />
     </main>
   )
 }

@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import Link from "next/link"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -14,6 +13,7 @@ import { KnowledgeBase } from "./knowledge-base"
 import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
+import { DeployGuideBody } from "./deploy-guide"
 import { OnboardingGuide } from "./onboarding-guide"
 import {
   TerminalIcon,
@@ -26,6 +26,7 @@ import {
   ShieldIcon,
   ActivityIcon,
   HelpIcon,
+  RocketIcon,
 } from "./icons"
 
 type Tab = "overview" | "ask" | "files" | "kb" | "audit" | "terminal"
@@ -50,7 +51,7 @@ export function ConsoleShell() {
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
-  const [view, setView] = useState<"console" | "admin">("console")
+  const [view, setView] = useState<"console" | "deploy" | "admin">("console")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
@@ -163,6 +164,16 @@ export function ConsoleShell() {
               控制台
             </button>
             <button
+              onClick={() => setView("deploy")}
+              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "deploy"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <RocketIcon width={13} height={13} /> 部署 Agent
+            </button>
+            <button
               onClick={() => setView("admin")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "admin"
@@ -199,6 +210,15 @@ export function ConsoleShell() {
 
       {view === "admin" ? (
         <AdminConsole session={session} />
+      ) : view === "deploy" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <DeployGuideBody
+            onEnterConsole={() => {
+              setView("console")
+              refresh()
+            }}
+          />
+        </div>
       ) : (
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
@@ -239,6 +259,7 @@ export function ConsoleShell() {
               targets={targets}
               loading={loading}
               onRefresh={refresh}
+              onDeployAgent={() => setView("deploy")}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
                 setTab(nextTab)
@@ -249,12 +270,12 @@ export function ConsoleShell() {
               <ServerIcon width={32} height={32} />
               <p className="text-sm">还没有可用的机器，部署 agent 或联系管理员接入后即可使用此功能</p>
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <Link
-                  href="/docs/deploy"
+                <button
+                  onClick={() => setView("deploy")}
                   className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   部署 Doops Agent
-                </Link>
+                </button>
                 <button
                   onClick={() => setTab("overview")}
                   className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
