@@ -84,6 +84,9 @@ export function LandingPage() {
             <a href="#how" className="transition-colors hover:text-foreground">
               快速上手
             </a>
+            <Link href="/docs/deploy" className="transition-colors hover:text-foreground">
+              部署文档
+            </Link>
             <Link href="/cases" className="transition-colors hover:text-foreground">
               客户案例
             </Link>
@@ -177,7 +180,7 @@ export function LandingPage() {
           <div className="mx-auto mb-12 max-w-2xl text-center">
             <h2 className="text-balance text-3xl font-semibold tracking-tight">三步即可上手</h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              不懂复杂运维也没关系，跟着三步就能开始。
+              不懂复杂运维也没关系，跟���三步就能开始。
             </p>
           </div>
           <div className="grid gap-6 md:grid-cols-3">
@@ -277,6 +280,9 @@ export function LandingPage() {
             <a href="#features" className="transition-colors hover:text-foreground">
               功能
             </a>
+            <Link href="/docs/deploy" className="transition-colors hover:text-foreground">
+              部署文档
+            </Link>
             <Link href="/cases" className="transition-colors hover:text-foreground">
               客户案例
             </Link>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { fetchAudit, type Session, type Target, type AuditEvent } from "@/lib/client"
 import {
   ServerIcon,
@@ -13,6 +14,7 @@ import {
   RocketIcon,
   HistoryIcon,
   PlugIcon,
+  HelpIcon,
 } from "./icons"
 
 type QuickTab = "terminal" | "ask" | "files" | "config"
@@ -345,12 +347,46 @@ function EmptyState() {
       <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <PlugIcon width={26} height={26} />
       </span>
-      <h2 className="text-base font-semibold text-foreground">还没有连接的机器</h2>
+      <h2 className="text-base font-semibold text-foreground">还没有可用的机器</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground text-pretty">
-        Doops 通过在你的服务器上安装一个轻量 agent 来工作。安装并启动后，机器会自动出现在这里，随后即可远程执行命令、上传文件、用 AI 完成部署。
+        Doops 通过在你的服务器上安装一个轻量 agent 来工作。你可以自己部署一台，或联系管理员为你接入。
       </p>
-      <div className="mx-auto mt-5 max-w-md rounded-lg border bg-background p-4 text-left">
-        <div className="mb-2 text-xs font-medium text-foreground">在你的服务器上执行：</div>
+
+      {/* 两条路径 */}
+      <div className="mx-auto mt-5 grid max-w-lg gap-3 text-left sm:grid-cols-2">
+        <Link
+          href="/docs/deploy"
+          className="group flex flex-col rounded-lg border bg-background p-4 transition-colors hover:border-primary/50 hover:bg-muted"
+        >
+          <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
+            <RocketIcon width={16} height={16} className="text-primary" />
+            部署 Doops Agent
+          </span>
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            有服务器权限？按部署指南几分钟即可接入一台机器。
+          </span>
+          <span className="mt-2 flex items-center gap-1 text-xs font-medium text-primary">
+            查看部署指南
+            <ChevronRightIcon
+              width={13}
+              height={13}
+              className="transition-transform group-hover:translate-x-0.5"
+            />
+          </span>
+        </Link>
+        <div className="flex flex-col rounded-lg border bg-background p-4">
+          <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
+            <HelpIcon width={16} height={16} className="text-primary" />
+            联系管理员
+          </span>
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            没有服务器权限或不确定 gateway 地址？请管理员为你接入机器并签发令牌。
+          </span>
+        </div>
+      </div>
+
+      <div className="mx-auto mt-4 max-w-lg rounded-lg border bg-background p-4 text-left">
+        <div className="mb-2 text-xs font-medium text-foreground">快速安装（在你的服务器上执行）：</div>
         <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
           curl -fsSL https://doops.sh/install.sh | sh
         </pre>

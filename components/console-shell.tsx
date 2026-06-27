@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -249,13 +250,21 @@ export function ConsoleShell() {
           ) : !selected ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
               <ServerIcon width={32} height={32} />
-              <p className="text-sm">暂无在线机器，接入 runner 后即可使用此功能</p>
-              <button
-                onClick={() => setTab("overview")}
-                className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
-              >
-                返回概览
-              </button>
+              <p className="text-sm">还没有可用的机器，部署 agent 或联系管理员接入后即可使用此功能</p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Link
+                  href="/docs/deploy"
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  部署 Doops Agent
+                </Link>
+                <button
+                  onClick={() => setTab("overview")}
+                  className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                >
+                  返回概览
+                </button>
+              </div>
             </div>
           ) : (
             <>
