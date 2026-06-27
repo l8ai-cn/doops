@@ -84,6 +84,9 @@ export function LandingPage() {
             <a href="#how" className="transition-colors hover:text-foreground">
               快速上手
             </a>
+            <Link href="/cases" className="transition-colors hover:text-foreground">
+              客户案例
+            </Link>
             <a href="#faq" className="transition-colors hover:text-foreground">
               常见问题
             </a>
@@ -274,6 +277,9 @@ export function LandingPage() {
             <a href="#features" className="transition-colors hover:text-foreground">
               功能
             </a>
+            <Link href="/cases" className="transition-colors hover:text-foreground">
+              客户案例
+            </Link>
             <a href="#faq" className="transition-colors hover:text-foreground">
               常见问题
             </a>
