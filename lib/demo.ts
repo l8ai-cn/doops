@@ -2,6 +2,7 @@
 
 import type { Target, AuditEvent } from "./gateway"
 import type { RpcEvent } from "./client"
+import type { AdminUser, AdminGrant, AdminToken, AdminInstance, AdminOperation } from "./admin"
 
 // 演示模式：内置 mock 数据 + 模拟流式输出，无需连接真实 gateway
 
@@ -325,7 +326,6 @@ export async function demoCallTool(
 }
 
 // ===================== 管理后台演示数据（可变，便于体验增删） =====================
-import type { AdminUser, AdminGrant, AdminToken, AdminInstance, AdminOperation } from "./admin"
 
 const nowISO = () => new Date().toISOString()
 const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString()

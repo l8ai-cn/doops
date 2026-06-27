@@ -23,6 +23,7 @@ import {
   type AdminInstance,
   type AdminOperation,
 } from "@/lib/admin"
+import { AdminConfigDispatch } from "./admin-config-dispatch"
 import {
   ServerIcon,
   UsersIcon,
@@ -35,12 +36,14 @@ import {
   BanIcon,
   CheckIcon,
   CopyIcon,
+  LayersIcon,
 } from "./icons"
 
-type AdminTab = "instances" | "users" | "grants" | "tokens" | "operations"
+type AdminTab = "instances" | "config" | "users" | "grants" | "tokens" | "operations"
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "instances", label: "实例", icon: ServerIcon },
+  { id: "config", label: "配置下发", icon: LayersIcon },
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "grants", label: "权限", icon: ShieldIcon },
   { id: "tokens", label: "令牌", icon: KeyIcon },
@@ -81,6 +84,7 @@ export function AdminConsole({ session }: { session: Session }) {
       </nav>
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "instances" && <InstancesView session={session} />}
+        {tab === "config" && <AdminConfigDispatch session={session} />}
         {tab === "users" && <UsersView session={session} />}
         {tab === "grants" && <GrantsView session={session} />}
         {tab === "tokens" && <TokensView session={session} />}
