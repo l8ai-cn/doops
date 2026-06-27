@@ -9,22 +9,25 @@ import { TargetSidebar } from "./target-sidebar"
 import { TerminalPanel } from "./terminal-panel"
 import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
+import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
 import {
   TerminalIcon,
   SparkIcon,
   FileIcon,
   HistoryIcon,
+  KeyIcon,
   LogoutIcon,
   ServerIcon,
 } from "./icons"
 
-type Tab = "terminal" | "ask" | "files" | "audit"
+type Tab = "terminal" | "ask" | "files" | "config" | "audit"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
   { id: "terminal", label: "终端", icon: TerminalIcon },
-  { id: "ask", label: "AI 运维 / 部署", icon: SparkIcon },
+  { id: "ask", label: "AI 对话 / 部署", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
+  { id: "config", label: "配置 / 密钥", icon: KeyIcon },
   { id: "audit", label: "审计", icon: HistoryIcon },
 ]
 
@@ -210,6 +213,14 @@ export function ConsoleShell() {
                 {tab === "files" && (
                   <FilesPanel
                     key={`files-${selected.key}-${sessionId}`}
+                    session={session}
+                    target={selected}
+                    sessionId={sessionId}
+                  />
+                )}
+                {tab === "config" && (
+                  <ConfigPanel
+                    key={`config-${selected.key}-${sessionId}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
