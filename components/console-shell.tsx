@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
+import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSidebar } from "./target-sidebar"
 import { TerminalPanel } from "./terminal-panel"
@@ -28,6 +29,7 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
 ]
 
 const GW_KEY = "doops.gateway"
+const DEMO_KEY = "doops.demo"
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)
@@ -40,8 +42,17 @@ export function ConsoleShell() {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem(GW_KEY) : null
+    if (typeof window === "undefined") return
+    const saved = localStorage.getItem(GW_KEY)
     if (saved) setDefaultGateway(saved)
+    // 自动进入演示模式：?demo=1 或上次以演示模式连接过
+    const wantsDemo =
+      new URLSearchParams(window.location.search).get("demo") === "1" ||
+      localStorage.getItem(DEMO_KEY) === "1"
+    if (wantsDemo) {
+      localStorage.setItem(DEMO_KEY, "1")
+      setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
+    }
   }, [])
 
   const refresh = useCallback(async () => {
@@ -73,11 +84,17 @@ export function ConsoleShell() {
   }, [session, refresh])
 
   function handleConnected(s: Session) {
-    localStorage.setItem(GW_KEY, s.gateway)
+    if (s.demo) {
+      localStorage.setItem(DEMO_KEY, "1")
+    } else {
+      localStorage.setItem(GW_KEY, s.gateway)
+      localStorage.removeItem(DEMO_KEY)
+    }
     setSession(s)
   }
 
   function logout() {
+    localStorage.removeItem(DEMO_KEY)
     setSession(null)
     setTargets([])
     setSelected(null)
