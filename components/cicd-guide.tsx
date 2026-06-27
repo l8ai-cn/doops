@@ -74,7 +74,17 @@ export function CicdGuide({ session }: { session: Session }) {
 
   // 用于示例中的展示值（未填写时给占位符）
   const gw = gateway.trim() || "https://gateway.example.com"
-  const keyDisplay = apiKey.trim() || "<DOOPS_API_KEY>"
+  const cluster = "prod-cn"
+  const instance = "web-01"
+  const installDoops = "curl -fsSL https://doops.sh/install.sh | sh"
+  const configureTarget = `export PATH="$HOME/.local/bin:$PATH"
+doops add \\
+  --name ci-target \\
+  --gateway "$DOOPS_GATEWAY" \\
+  --cluster "$DOOPS_CLUSTER" \\
+  --instance "$DOOPS_INSTANCE" \\
+  --token "$DOOPS_API_KEY" \\
+  --use "CI/CD deploy target"`
 
   const snippet = useMemo(() => {
     if (provider === "curl") {
@@ -82,18 +92,16 @@ export function CicdGuide({ session }: { session: Session }) {
         lang: "bash",
         code: `# 在 CI 环境变量中配置 DOOPS_API_KEY / DOOPS_GATEWAY
 export DOOPS_GATEWAY="${gw}"
-export DOOPS_API_KEY="${keyDisplay}"
+export DOOPS_API_KEY="<从 CI Secrets 注入>"
+export DOOPS_CLUSTER="${cluster}"
+export DOOPS_INSTANCE="${instance}"
 
-# 在指定实例上执行一条部署命令
-curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-  -H "Authorization: Bearer $DOOPS_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "cluster": "prod-cn",
-    "instance": "web-01",
-    "tool": "doops_shell",
-    "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-  }'`,
+# 安装 doops CLI 并注册 gateway 目标
+${installDoops}
+${configureTarget}
+
+# 在指定实例上执行部署命令
+doops -session "ci-${"${CI_PIPELINE_ID:-manual}"}" exec --target ci-target --cmd "cd /root/ws/app && ./deploy.sh"`,
       }
     }
     if (provider === "github") {
@@ -112,16 +120,12 @@ jobs:
         env:
           DOOPS_GATEWAY: ${gw}
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
+          DOOPS_CLUSTER: ${cluster}
+          DOOPS_INSTANCE: ${instance}
         run: |
-          curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-            -H "Authorization: Bearer $DOOPS_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{
-              "cluster": "prod-cn",
-              "instance": "web-01",
-              "tool": "doops_shell",
-              "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-            }'`,
+          ${installDoops}
+          ${configureTarget}
+          doops -session "github-${"${GITHUB_RUN_ID}"}" exec --target ci-target --cmd "cd /root/ws/app && ./deploy.sh"`,
       }
     }
     return {
@@ -131,21 +135,17 @@ jobs:
   image: curlimages/curl:latest
   variables:
     DOOPS_GATEWAY: "${gw}"
+    DOOPS_CLUSTER: "${cluster}"
+    DOOPS_INSTANCE: "${instance}"
   script:
     - |
-      curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-        -H "Authorization: Bearer $DOOPS_API_KEY" \\
-        -H "Content-Type: application/json" \\
-        -d '{
-          "cluster": "prod-cn",
-          "instance": "web-01",
-          "tool": "doops_shell",
-          "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-        }'
+      ${installDoops}
+      ${configureTarget}
+      doops -session "gitlab-$CI_PIPELINE_ID" exec --target ci-target --cmd "cd /root/ws/app && ./deploy.sh"
   only:
     - main`,
     }
-  }, [provider, gw, keyDisplay])
+  }, [provider, gw])
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10">
@@ -280,11 +280,10 @@ jobs:
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 
         <p className="mt-2 text-xs text-muted-foreground text-pretty leading-relaxed">
-          把示例中的 <code className="rounded bg-muted px-1">cluster</code> /{" "}
-          <code className="rounded bg-muted px-1">instance</code> 改为你的目标机器，
+          把示例中的 <code className="rounded bg-muted px-1">DOOPS_CLUSTER</code> /{" "}
+          <code className="rounded bg-muted px-1">DOOPS_INSTANCE</code> 改为你的目标机器，
           <code className="rounded bg-muted px-1">command</code> 改为实际部署命令即可。
-          也可把 <code className="rounded bg-muted px-1">tool</code> 换成{" "}
-          <code className="rounded bg-muted px-1">doops_file_write</code> 等其它能力。
+          发布会经过 gateway、目标 agent 与审计链路，和控制台终端执行保持一致。
         </p>
       </section>
 
@@ -295,8 +294,8 @@ jobs:
           工作原理
         </h2>
         <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-          <li>流水线携带 API Key 向网关 <code className="rounded bg-muted px-1">/api/rpc</code> 发起请求。</li>
-          <li>网关校验令牌身份与权限，把指令转发到目标实例上的 agent。</li>
+          <li>流水线通过 <code className="rounded bg-muted px-1">doops add</code> 用 API Key 注册 gateway 目标。</li>
+          <li><code className="rounded bg-muted px-1">doops exec</code> 通过 gateway 把部署命令转发到目标实例上的 agent。</li>
           <li>agent 执行命令并流式返回结果，所有操作都会记录到审计日志。</li>
         </ol>
       </section>
