@@ -69,7 +69,7 @@ export function DashboardPanel({
               {session.username ? `你好，${session.username}` : "欢迎使用 Doops"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground text-pretty">
-              这里是运维总览。无需记命令，选好机器后用终端或 AI 对话即可完成操作。
+              这里是运维总览。无需记命令，选好机器后直接用 AI 助手对话，它会帮你完成运维操作。
             </p>
           </div>
           <button
@@ -108,21 +108,24 @@ export function DashboardPanel({
                   <StatusDot status={single.status} busy={single.busy} className="ml-auto" />
                 </div>
                 <p className="mb-3 text-sm text-muted-foreground">
-                  你的机器已连接，选择下面任意一项开始：
+                  你的机器已连接，推荐直接用 AI 助手开始：
                 </p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <QuickAction
-                    icon={TerminalIcon}
-                    title="打开终端"
-                    desc="执行命令、查看状态"
-                    onClick={() => onOpenTab("terminal", single)}
-                  />
-                  <QuickAction
-                    icon={SparkIcon}
-                    title="AI 对话 / 部署"
-                    desc="用自然语言完成运维"
-                    onClick={() => onOpenTab("ask", single)}
-                  />
+                <button
+                  onClick={() => onOpenTab("ask", single)}
+                  className="mb-2 flex w-full items-center gap-3 rounded-lg border border-primary/40 bg-primary/10 px-4 py-3 text-left transition-colors hover:bg-primary/15"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                    <SparkIcon width={18} height={18} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">用 AI 助手运维</span>
+                    <span className="block text-xs text-muted-foreground">
+                      用自然语言描述需求，AI 自动执行命令、排查与部署
+                    </span>
+                  </span>
+                  <ChevronRightIcon width={16} height={16} className="ml-auto shrink-0 text-primary" />
+                </button>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <QuickAction
                     icon={FileIcon}
                     title="文件管理"
@@ -131,9 +134,15 @@ export function DashboardPanel({
                   />
                   <QuickAction
                     icon={RocketIcon}
-                    title="模型与配置"
-                    desc="配置 AI 模型与密钥"
+                    title="配置文件"
+                    desc="编辑并发布节点配置"
                     onClick={() => onOpenTab("config", single)}
+                  />
+                  <QuickAction
+                    icon={TerminalIcon}
+                    title="终端"
+                    desc="高级：直接执行命令"
+                    onClick={() => onOpenTab("terminal", single)}
                   />
                 </div>
               </div>
@@ -157,7 +166,7 @@ export function DashboardPanel({
                           {list.map((t) => (
                             <button
                               key={t.key}
-                              onClick={() => onOpenTab("terminal", t)}
+                              onClick={() => onOpenTab("ask", t)}
                               className="flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted"
                             >
                               <StatusDot status={t.status} busy={t.busy} />

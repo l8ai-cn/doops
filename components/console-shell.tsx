@@ -27,15 +27,15 @@ import {
   HelpIcon,
 } from "./icons"
 
-type Tab = "overview" | "terminal" | "ask" | "files" | "config" | "audit"
+type Tab = "overview" | "ask" | "files" | "config" | "audit" | "terminal"
 
-const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
+const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
-  { id: "terminal", label: "终端", icon: TerminalIcon },
-  { id: "ask", label: "AI 对话 / 部署", icon: SparkIcon },
+  { id: "ask", label: "AI 助手", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
-  { id: "config", label: "配置 / 密钥", icon: KeyIcon },
+  { id: "config", label: "配置文件", icon: KeyIcon },
   { id: "audit", label: "审计", icon: HistoryIcon },
+  { id: "terminal", label: "终端", icon: TerminalIcon, secondary: true },
 ]
 
 const GW_KEY = "doops.gateway"
@@ -123,6 +123,8 @@ export function ConsoleShell() {
   function selectTarget(t: Target) {
     setSelected(t)
     setSessionId(randomSession())
+    // AI 优先：从侧边栏选中机器后，默认进入 AI 助手而非终端
+    setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
   }
 
   if (!session) {
@@ -207,14 +209,24 @@ export function ConsoleShell() {
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
+                  title={t.secondary ? "高级：直接执行 shell 命令" : undefined}
                   className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
+                    t.secondary ? "ml-auto" : ""
+                  } ${
                     active
                       ? "border-primary text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      : t.secondary
+                        ? "border-transparent text-muted-foreground/70 hover:text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <Icon width={16} height={16} />
                   {t.label}
+                  {t.secondary && (
+                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
+                      高级
+                    </span>
+                  )}
                 </button>
               )
             })}

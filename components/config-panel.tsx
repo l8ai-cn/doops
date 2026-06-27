@@ -3,29 +3,45 @@
 import { useCallback, useEffect, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { loadConfigs, upsertConfig, newConfigId, type ModelConfig } from "@/lib/model-configs"
 import {
-  KeyIcon,
+  loadConfigs,
+  upsertConfig,
+  removeConfig,
+  newConfigId,
+  applyConfigToNode,
+  markPublished,
+  configKind,
+  configTargetPath,
+  hasUnpublishedChanges,
+  type ModelConfig,
+} from "@/lib/model-configs"
+import {
+  FileTextIcon,
   SaveIcon,
   RefreshIcon,
-  EyeIcon,
-  EyeOffIcon,
   PlusIcon,
   TrashIcon,
+  RocketIcon,
+  CheckIcon,
   LayersIcon,
 } from "./icons"
 
-const SETTINGS_PATH = "/root/.agent/settings.json"
+// 通用配置文件管理：编辑节点上任意配置文件并应用/发布。
+// 注意：大模型配置不在此处，请到「管理 → 配置中心」维护模型。
+const QUICK_PATHS = [
+  "/etc/nginx/conf.d/doops.conf",
+  "/etc/hosts",
+  "/etc/environment",
+  "/root/.agent/settings.json",
+]
 
-interface Settings {
-  provider?: string
-  model?: string
-  base_url?: string
-  api_key?: string
-  temperature?: number
-  max_tokens?: number
-  models?: string[]
-  [k: string]: unknown
+function formatFromPath(path: string): string {
+  const p = path.toLowerCase()
+  if (p.endsWith(".json")) return "json"
+  if (p.endsWith(".yaml") || p.endsWith(".yml")) return "yaml"
+  if (p.endsWith(".env") || p.endsWith("environment")) return "env"
+  if (p.endsWith(".conf") || p.endsWith(".ini") || p.endsWith(".cfg")) return "ini"
+  return "text"
 }
 
 export function ConfigPanel({
@@ -37,133 +53,59 @@ export function ConfigPanel({
   target: Target
   sessionId: string
 }) {
-  const [obj, setObj] = useState<Settings>({})
-  const [rawText, setRawText] = useState("")
-  const [mode, setMode] = useState<"form" | "raw">("form")
-  const [showKey, setShowKey] = useState(false)
+  const [path, setPath] = useState("")
+  const [content, setContent] = useState("")
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
-  const [selectedCfg, setSelectedCfg] = useState("")
 
   useEffect(() => {
     setConfigs(loadConfigs())
   }, [])
 
-  function applyPreset(id: string) {
-    const cfg = configs.find((c) => c.id === id)
-    if (!cfg) return
-    setObj((p) => ({
-      ...p,
-      provider: cfg.provider ?? p.provider,
-      model: cfg.model ?? p.model,
-      base_url: cfg.base_url ?? p.base_url,
-      api_key: cfg.api_key || p.api_key,
-      temperature: cfg.temperature ?? p.temperature,
-      max_tokens: cfg.max_tokens ?? p.max_tokens,
-      models: cfg.models && cfg.models.length ? cfg.models : p.models,
-    }))
-    setDirty(true)
-    setMode("form")
-    setStatus({ kind: "ok", text: `已套用配置「${cfg.name}」，点击保存写入节点` })
-  }
+  const fileConfigs = configs.filter((c) => configKind(c) === "file")
 
-  function saveAsPreset() {
-    const name = window.prompt("为当前配置命名（保存到配置库，可应用到其他节点）：")
-    if (!name) return
-    const list = upsertConfig({
-      id: newConfigId(),
-      name: name.trim(),
-      kind: "model",
-      provider: obj.provider,
-      model: obj.model,
-      base_url: obj.base_url,
-      api_key: obj.api_key as string | undefined,
-      temperature: obj.temperature,
-      max_tokens: obj.max_tokens,
-      models: obj.models,
-      updated_at: new Date().toISOString(),
-    })
-    setConfigs(list)
-    setStatus({ kind: "ok", text: `已保存到配置库：${name.trim()}` })
-  }
-
-  const load = useCallback(async () => {
-    setBusy(true)
-    setStatus(null)
-    let buf = ""
-    try {
-      await callTool(
-        session,
-        {
-          cluster: target.cluster,
-          instance: target.instance,
-          tool: TOOLS.fileRead,
-          arguments: { session_id: sessionId, path: SETTINGS_PATH },
-        },
-        (ev) => {
-          if (ev.type === "output") buf += ev.data
-          else if (ev.type === "result") buf += extractText(ev.result)
-          else if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
-        },
-      )
-      setRawText(buf)
-      try {
-        setObj(JSON.parse(buf))
-      } catch {
-        setStatus({ kind: "err", text: "settings.json 不是合法 JSON，已切换到原始编辑模式" })
-        setMode("raw")
-      }
-      setLoaded(true)
-      setDirty(false)
-    } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
-    } finally {
-      setBusy(false)
-    }
-  }, [session, target, sessionId])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  function setField<K extends keyof Settings>(key: K, value: Settings[K]) {
-    setObj((p) => ({ ...p, [key]: value }))
-    setDirty(true)
-  }
-
-  function switchMode(next: "form" | "raw") {
-    if (next === mode) return
-    if (next === "raw") {
-      setRawText(JSON.stringify(obj, null, 2))
-      setMode("raw")
-    } else {
-      try {
-        setObj(JSON.parse(rawText))
-        setMode("form")
-        setStatus(null)
-      } catch {
-        setStatus({ kind: "err", text: "JSON 解析失败，无法切换到表单模式" })
-      }
-    }
-  }
-
-  async function save() {
-    if (busy) return
-    let content: string
-    if (mode === "raw") {
-      try {
-        JSON.parse(rawText)
-      } catch {
-        setStatus({ kind: "err", text: "保存失败：JSON 格式不合法" })
+  const load = useCallback(
+    async (p: string) => {
+      if (!p.trim()) {
+        setStatus({ kind: "err", text: "请先填写要读取的文件路径" })
         return
       }
-      content = rawText
-    } else {
-      content = JSON.stringify(obj, null, 2) + "\n"
-    }
+      setBusy(true)
+      setStatus(null)
+      let buf = ""
+      try {
+        await callTool(
+          session,
+          {
+            cluster: target.cluster,
+            instance: target.instance,
+            tool: TOOLS.fileRead,
+            arguments: { session_id: sessionId, path: p },
+          },
+          (ev) => {
+            if (ev.type === "output") buf += ev.data
+            else if (ev.type === "result") buf += extractText(ev.result)
+            else if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
+          },
+        )
+        setContent(buf)
+        setLoaded(true)
+        setDirty(false)
+        setStatus({ kind: "ok", text: `已读取 ${p}` })
+      } catch (err) {
+        setStatus({ kind: "err", text: (err as Error).message })
+      } finally {
+        setBusy(false)
+      }
+    },
+    [session, target, sessionId],
+  )
+
+  async function saveToNode() {
+    if (busy || !path.trim()) return
     setBusy(true)
     setStatus(null)
     try {
@@ -173,12 +115,12 @@ export function ConfigPanel({
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.fileWrite,
-          arguments: { session_id: sessionId, path: SETTINGS_PATH, content },
+          arguments: { session_id: sessionId, path, content },
         },
         (ev) => {
           if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
           else if (ev.type === "result") {
-            setStatus({ kind: "ok", text: "配置已写入 settings.json" })
+            setStatus({ kind: "ok", text: `已应用并写入 ${path}` })
             setDirty(false)
           }
         },
@@ -190,238 +132,216 @@ export function ConfigPanel({
     }
   }
 
-  const models = obj.models || []
+  function openPath(p: string) {
+    setPath(p)
+    load(p)
+  }
+
+  function saveToLibrary() {
+    if (!path.trim()) {
+      setStatus({ kind: "err", text: "请先填写目标路径，再另存为配置" })
+      return
+    }
+    const name = window.prompt("为该配置文件命名（保存到配置库，可应用到其他机器）：")
+    if (!name) return
+    const list = upsertConfig({
+      id: newConfigId(),
+      name: name.trim(),
+      kind: "file",
+      path: path.trim(),
+      format: formatFromPath(path),
+      content,
+      updated_at: new Date().toISOString(),
+    })
+    setConfigs(list)
+    setStatus({ kind: "ok", text: `已保存到配置库：${name.trim()}` })
+  }
+
+  function editFromLibrary(cfg: ModelConfig) {
+    setPath(configTargetPath(cfg))
+    setContent(cfg.content ?? "")
+    setLoaded(true)
+    setDirty(true)
+    setStatus({ kind: "ok", text: `已载入「${cfg.name}」到编辑器，确认后点击「应用并保存」` })
+  }
+
+  async function applyFromLibrary(cfg: ModelConfig) {
+    setBusy(true)
+    setStatus(null)
+    try {
+      await applyConfigToNode(session, target, sessionId, cfg)
+      setConfigs(markPublished(cfg.id))
+      setStatus({ kind: "ok", text: `已应用「${cfg.name}」到 ${target.instance}` })
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function deleteFromLibrary(id: string) {
+    if (!window.confirm("确定从配置库删除该配置？")) return
+    setConfigs(removeConfig(id))
+  }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-card px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <KeyIcon width={16} height={16} className="text-primary" />
-          <span className="text-sm font-medium text-foreground">doagent 配置</span>
-          <span className="font-mono text-xs text-muted-foreground">{SETTINGS_PATH}</span>
-          {dirty && <span className="text-warning">●</span>}
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border p-0.5">
-            <button
-              onClick={() => switchMode("form")}
-              className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                mode === "form" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              表单
-            </button>
-            <button
-              onClick={() => switchMode("raw")}
-              className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                mode === "raw" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              原始 JSON
-            </button>
-          </div>
+    <div className="flex h-full min-h-0 flex-col lg:flex-row">
+      {/* 主编辑区 */}
+      <section className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+          <FileTextIcon width={16} height={16} className="text-primary" />
+          <span className="text-sm font-medium text-foreground">配置文件</span>
+          {dirty && <span className="text-warning" title="有未保存改动">●</span>}
+          <input
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="/etc/nginx/conf.d/doops.conf"
+            className="input ml-1 min-w-48 flex-1 font-mono text-xs"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") load(path)
+            }}
+          />
           <button
-            onClick={load}
+            onClick={() => load(path)}
             disabled={busy}
-            title="重新加载"
+            title="从节点读取"
             className="rounded-lg border p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
             <RefreshIcon width={15} height={15} className={busy ? "animate-spin" : ""} />
           </button>
           <button
-            onClick={save}
-            disabled={busy || !loaded}
+            onClick={saveToLibrary}
+            className="hidden rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted sm:block"
+          >
+            另存为配置
+          </button>
+          <button
+            onClick={saveToNode}
+            disabled={busy || !path.trim()}
             className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           >
-            <SaveIcon width={15} height={15} /> 保存
+            <SaveIcon width={15} height={15} /> 应用并保存
           </button>
         </div>
-      </div>
 
-      {status && (
-        <p
-          className={`mx-4 mt-3 rounded-lg px-3 py-2 text-sm ${
-            status.kind === "ok" ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"
-          }`}
-        >
-          {status.text}
-        </p>
-      )}
+        {/* 快捷路径 */}
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b bg-muted/30 px-4 py-2">
+          <span className="text-xs text-muted-foreground">快捷打开：</span>
+          {QUICK_PATHS.map((p) => (
+            <button
+              key={p}
+              onClick={() => openPath(p)}
+              className="rounded-md border bg-background px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {!loaded ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            {busy ? "加载配置中…" : "未能加载配置"}
-          </div>
-        ) : mode === "raw" ? (
-          <textarea
-            value={rawText}
-            onChange={(e) => {
-              setRawText(e.target.value)
-              setDirty(true)
-            }}
-            spellCheck={false}
-            className="h-full min-h-[20rem] w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-          />
-        ) : (
-          <div className="mx-auto flex max-w-2xl flex-col gap-4">
-            <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-muted/40 p-3">
-              <div className="flex min-w-48 flex-1 flex-col gap-1.5">
-                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                  <LayersIcon width={15} height={15} className="text-primary" /> 模型配置库
-                </span>
-                <select
-                  value={selectedCfg}
-                  onChange={(e) => setSelectedCfg(e.target.value)}
-                  className="input"
-                >
-                <option value="">选择一个预设…</option>
-                {configs
-                  .filter((c) => (c.kind ?? "model") === "model")
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.model ? ` · ${c.model}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                onClick={() => selectedCfg && applyPreset(selectedCfg)}
-                disabled={!selectedCfg}
-                className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
-                套用到表单
-              </button>
-              <button
-                onClick={saveAsPreset}
-                className="rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
-              >
-                当前另存为
-              </button>
-            </div>
-
-            <Field label="Provider" hint="模型提供方，如 openai-compatible / anthropic">
-              <input
-                value={obj.provider ?? ""}
-                onChange={(e) => setField("provider", e.target.value)}
-                className="input"
-                placeholder="openai-compatible"
-              />
-            </Field>
-
-            <Field label="默认模型 (model)">
-              <input
-                value={obj.model ?? ""}
-                onChange={(e) => setField("model", e.target.value)}
-                className="input font-mono"
-                placeholder="openai/gpt-5.4"
-              />
-            </Field>
-
-            <Field label="API 网关 (base_url)">
-              <input
-                value={obj.base_url ?? ""}
-                onChange={(e) => setField("base_url", e.target.value)}
-                className="input font-mono"
-                placeholder="https://api.example.com/v1"
-              />
-            </Field>
-
-            <Field label="API 密钥 (api_key)" hint="生产环境建议用 Secret 注入，避免明文写入 ConfigMap">
-              <div className="flex items-center gap-2">
-                <input
-                  type={showKey ? "text" : "password"}
-                  value={(obj.api_key as string) ?? ""}
-                  onChange={(e) => setField("api_key", e.target.value)}
-                  className="input flex-1 font-mono"
-                  placeholder="sk-..."
-                />
-                <button
-                  onClick={() => setShowKey((s) => !s)}
-                  className="rounded-lg border p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  title={showKey ? "隐藏" : "显示"}
-                >
-                  {showKey ? <EyeOffIcon width={16} height={16} /> : <EyeIcon width={16} height={16} />}
-                </button>
-              </div>
-            </Field>
-
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="temperature">
-                <input
-                  type="number"
-                  step="0.1"
-                  value={obj.temperature ?? ""}
-                  onChange={(e) => setField("temperature", e.target.value === "" ? undefined : Number(e.target.value))}
-                  className="input font-mono"
-                />
-              </Field>
-              <Field label="max_tokens">
-                <input
-                  type="number"
-                  value={obj.max_tokens ?? ""}
-                  onChange={(e) => setField("max_tokens", e.target.value === "" ? undefined : Number(e.target.value))}
-                  className="input font-mono"
-                />
-              </Field>
-            </div>
-
-            <Field label="可用模型列表 (models)">
-              <div className="flex flex-col gap-2">
-                {models.map((m, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <input
-                      value={m}
-                      onChange={(e) => {
-                        const next = models.slice()
-                        next[i] = e.target.value
-                        setField("models", next)
-                      }}
-                      className="input flex-1 font-mono"
-                    />
-                    <button
-                      onClick={() => setField("models", models.filter((_, j) => j !== i))}
-                      className="rounded-lg border p-2 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
-                      title="删除"
-                    >
-                      <TrashIcon width={15} height={15} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => setField("models", [...models, ""])}
-                  className="flex w-fit items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
-                >
-                  <PlusIcon width={14} height={14} /> 添加模型
-                </button>
-              </div>
-            </Field>
-
-            <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
-              安全提示：API 密钥保存在边缘节点的 settings.json。生产环境请通过 Kubernetes Secret 或节点本地文件注入，不要写入 ConfigMap 模板。
-            </p>
-          </div>
+        {status && (
+          <p
+            className={`mx-4 mt-3 rounded-lg px-3 py-2 text-sm ${
+              status.kind === "ok" ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"
+            }`}
+          >
+            {status.text}
+          </p>
         )}
-      </div>
-    </div>
-  )
-}
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string
-  hint?: string
-  children: React.ReactNode
-}) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium text-foreground">{label}</span>
-      {children}
-      {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
-    </label>
+        <div className="min-h-0 flex-1 p-4">
+          {!loaded ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+              <FileTextIcon width={30} height={30} />
+              <p className="text-sm">输入路径或点击上方快捷按钮打开配置文件</p>
+              <p className="max-w-md text-xs">
+                这里管理节点上的通用配置文件。AI 模型配置请前往「管理 → 配置中心」。
+              </p>
+            </div>
+          ) : (
+            <textarea
+              value={content}
+              onChange={(e) => {
+                setContent(e.target.value)
+                setDirty(true)
+              }}
+              spellCheck={false}
+              className="h-full min-h-[20rem] w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+          )}
+        </div>
+      </section>
+
+      {/* 配置库 */}
+      <aside className="flex min-h-0 w-full flex-col border-t lg:w-80 lg:border-l lg:border-t-0">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-card px-4 py-2.5">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <LayersIcon width={15} height={15} className="text-primary" /> 配置库
+          </span>
+          <button
+            onClick={saveToLibrary}
+            className="flex items-center gap-1 rounded-lg border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+          >
+            <PlusIcon width={13} height={13} /> 存当前
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-3">
+          {fileConfigs.length === 0 ? (
+            <p className="px-1 py-8 text-center text-xs text-muted-foreground">
+              暂无可复用的配置文件。编辑后点击「另存为配置」即可保存，方便应用到其他机器。
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {fileConfigs.map((c) => {
+                const unpublished = hasUnpublishedChanges(c)
+                return (
+                  <li key={c.id} className="rounded-lg border bg-card px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          unpublished ? "bg-warning/15 text-warning" : "bg-success/15 text-success"
+                        }`}
+                        title={c.published_at ? `最近应用：${new Date(c.published_at).toLocaleString()}` : "尚未应用"}
+                      >
+                        {unpublished ? (c.published_at ? "有改动" : "未应用") : "已应用"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                      {configTargetPath(c) || "未设置路径"}
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <button
+                        onClick={() => applyFromLibrary(c)}
+                        disabled={busy}
+                        className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        <RocketIcon width={12} height={12} /> 应用到本机
+                      </button>
+                      <button
+                        onClick={() => editFromLibrary(c)}
+                        className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                      >
+                        载入编辑
+                      </button>
+                      <button
+                        onClick={() => deleteFromLibrary(c.id)}
+                        className="ml-auto rounded-md border border-destructive/40 px-1.5 py-1 text-destructive transition-colors hover:bg-destructive/10"
+                        aria-label="删除配置"
+                      >
+                        <TrashIcon width={13} height={13} />
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            <CheckIcon width={13} height={13} className="mt-0.5 shrink-0 text-primary" />
+            <span>AI 大模型配置已独立到「管理 → 配置中心」，这里只负责通用配置文件。</span>
+          </p>
+        </div>
+      </aside>
+    </div>
   )
 }
