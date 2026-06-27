@@ -10,7 +10,6 @@ import {
   StopIcon,
   PlusIcon,
   ChevronRightIcon,
-  KeyIcon,
   CopyIcon,
   CheckIcon,
   GitIcon,
@@ -59,24 +58,30 @@ export function AskPanel({
   session,
   target,
   sessionId,
+  onConfigureModel,
 }: {
   session: Session
   target: Target
   sessionId: string
+  onConfigureModel?: () => void
 }) {
   const [instruction, setInstruction] = useState("")
   const [turns, setTurns] = useState<Turn[]>([])
   const [running, setRunning] = useState(false)
   const [activeModel, setActiveModel] = useState<string | null>(null)
+  // 连接状态：是否已为该节点配置可用大模型
+  const [modelStatus, setModelStatus] = useState<"loading" | "connected" | "unconfigured">("loading")
   const [repos, setRepos] = useState<GitRepo[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
-  // 读取节点上配置的当前模型（只读展示，模型只在「配置 / 密钥」页修改）
+  // 读取节点上配置的大模型，判断 AI 助手是否已连接可用（模型只在「管理 → 配置中心」修改）
   useEffect(() => {
     let cancelled = false
     let buf = ""
+    setModelStatus("loading")
+    setActiveModel(null)
     callTool(
       session,
       {
@@ -94,12 +99,20 @@ export function AskPanel({
         if (cancelled) return
         try {
           const m = JSON.parse(buf)?.model
-          if (typeof m === "string" && m) setActiveModel(m)
+          if (typeof m === "string" && m) {
+            setActiveModel(m)
+            setModelStatus("connected")
+          } else {
+            setModelStatus("unconfigured")
+          }
         } catch {
-          /* 忽略：未配置或非 JSON */
+          // 文件不存在 / 非 JSON：视为尚未连接大模型
+          setModelStatus("unconfigured")
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setModelStatus("unconfigured")
+      })
     return () => {
       cancelled = true
     }
@@ -141,7 +154,7 @@ export function AskPanel({
 
   async function run() {
     const text = instruction.trim()
-    if (!text || running) return
+    if (!text || running || modelStatus !== "connected") return
     setInstruction("")
     const turn: Turn = { id: crypto.randomUUID(), user: text, process: "", answer: "", running: true }
     setTurns((p) => [...p, turn])
@@ -200,13 +213,28 @@ export function AskPanel({
           <span className="font-mono">session: {sessionId}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span
-            className="flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-1 font-mono text-xs text-muted-foreground"
-            title="当前模型由节点的 settings.json 决定，可在「配置 / 密钥」页修改"
-          >
-            <KeyIcon width={12} height={12} />
-            {activeModel ?? "模型：随节点配置"}
-          </span>
+          {modelStatus === "connected" ? (
+            <span
+              className="flex items-center gap-1.5 rounded-md border border-success/40 bg-success/10 px-2 py-1 font-mono text-xs text-foreground"
+              title="AI 助手已连接大模型，可在「管理 → 配置中心」修改"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+              {activeModel}
+            </span>
+          ) : modelStatus === "loading" ? (
+            <span className="flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+              检测连接中…
+            </span>
+          ) : (
+            <span
+              className="flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive"
+              title="该节点尚未配置大模型，无法使用 AI 助手"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+              未连接大模型
+            </span>
+          )}
           <button
             onClick={newConversation}
             disabled={turns.length === 0 && !instruction}
@@ -218,7 +246,31 @@ export function AskPanel({
       </div>
 
       <div ref={logRef} className="flex-1 overflow-y-auto p-4">
-        {turns.length === 0 ? (
+        {modelStatus === "unconfigured" ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+              <SparkIcon width={26} height={26} />
+            </div>
+            <p className="text-base font-medium text-foreground">AI 助手尚未连接大模型</p>
+            <p className="max-w-sm text-pretty text-sm">
+              {target.instance} 还没有配置可用的大模型，无法对话。请先在「管理 → 配置中心」添加大模型并应用到该节点。
+            </p>
+            {onConfigureModel && (
+              <button
+                onClick={onConfigureModel}
+                className="mt-1 flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                <SparkIcon width={15} height={15} /> 去连接大模型
+              </button>
+            )}
+            <p className="text-xs text-muted-foreground/80">配置好后回到此页即可开始对话</p>
+          </div>
+        ) : modelStatus === "loading" ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+            <p className="text-sm">正在检测大模型连接…</p>
+          </div>
+        ) : turns.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <SparkIcon width={26} height={26} />
@@ -293,6 +345,7 @@ export function AskPanel({
             <textarea
               ref={taRef}
               value={instruction}
+              disabled={modelStatus !== "connected"}
               onChange={(e) => setInstruction(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -300,9 +353,13 @@ export function AskPanel({
                   run()
                 }
               }}
-              placeholder="继续对话或下发新任务，例如：检查仓库，构建镜像并更新 deployment/app"
+              placeholder={
+                modelStatus === "connected"
+                  ? "继续对话或下发新任务，例如：检查仓库，构建镜像并更新 deployment/app"
+                  : "请先连接大模型后再使用 AI 助手"
+              }
               rows={1}
-              className="max-h-48 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
+              className="max-h-48 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-60"
             />
             {running ? (
               <button
@@ -314,7 +371,7 @@ export function AskPanel({
             ) : (
               <button
                 onClick={run}
-                disabled={!instruction.trim()}
+                disabled={!instruction.trim() || modelStatus !== "connected"}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 <SendIcon width={16} height={16} /> 发送

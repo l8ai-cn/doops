@@ -282,6 +282,7 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    onConfigureModel={() => setView("admin")}
                   />
                 )}
                 {tab === "files" && (
