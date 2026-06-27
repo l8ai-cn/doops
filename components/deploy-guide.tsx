@@ -14,7 +14,18 @@ import {
   ChevronRightIcon,
   PlugIcon,
   RefreshIcon,
+  LayersIcon,
+  FileIcon,
 } from "./icons"
+
+// 架构拓扑中的双向连接箭头
+function ArrowFlow() {
+  return (
+    <span aria-hidden className="flex-1 text-center font-mono text-sm text-border">
+      {"<——>"}
+    </span>
+  )
+}
 
 // 可复制命令块
 function Cmd({ children }: { children: string }) {
@@ -177,7 +188,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
           </span>
           <h1 className="text-2xl font-semibold text-balance">部署 Doops Agent</h1>
           <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-            Doops 通过在你的服务器上安装一个轻量 agent 来工作。agent 启动后会主动连接 gateway，机器随即出现在控制台，之后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
+            Doops 通过在你的服务器上安装一个轻量 agent 来工作。机器接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。下面先了解两种连接架构，再选择适合你的部署方式。
           </p>
         </div>
 
@@ -202,6 +213,107 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
             </p>
           </div>
         </div>
+
+        {/* 两种连接架构 */}
+        <section className="mb-12">
+          <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold">
+            <LayersIcon width={18} height={18} className="text-primary" />
+            两种连接架构
+          </h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            根据网络环境与安全要求，Doops 支持两种连接方式，部署前请先选定。
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* 架构一：经 gateway 中转 */}
+            <div className="flex flex-col rounded-xl border bg-card p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <ServerIcon width={16} height={16} />
+                </span>
+                <div>
+                  <div className="text-sm font-semibold text-foreground">经 Gateway 中转</div>
+                  <div className="text-xs text-muted-foreground">推荐 · 适合多机器 / 公网</div>
+                </div>
+              </div>
+              {/* 拓扑示意 */}
+              <div className="mb-3 flex items-center justify-between gap-1 rounded-lg border bg-background px-3 py-3 text-center text-[11px] text-muted-foreground">
+                <span className="flex flex-col items-center gap-1">
+                  <FileIcon width={15} height={15} className="text-foreground" />
+                  Web / 客户端
+                </span>
+                <ArrowFlow />
+                <span className="flex flex-col items-center gap-1">
+                  <ShieldIcon width={15} height={15} className="text-primary" />
+                  Gateway
+                </span>
+                <ArrowFlow />
+                <span className="flex flex-col items-center gap-1">
+                  <ServerIcon width={15} height={15} className="text-foreground" />
+                  实例 Agent
+                </span>
+              </div>
+              <p className="mb-3 text-xs leading-relaxed text-muted-foreground text-pretty">
+                Agent 与 Web/客户端都<strong className="text-foreground">主动连接同一个 gateway</strong>，由 gateway 居中转发。实例无需暴露公网端口，只要能出站访问 gateway 即可。
+              </p>
+              <ul className="mt-auto space-y-1.5 text-xs text-muted-foreground">
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  实例可位于内网 / NAT 之后，无需公网 IP
+                </li>
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  统一鉴权与审计，便于管理多台机器
+                </li>
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  需要先部署 / 拥有一个可用的 gateway
+                </li>
+              </ul>
+            </div>
+
+            {/* 架构二：Web 直连实例 */}
+            <div className="flex flex-col rounded-xl border bg-card p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-foreground">
+                  <PlugIcon width={16} height={16} />
+                </span>
+                <div>
+                  <div className="text-sm font-semibold text-foreground">Web 直连实例</div>
+                  <div className="text-xs text-muted-foreground">轻量 · 适合单机 / 内网</div>
+                </div>
+              </div>
+              {/* 拓扑示意 */}
+              <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border bg-background px-3 py-3 text-center text-[11px] text-muted-foreground">
+                <span className="flex flex-col items-center gap-1">
+                  <FileIcon width={15} height={15} className="text-foreground" />
+                  Web / 客户端
+                </span>
+                <ArrowFlow />
+                <span className="flex flex-col items-center gap-1">
+                  <ServerIcon width={15} height={15} className="text-foreground" />
+                  实例 Agent
+                </span>
+              </div>
+              <p className="mb-3 text-xs leading-relaxed text-muted-foreground text-pretty">
+                Web/客户端<strong className="text-foreground">直接连接实例上的 agent</strong>，不经过 gateway。链路更短、部署更简单，但实例需要可被客户端直接访问（公网或同一内网）。
+              </p>
+              <ul className="mt-auto space-y-1.5 text-xs text-muted-foreground">
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  无需 gateway，部署组件最少
+                </li>
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  链路最短，适合本机或单台调试
+                </li>
+                <li className="flex gap-2">
+                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
+                  实例需开放 agent 端口并自行做好访问控制
+                </li>
+              </ul>
+            </div>
+          </div>
+        </section>
 
         {/* 步骤 */}
         <section className="space-y-6">
