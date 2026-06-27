@@ -9,6 +9,7 @@ import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
 import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
+import { KnowledgeBase } from "./knowledge-base"
 import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
@@ -18,6 +19,7 @@ import {
   TerminalIcon,
   SparkIcon,
   FileIcon,
+  FileTextIcon,
   HistoryIcon,
   KeyIcon,
   LogoutIcon,
@@ -27,12 +29,13 @@ import {
   HelpIcon,
 } from "./icons"
 
-type Tab = "overview" | "ask" | "files" | "config" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "files" | "kb" | "config" | "audit" | "terminal"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "ask", label: "AI 助手", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
+  { id: "kb", label: "知识库", icon: FileTextIcon },
   { id: "config", label: "配置文件", icon: KeyIcon },
   { id: "audit", label: "审计", icon: HistoryIcon },
   { id: "terminal", label: "终端", icon: TerminalIcon, secondary: true },
@@ -256,8 +259,8 @@ export function ConsoleShell() {
             </div>
           ) : (
             <>
-              {/* files 与 ask 面板自带 session 控件，避免重复占一行 */}
-              {tab !== "files" && tab !== "ask" && (
+              {/* files / ask / kb 面板自带头部，避免重复占一行 */}
+              {tab !== "files" && tab !== "ask" && tab !== "kb" && (
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
@@ -296,6 +299,14 @@ export function ConsoleShell() {
                     target={selected}
                     sessionId={sessionId}
                     onSessionChange={setSessionId}
+                  />
+                )}
+                {tab === "kb" && (
+                  <KnowledgeBase
+                    key={`kb-${selected.key}`}
+                    session={session}
+                    target={selected}
+                    sessionId={sessionId}
                   />
                 )}
                 {tab === "config" && (

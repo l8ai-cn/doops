@@ -147,13 +147,83 @@ const DEMO_DIRS: Record<string, { name: string; dir: boolean }[]> = {
     { name: "skills", dir: true },
     { name: "settings.json", dir: false },
   ],
+  "/root/kb": [
+    { name: "运维手册.md", dir: false },
+    { name: "部署流程.md", dir: false },
+    { name: "故障排查.md", dir: false },
+  ],
   "/root": [
     { name: "ws", dir: true },
     { name: ".agent", dir: true },
+    { name: "kb", dir: true },
   ],
 }
 
+// 知识库演示文档内容
+const DEMO_KB: Record<string, string> = {
+  "/root/kb/运维手册.md": `# 运维手册
+
+> 本手册由团队共同维护，记录节点的日常运维约定。
+
+## 服务清单
+
+| 服务 | 说明 | 端口 |
+| --- | --- | --- |
+| \`doops-app\` | 主应用 | 8080 |
+| \`nginx\` | 反向代理 | 80 / 443 |
+| \`redis\` | 缓存 | 6379 |
+
+## 常用命令
+
+\`\`\`bash
+systemctl status doops-app
+journalctl -u doops-app -n 100 --no-pager
+\`\`\`
+
+## 值班约定
+
+1. 告警优先在群里 **认领**，避免重复处理。
+2. 生产变更必须先在 staging 验证。
+3. 任何回滚都要在本知识库登记。
+`,
+  "/root/kb/部署流程.md": `# 标准部署流程
+
+## 1. 准备
+
+- 确认目标分支已合并并通过 CI
+- 核对发布版本号
+
+## 2. 构建与发布
+
+\`\`\`bash
+ln -sfn releases/1.8.3 current
+nginx -s reload
+\`\`\`
+
+## 3. 验证
+
+- 健康检查 \`/healthz\` 返回 **200**
+- 观察 5 分钟错误日志
+
+> 如有异常，立即按《故障排查》回滚。
+`,
+  "/root/kb/故障排查.md": `# 故障排查
+
+## 健康检查失败
+
+1. 查看应用日志：\`journalctl -u doops-app -p err\`
+2. 确认依赖服务（redis / 数据库）可用
+3. 必要时回滚到上一个稳定版本
+
+## 磁盘告警
+
+- 清理历史发布包，保留最近 3 个版本
+- 压缩并归档旧日志
+`,
+}
+
 function demoFileContent(path: string): string {
+  if (DEMO_KB[path]) return DEMO_KB[path]
   if (path.includes("settings.json")) return DEMO_SETTINGS
   if (path.endsWith("deploy.sh"))
     return "#!/usr/bin/env bash\nset -euo pipefail\nIMAGE=doops/app:${1:-latest}\nbuildctl build --frontend dockerfile.v0 --local context=. --output type=image,name=$IMAGE\nkubectl set image deployment/app app=$IMAGE\nkubectl rollout status deployment/app\n"
@@ -204,8 +274,8 @@ async function emitChunks(
 // 根据 shell 命令产出模拟输出
 function shellOutput(cmd: string): string[] {
   const c = cmd.trim()
-  // 文件浏览器目录列举：ls -1Ap <path>
-  const lsMatch = c.match(/^ls\s+-1Ap\s+(?:"([^"]+)"|'([^']+)'|(\S+))/)
+  // 文件浏览器目录列举：ls -1Ap <path>（允许前置 mkdir -p ...; 等复合命令）
+  const lsMatch = c.match(/(?:^|;\s*)ls\s+-1Ap\s+(?:"([^"]+)"|'([^']+)'|(\S+))/)
   if (lsMatch) {
     const dir = lsMatch[1] || lsMatch[2] || lsMatch[3] || "/"
     return demoListing(dir)
