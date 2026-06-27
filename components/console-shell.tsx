@@ -256,16 +256,19 @@ export function ConsoleShell() {
             </div>
           ) : (
             <>
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  session
-                  <input
-                    value={sessionId}
-                    onChange={(e) => setSessionId(e.target.value)}
-                    className="w-44 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
-                  />
-                </label>
-              </div>
+              {/* files 面板自带 session 控件，避免重复占一行 */}
+              {tab !== "files" && (
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    session
+                    <input
+                      value={sessionId}
+                      onChange={(e) => setSessionId(e.target.value)}
+                      className="w-44 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
+                    />
+                  </label>
+                </div>
+              )}
 
               <div className="min-h-0 flex-1">
                 {tab === "terminal" && (
@@ -291,6 +294,7 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    onSessionChange={setSessionId}
                   />
                 )}
                 {tab === "config" && (

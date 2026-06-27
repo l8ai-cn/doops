@@ -61,10 +61,12 @@ export function FilesPanel({
   session,
   target,
   sessionId,
+  onSessionChange,
 }: {
   session: Session
   target: Target
   sessionId: string
+  onSessionChange?: (id: string) => void
 }) {
   const [cwd, setCwd] = useState(`/root/ws/${sessionId}`)
   const [entries, setEntries] = useState<Entry[]>([])
@@ -353,10 +355,23 @@ export function FilesPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* 上传工具条 */}
+      {/* 上传工具条（含 session） */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-3 py-2">
-        <span className="text-xs font-medium text-muted-foreground">上传到</span>
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">{cwd}</code>
+        {onSessionChange ? (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            session
+            <input
+              value={sessionId}
+              onChange={(e) => onSessionChange(e.target.value)}
+              className="w-40 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
+            />
+          </label>
+        ) : (
+          <span className="text-xs font-medium text-muted-foreground">上传到</span>
+        )}
+        <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline">
+          {cwd}
+        </code>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <input
             ref={fileInputRef}
