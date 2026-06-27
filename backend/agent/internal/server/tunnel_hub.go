@@ -241,6 +241,8 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/grants", h.HandleAdminGrants)
 	mux.HandleFunc("/v1/admin/instances", h.HandleAdminInstances)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
+	mux.HandleFunc("/v1/admin/repos", h.HandleAdminRepos)
+	mux.HandleFunc("/v1/admin/repos/test", h.HandleAdminRepoTest)
 	mux.HandleFunc("/v1/admin/jobs", h.HandleAdminJobs)
 	mux.HandleFunc("/v1/admin/jobs/run", h.HandleAdminJobRun)
 	mux.HandleFunc("/v1/admin/jobs/issues", h.HandleAdminJobIssues)

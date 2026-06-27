@@ -693,6 +693,163 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 	}
 }
 
+func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	admin, _ := store.CreateUser("admin")
+	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
+	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+		t.Fatalf("grant admin: %v", err)
+	}
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/repos", nil)
+	req.Header.Set("Authorization", "Bearer "+userToken.Plaintext)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("list repos as user: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected non-admin repo list to be forbidden, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	reqBody := strings.NewReader(`{"name":"doops","url":"https://github.com/l8ai-cn/doops.git","branch":"main","username":"bot","password":"secret","description":"public repo"}`)
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/admin/repos", reqBody)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected repo create to succeed, got %d: %s", resp.StatusCode, body)
+	}
+	createBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read created repo body: %v", err)
+	}
+	if strings.Contains(string(createBody), "last_used_at") {
+		t.Fatalf("unused repo response must omit last_used_at, got %s", createBody)
+	}
+	var created GitRepo
+	if err := json.Unmarshal(createBody, &created); err != nil {
+		t.Fatalf("decode created repo: %v", err)
+	}
+	if created.ID == "" || created.Name != "doops" || created.Branch != "main" || !created.HasPassword {
+		t.Fatalf("unexpected created repo: %#v", created)
+	}
+	if created.PasswordHash != "" {
+		t.Fatalf("repo response must not expose password hash: %#v", created)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/repos", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("list repos: %v", err)
+	}
+	var listed struct {
+		Repos []GitRepo `json:"repos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode repos: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(listed.Repos) != 1 || listed.Repos[0].ID != created.ID || !listed.Repos[0].HasPassword {
+		t.Fatalf("unexpected repo list status=%d repos=%#v", resp.StatusCode, listed.Repos)
+	}
+
+	reqBody = strings.NewReader(`{"branch":"release","description":"updated"}`)
+	req, _ = http.NewRequest(http.MethodPatch, ts.URL+"/v1/admin/repos?id="+url.QueryEscape(created.ID), reqBody)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("update repo: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected repo update to succeed, got %d: %s", resp.StatusCode, body)
+	}
+	updateBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read updated repo body: %v", err)
+	}
+	if strings.Contains(string(updateBody), "last_used_at") {
+		t.Fatalf("unused updated repo response must omit last_used_at, got %s", updateBody)
+	}
+	var updated GitRepo
+	if err := json.Unmarshal(updateBody, &updated); err != nil {
+		t.Fatalf("decode updated repo: %v", err)
+	}
+	if updated.Branch != "release" || updated.Description != "updated" || !updated.HasPassword {
+		t.Fatalf("unexpected updated repo: %#v", updated)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/admin/repos/test?id="+url.QueryEscape(created.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("test repo: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected repo test to return JSON, got %d: %s", resp.StatusCode, body)
+	}
+	var tested struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tested); err != nil {
+		t.Fatalf("decode repo test response: %v", err)
+	}
+	if !strings.Contains(tested.Message, "已保存") {
+		t.Fatalf("expected saved repo test message, got %#v", tested)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/v1/admin/repos?id="+url.QueryEscape(created.ID), nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete repo: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected repo delete to succeed, got %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/repos", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("list repos after delete: %v", err)
+	}
+	listed.Repos = nil
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode repos after delete: %v", err)
+	}
+	resp.Body.Close()
+	if len(listed.Repos) != 0 {
+		t.Fatalf("expected no repos after delete, got %#v", listed.Repos)
+	}
+}
+
 func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

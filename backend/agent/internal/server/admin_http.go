@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,8 +74,8 @@ func (h *GatewayHub) HandleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSONHTTP(w, map[string]interface{}{
-			"id":      user.ID,
-			"name":    user.Name,
+			"id":       user.ID,
+			"name":     user.Name,
 			"is_admin": req.Admin,
 		})
 	default:
@@ -233,6 +234,106 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		out = append(out, info)
 	}
 	writeJSONHTTP(w, map[string]interface{}{"instances": out})
+}
+
+// HandleAdminRepos 管理控制台可选择的代码仓库配置。
+func (h *GatewayHub) HandleAdminRepos(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		repos, err := h.store.ListGitRepos()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if repos == nil {
+			repos = []GitRepo{}
+		}
+		writeJSONHTTP(w, map[string]interface{}{"repos": repos})
+	case http.MethodPost:
+		var req GitRepoInput
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid repo request", http.StatusBadRequest)
+			return
+		}
+		repo, err := h.store.CreateGitRepo(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONHTTP(w, repo)
+	case http.MethodPatch, http.MethodPut:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		var req GitRepoInput
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid repo request", http.StatusBadRequest)
+			return
+		}
+		repo, err := h.store.UpdateGitRepo(id, req)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "repo not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONHTTP(w, repo)
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := h.store.DeleteGitRepo(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "repo not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"id": id, "deleted": true})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleAdminRepoTest validates that the saved repository record is usable by
+// the console. Network reachability is intentionally left to deployment-time
+// agent workflows so gateway startup is not coupled to external Git hosts.
+func (h *GatewayHub) HandleAdminRepoTest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	repo, err := h.store.MarkGitRepoUsed(id, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "repo not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONHTTP(w, map[string]interface{}{
+		"ok":      true,
+		"message": fmt.Sprintf("仓库配置已保存：%s (%s)", repo.Name, repo.Branch),
+	})
 }
 
 // resolveUserID 优先用 user_id，否则按用户名查找。

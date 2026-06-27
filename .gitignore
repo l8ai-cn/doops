@@ -20,6 +20,12 @@ dist/*
 !skills/doops-cli/bin/
 !skills/doops-cli/bin/*
 
+# Frontend dependencies / build output
+node_modules/
+.next/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
 # ========================================
 # 运行时临时文件
 # ========================================
