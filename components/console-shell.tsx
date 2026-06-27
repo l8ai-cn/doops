@@ -256,8 +256,8 @@ export function ConsoleShell() {
             </div>
           ) : (
             <>
-              {/* files 面板自带 session 控件，避免重复占一行 */}
-              {tab !== "files" && (
+              {/* files 与 ask 面板自带 session 控件，避免重复占一行 */}
+              {tab !== "files" && tab !== "ask" && (
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
@@ -286,6 +286,7 @@ export function ConsoleShell() {
                     target={selected}
                     sessionId={sessionId}
                     onConfigureModel={() => setView("admin")}
+                    onSessionChange={setSessionId}
                   />
                 )}
                 {tab === "files" && (

@@ -59,11 +59,13 @@ export function AskPanel({
   target,
   sessionId,
   onConfigureModel,
+  onSessionChange,
 }: {
   session: Session
   target: Target
   sessionId: string
   onConfigureModel?: () => void
+  onSessionChange?: (id: string) => void
 }) {
   const [instruction, setInstruction] = useState("")
   const [turns, setTurns] = useState<Turn[]>([])
@@ -210,7 +212,18 @@ export function AskPanel({
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <SparkIcon width={14} height={14} className="text-primary" />
           <span className="font-medium text-foreground">ACP 对话</span>
-          <span className="font-mono">session: {sessionId}</span>
+          {onSessionChange ? (
+            <label className="flex items-center gap-1">
+              session
+              <input
+                value={sessionId}
+                onChange={(e) => onSessionChange(e.target.value)}
+                className="w-36 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
+              />
+            </label>
+          ) : (
+            <span className="font-mono">session: {sessionId}</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {modelStatus === "connected" ? (
