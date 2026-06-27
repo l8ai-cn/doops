@@ -24,6 +24,7 @@ import {
   type AdminOperation,
 } from "@/lib/admin"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
+import { AdminJobs } from "./admin-jobs"
 import {
   ServerIcon,
   UsersIcon,
@@ -37,13 +38,15 @@ import {
   CheckIcon,
   CopyIcon,
   LayersIcon,
+  HistoryIcon,
 } from "./icons"
 
-type AdminTab = "instances" | "config" | "users" | "grants" | "tokens" | "operations"
+type AdminTab = "instances" | "config" | "jobs" | "users" | "grants" | "tokens" | "operations"
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "instances", label: "实例", icon: ServerIcon },
   { id: "config", label: "配置中心", icon: LayersIcon },
+  { id: "jobs", label: "巡检任务", icon: HistoryIcon },
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "grants", label: "权限", icon: ShieldIcon },
   { id: "tokens", label: "令牌", icon: KeyIcon },
@@ -85,6 +88,7 @@ export function AdminConsole({ session }: { session: Session }) {
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "instances" && <InstancesView session={session} />}
         {tab === "config" && <AdminConfigDispatch session={session} />}
+        {tab === "jobs" && <AdminJobs session={session} />}
         {tab === "users" && <UsersView session={session} />}
         {tab === "grants" && <GrantsView session={session} />}
         {tab === "tokens" && <TokensView session={session} />}
@@ -468,7 +472,7 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删���该授权？")) return
+    if (!window.confirm("确认删�����该授权？")) return
     setError("")
     try {
       await deleteGrant(session, id)

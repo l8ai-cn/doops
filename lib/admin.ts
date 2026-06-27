@@ -60,6 +60,38 @@ export interface AdminOperation {
   age_seconds: number
 }
 
+export interface SchedulerJob {
+  id: string
+  name: string
+  cluster_glob: string
+  instance_glob: string
+  interval_sec: number
+  scan_mode: string // ask | exec | audit
+  scan_config: string
+  platform: string // github | cnb
+  repo_slug: string
+  labels: string
+  token_env: string
+  api_base: string
+  dedup_window_sec: number
+  enabled: boolean
+  last_run_at?: string
+  created_at?: string
+}
+
+export interface SchedulerIssue {
+  id: number
+  job_id: string
+  fingerprint: string
+  repo_slug: string
+  cluster: string
+  instance: string
+  issue_url: string
+  title: string
+  status: string
+  created_at?: string
+}
+
 export const ALL_ACTIONS = [
   "exec",
   "ask",
@@ -186,4 +218,42 @@ export async function listOperations(s: Session): Promise<AdminOperation[]> {
 export async function cancelOperation(s: Session, id: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoCancelOperation(id)
   await req(s, `operations?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ---------- 定时巡检任务 ----------
+export async function listJobs(s: Session): Promise<SchedulerJob[]> {
+  if (s.demo) return (await import("./demo")).demoListJobs()
+  return (await req<{ jobs: SchedulerJob[] }>(s, "jobs")).jobs || []
+}
+
+export async function createJob(
+  s: Session,
+  body: Partial<SchedulerJob>,
+): Promise<SchedulerJob> {
+  if (s.demo) return (await import("./demo")).demoCreateJob(body)
+  return req<SchedulerJob>(s, "jobs", { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function deleteJob(s: Session, id: string): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoDeleteJob(id)
+  await req(s, `jobs?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export async function setJobEnabled(s: Session, id: string, enabled: boolean): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoSetJobEnabled(id, enabled)
+  await req(s, `jobs/run?id=${encodeURIComponent(id)}&enabled=${enabled}`, { method: "POST" })
+}
+
+export async function runJobNow(s: Session, id: string): Promise<string> {
+  if (s.demo) return (await import("./demo")).demoRunJobNow(id)
+  const r = await req<{ summary?: string }>(s, `jobs/run?id=${encodeURIComponent(id)}`, {
+    method: "POST",
+  })
+  return r.summary || "已触发"
+}
+
+export async function listJobIssues(s: Session, jobId?: string): Promise<SchedulerIssue[]> {
+  if (s.demo) return (await import("./demo")).demoListJobIssues(jobId)
+  const qs = jobId ? `?id=${encodeURIComponent(jobId)}` : ""
+  return (await req<{ issues: SchedulerIssue[] }>(s, `jobs/issues${qs}`)).issues || []
 }

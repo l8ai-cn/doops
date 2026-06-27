@@ -14,6 +14,8 @@ import {
   FolderUpIcon,
   CopyIcon,
   CheckIcon,
+  RocketIcon,
+  TrashIcon,
 } from "./icons"
 
 interface Entry {
@@ -78,6 +80,7 @@ export function FilesPanel({
   const [upload, setUpload] = useState<UploadProgress | null>(null)
   const [showCmd, setShowCmd] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [maint, setMaint] = useState<{ tool: "check" | "clean"; lines: string[]; running: boolean } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
 

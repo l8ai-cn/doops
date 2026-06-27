@@ -12,6 +12,7 @@ import { FilesPanel } from "./files-panel"
 import { ConfigPanel } from "./config-panel"
 import { AuditPanel } from "./audit-panel"
 import { AdminConsole } from "./admin-console"
+import { DashboardPanel } from "./dashboard-panel"
 import {
   TerminalIcon,
   SparkIcon,
@@ -21,11 +22,13 @@ import {
   LogoutIcon,
   ServerIcon,
   ShieldIcon,
+  ActivityIcon,
 } from "./icons"
 
-type Tab = "terminal" | "ask" | "files" | "config" | "audit"
+type Tab = "overview" | "terminal" | "ask" | "files" | "config" | "audit"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
+  { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "terminal", label: "终端", icon: TerminalIcon },
   { id: "ask", label: "AI 对话 / 部署", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
@@ -42,7 +45,7 @@ export function ConsoleShell() {
   const [targets, setTargets] = useState<Target[]>([])
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
-  const [tab, setTab] = useState<Tab>("terminal")
+  const [tab, setTab] = useState<Tab>("overview")
   const [view, setView] = useState<"console" | "admin">("console")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -176,10 +179,48 @@ export function ConsoleShell() {
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {!selected ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
+          <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
+            {TABS.map((t) => {
+              const Icon = t.icon
+              const active = tab === t.id
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
+                    active
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon width={16} height={16} />
+                  {t.label}
+                </button>
+              )
+            })}
+          </nav>
+
+          {tab === "overview" ? (
+            <DashboardPanel
+              session={session}
+              targets={targets}
+              loading={loading}
+              onRefresh={refresh}
+              onOpenTab={(nextTab, target) => {
+                if (target) selectTarget(target)
+                setTab(nextTab)
+              }}
+            />
+          ) : !selected ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
               <ServerIcon width={32} height={32} />
-              <p className="text-sm">从左侧选择一个在线目标开始操作</p>
+              <p className="text-sm">请先从左侧选择一台机器，再使用此功能</p>
+              <button
+                onClick={() => setTab("overview")}
+                className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+              >
+                返回概览
+              </button>
             </div>
           ) : (
             <>
@@ -199,27 +240,6 @@ export function ConsoleShell() {
                   />
                 </label>
               </div>
-
-              <nav className="flex shrink-0 gap-1 border-b bg-card px-2">
-                {TABS.map((t) => {
-                  const Icon = t.icon
-                  const active = tab === t.id
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => setTab(t.id)}
-                      className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
-                        active
-                          ? "border-primary text-foreground"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Icon width={16} height={16} />
-                      {t.label}
-                    </button>
-                  )
-                })}
-              </nav>
 
               <div className="min-h-0 flex-1">
                 {tab === "terminal" && (

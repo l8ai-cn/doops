@@ -2,7 +2,15 @@
 
 import type { Target, AuditEvent } from "./gateway"
 import type { RpcEvent } from "./client"
-import type { AdminUser, AdminGrant, AdminToken, AdminInstance, AdminOperation } from "./admin"
+import type {
+  AdminUser,
+  AdminGrant,
+  AdminToken,
+  AdminInstance,
+  AdminOperation,
+  SchedulerJob,
+  SchedulerIssue,
+} from "./admin"
 
 // 演示模式：内置 mock 数据 + 模拟流式输出，无需连接真实 gateway
 
@@ -265,7 +273,7 @@ export async function demoCallTool(
         "[observe] 磁盘 37%，无 error 级日志\n",
         "[done] 巡检完成，节点健康。\n",
       ]
-      summary = "巡检结果：负载正常��服务全部 active、磁盘 37%、无错误日志。"
+      summary = "巡检结果：负载正常、服务全部 active、磁盘 37%、无错误日志。"
     } else if (/回滚|rollback|上一个版本|恢复/.test(p)) {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -313,6 +321,49 @@ export async function demoCallTool(
     onEvent({
       type: "result",
       result: { content: [{ type: "text", text: "写入成功 (演示模式，未持久化)" }] },
+    })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_check_deployment") {
+    await emitChunks(
+      [
+        "[check] 探测当前发布版本与软链接…\n",
+        "current -> releases/1.8.2 (3 天前发布)\n",
+        "[check] 服务存活：doops-app active · nginx active · redis active\n",
+        "[check] 健康检查 GET /healthz → 200 OK (12ms)\n",
+        "[check] 磁盘 /data 使用率 48% · 内存可用 5.3Gi\n",
+      ],
+      onEvent,
+      signal,
+      200,
+    )
+    onEvent({
+      type: "result",
+      result: {
+        content: [{ type: "text", text: "部署正常：版本 1.8.2，三项服务全部存活，健康检查通过。" }],
+      },
+    })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_clean_workspace") {
+    await emitChunks(
+      [
+        "[clean] 扫描工作区临时文件与历史发布包…\n",
+        "[clean] 保留最近 3 个版本，移除 releases/1.7.9、releases/1.7.8\n",
+        "[clean] 清理 logs/*.gz 与 tmp/ 缓存\n",
+        "[clean] 释放磁盘空间 2.4 GiB\n",
+      ],
+      onEvent,
+      signal,
+      200,
+    )
+    onEvent({
+      type: "result",
+      result: { content: [{ type: "text", text: "工作区清理完成，释放 2.4 GiB，保留最近 3 个版本。" }] },
     })
     onEvent({ type: "done" })
     return
@@ -452,4 +503,128 @@ function randomToken(n: number): string {
   let out = ""
   for (let i = 0; i < n; i++) out += chars[Math.floor(Math.random() * chars.length)]
   return out
+}
+
+// ===================== 定时巡检演示数据 =====================
+
+const demoJobs: SchedulerJob[] = [
+  {
+    id: "job_disk",
+    name: "磁盘水位巡检",
+    cluster_glob: "prod-cn",
+    instance_glob: "*",
+    interval_sec: 600,
+    scan_mode: "ask",
+    scan_config: JSON.stringify({ prompt: "检查磁盘使用率，超过 85% 时报告分区与占用 top5" }),
+    platform: "github",
+    repo_slug: "l8ai-cn/ops-issues",
+    labels: "auto,disk",
+    token_env: "GITHUB_TOKEN",
+    api_base: "",
+    dedup_window_sec: 86400,
+    enabled: true,
+    last_run_at: ago(0.2),
+    created_at: ago(360),
+  },
+  {
+    id: "job_svc",
+    name: "服务存活巡检",
+    cluster_glob: "*",
+    instance_glob: "*",
+    interval_sec: 300,
+    scan_mode: "exec",
+    scan_config: JSON.stringify({ command: "systemctl is-active doops-app || echo DOWN" }),
+    platform: "cnb",
+    repo_slug: "l8ai/ops",
+    labels: "auto,service",
+    token_env: "CNB_TOKEN",
+    api_base: "https://api.cnb.cool",
+    dedup_window_sec: 3600,
+    enabled: false,
+    last_run_at: ago(26),
+    created_at: ago(200),
+  },
+]
+
+const demoIssues: SchedulerIssue[] = [
+  {
+    id: 1,
+    job_id: "job_disk",
+    fingerprint: "a1b2c3",
+    repo_slug: "l8ai-cn/ops-issues",
+    cluster: "prod-cn",
+    instance: "web-02",
+    issue_url: "https://github.com/l8ai-cn/ops-issues/issues/142",
+    title: "[巡检] web-02 /data 分区使用率 91%",
+    status: "open",
+    created_at: ago(3),
+  },
+  {
+    id: 2,
+    job_id: "job_disk",
+    fingerprint: "d4e5f6",
+    repo_slug: "l8ai-cn/ops-issues",
+    cluster: "prod-cn",
+    instance: "web-01",
+    issue_url: "https://github.com/l8ai-cn/ops-issues/issues/138",
+    title: "[巡检] web-01 / 分区使用率 88%",
+    status: "closed",
+    created_at: ago(28),
+  },
+  {
+    id: 3,
+    job_id: "job_svc",
+    fingerprint: "99aa88",
+    repo_slug: "l8ai/ops",
+    cluster: "staging",
+    instance: "db-01",
+    issue_url: "https://cnb.cool/l8ai/ops/-/issues/7",
+    title: "[巡检] db-01 doops-app 未运行",
+    status: "open",
+    created_at: ago(26),
+  },
+]
+
+let jobSeq = 100
+
+export function demoListJobs(): SchedulerJob[] {
+  return demoJobs.map((j) => ({ ...j }))
+}
+export function demoCreateJob(body: Partial<SchedulerJob>): SchedulerJob {
+  const job: SchedulerJob = {
+    id: `job_demo${jobSeq++}`,
+    name: body.name || "新巡检任务",
+    cluster_glob: body.cluster_glob || "*",
+    instance_glob: body.instance_glob || "*",
+    interval_sec: body.interval_sec || 600,
+    scan_mode: body.scan_mode || "ask",
+    scan_config: body.scan_config || "{}",
+    platform: body.platform || "github",
+    repo_slug: body.repo_slug || "",
+    labels: body.labels || "auto",
+    token_env: body.token_env || "GITHUB_TOKEN",
+    api_base: body.api_base || "",
+    dedup_window_sec: body.dedup_window_sec || 86400,
+    enabled: body.enabled ?? true,
+    created_at: nowISO(),
+  }
+  demoJobs.unshift(job)
+  return { ...job }
+}
+export function demoDeleteJob(id: string): void {
+  const idx = demoJobs.findIndex((j) => j.id === id)
+  if (idx >= 0) demoJobs.splice(idx, 1)
+}
+export function demoSetJobEnabled(id: string, enabled: boolean): void {
+  const j = demoJobs.find((x) => x.id === id)
+  if (j) j.enabled = enabled
+}
+export function demoRunJobNow(id: string): string {
+  const j = demoJobs.find((x) => x.id === id)
+  if (j) j.last_run_at = nowISO()
+  return "(演示) 已扫描 3 台机器，命中 1 项异常，去重后提交 1 个 issue"
+}
+export function demoListJobIssues(jobId?: string): SchedulerIssue[] {
+  const list = jobId ? demoIssues.filter((i) => i.job_id === jobId) : demoIssues
+  return list.map((i) => ({ ...i }))
 }
