@@ -152,6 +152,36 @@ function ErrorBar({ msg }: { msg: string }) {
   )
 }
 
+function isMissingAdminApi(msg: string) {
+  return msg.includes("404") || msg.includes("page not found")
+}
+
+function adminErrorMessage(msg: string) {
+  if (!isMissingAdminApi(msg)) return msg
+  return "gateway 版本未包含管理接口。当前 Console 已接入新版管理页，但公网 doops-gateway 还没有发布对应 /v1/admin 路由；请先发布 gateway 后再使用此管理功能。"
+}
+
+function AdminEmptyRow({
+  colSpan,
+  loading,
+  error,
+  children,
+}: {
+  colSpan: number
+  loading: boolean
+  error: string
+  children: React.ReactNode
+}) {
+  if (error || loading) return null
+  return (
+    <tr>
+      <td colSpan={colSpan} className="px-3 py-8 text-center text-sm text-muted-foreground">
+        {children}
+      </td>
+    </tr>
+  )
+}
+
 function StatusDot({ status }: { status: string }) {
   const online = status === "online"
   return (
@@ -192,7 +222,7 @@ function InstancesView({ session }: { session: Session }) {
         onRefresh={load}
         loading={loading}
       />
-      <ErrorBar msg={error} />
+      <ErrorBar msg={adminErrorMessage(error)} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[640px] border-collapse text-sm">
           <thead>
@@ -228,13 +258,7 @@ function InstancesView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.last_seen)}</td>
               </tr>
             ))}
-            {!rows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无注册实例
-                </td>
-              </tr>
-            )}
+            {!rows.length && <AdminEmptyRow colSpan={6} loading={loading} error={error}>暂无注册实例</AdminEmptyRow>}
           </tbody>
         </table>
       </div>
@@ -319,7 +343,7 @@ function UsersView({ session }: { session: Session }) {
           <PlusIcon width={14} height={14} /> 新建用户
         </button>
       </Toolbar>
-      <ErrorBar msg={error} />
+      <ErrorBar msg={adminErrorMessage(error)} />
 
       {showCreate && (
         <div className="mx-4 mt-3 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 p-3">
@@ -418,13 +442,7 @@ function UsersView({ session }: { session: Session }) {
                 </td>
               </tr>
             ))}
-            {!rows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无用户
-                </td>
-              </tr>
-            )}
+            {!rows.length && <AdminEmptyRow colSpan={6} loading={loading} error={error}>暂无用户</AdminEmptyRow>}
           </tbody>
         </table>
       </div>
@@ -484,7 +502,7 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删�����该授权？")) return
+    if (!window.confirm("确认删除该授权？")) return
     setError("")
     try {
       await deleteGrant(session, id)
@@ -509,7 +527,7 @@ function GrantsView({ session }: { session: Session }) {
           <PlusIcon width={14} height={14} /> 新建授权
         </button>
       </Toolbar>
-      <ErrorBar msg={error} />
+      <ErrorBar msg={adminErrorMessage(error)} />
 
       {showCreate && (
         <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
@@ -612,13 +630,7 @@ function GrantsView({ session }: { session: Session }) {
                 </td>
               </tr>
             ))}
-            {!grants.length && !loading && (
-              <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无授权
-                </td>
-              </tr>
-            )}
+            {!grants.length && <AdminEmptyRow colSpan={5} loading={loading} error={error}>暂无授权</AdminEmptyRow>}
           </tbody>
         </table>
       </div>
@@ -710,7 +722,7 @@ function TokensView({ session }: { session: Session }) {
           <PlusIcon width={14} height={14} /> 签发令牌
         </button>
       </Toolbar>
-      <ErrorBar msg={error} />
+      <ErrorBar msg={adminErrorMessage(error)} />
 
       {showCreate && (
         <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
@@ -824,13 +836,7 @@ function TokensView({ session }: { session: Session }) {
                 </td>
               </tr>
             ))}
-            {!rows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无令牌
-                </td>
-              </tr>
-            )}
+            {!rows.length && <AdminEmptyRow colSpan={6} loading={loading} error={error}>暂无令牌</AdminEmptyRow>}
           </tbody>
         </table>
       </div>
@@ -881,7 +887,7 @@ function OperationsView({ session }: { session: Session }) {
         onRefresh={load}
         loading={loading}
       />
-      <ErrorBar msg={error} />
+      <ErrorBar msg={adminErrorMessage(error)} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead>
@@ -923,13 +929,7 @@ function OperationsView({ session }: { session: Session }) {
                 </td>
               </tr>
             ))}
-            {!rows.length && !loading && (
-              <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  当前无运行中操作
-                </td>
-              </tr>
-            )}
+            {!rows.length && <AdminEmptyRow colSpan={6} loading={loading} error={error}>当前无运行中操作</AdminEmptyRow>}
           </tbody>
         </table>
       </div>
