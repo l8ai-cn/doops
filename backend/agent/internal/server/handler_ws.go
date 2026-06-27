@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -634,6 +636,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		json.Unmarshal(argBytes, &args)
 		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON)
 
+	case "doops_git_clone":
+		result, err := handleGitClone(argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_file_write":
 		result, err := handleFileWrite(argBytes)
 		if err != nil {
@@ -981,6 +991,9 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
 // 当收到 agent_message（完成）或 error（失败）事件时返回。
 func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/events?sid="+sessionID, nil)
 	if err != nil {
 		return fmt.Errorf("create SSE request: %w", err)
@@ -999,6 +1012,40 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	var eventData strings.Builder
+	receivedEvent := false
+	idleTimeout := doagentSSEIdleTimeout()
+	idleTimer := time.NewTimer(idleTimeout)
+	idleDone := make(chan struct{})
+	var idleMu sync.Mutex
+	var idleErr error
+	defer func() {
+		close(idleDone)
+		idleTimer.Stop()
+	}()
+	resetIdle := func() {
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idleTimeout)
+	}
+	go func() {
+		select {
+		case <-idleTimer.C:
+			recent := recentDoagentLogSummary()
+			err := fmt.Errorf("doagent SSE idle timeout after %s", idleTimeout)
+			if recent != "" {
+				err = fmt.Errorf("%w: recent doagent log: %s", err, recent)
+			}
+			idleMu.Lock()
+			idleErr = err
+			idleMu.Unlock()
+			cancel()
+		case <-idleDone:
+		}
+	}()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1017,6 +1064,8 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 		if line == "" && eventData.Len() > 0 {
 			data := eventData.String()
 			eventData.Reset()
+			receivedEvent = true
+			resetIdle()
 
 			// doagent SSE 使用 JSON-RPC 2.0 通知格式：{"jsonrpc":"2.0","method":"...","params":{...}}
 			var update map[string]interface{}
@@ -1122,9 +1171,56 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 	}
 
 	if err := scanner.Err(); err != nil {
+		idleMu.Lock()
+		timeoutErr := idleErr
+		idleMu.Unlock()
+		if timeoutErr != nil && errors.Is(err, context.Canceled) {
+			return timeoutErr
+		}
 		return fmt.Errorf("SSE read: %w", err)
 	}
-	return nil
+	idleMu.Lock()
+	timeoutErr := idleErr
+	idleMu.Unlock()
+	if timeoutErr != nil {
+		return timeoutErr
+	}
+	if receivedEvent {
+		return fmt.Errorf("doagent SSE ended before final event")
+	}
+	return fmt.Errorf("doagent SSE ended without events")
+}
+
+func doagentSSEIdleTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DOOPS_DOAGENT_SSE_IDLE_TIMEOUT"))
+	if raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+func recentDoagentLogSummary() string {
+	return sanitizeSecretText(strings.TrimSpace(tailFile("/var/log/do-agent-acp.log", 2048)))
+}
+
+func sanitizeSecretText(s string) string {
+	if s == "" {
+		return ""
+	}
+	replacers := []*regexp.Regexp{
+		regexp.MustCompile(`sk-[A-Za-z0-9_-]+`),
+		regexp.MustCompile(`(?i)(api[_-]?key[=: ]+)[^ ,}\n]+`),
+		regexp.MustCompile(`(?i)(Bearer )[A-Za-z0-9._-]+`),
+	}
+	s = replacers[0].ReplaceAllString(s, "sk-...REDACTED")
+	s = replacers[1].ReplaceAllString(s, "${1}...REDACTED")
+	s = replacers[2].ReplaceAllString(s, "${1}...REDACTED")
+	if len(s) > 1200 {
+		return s[len(s)-1200:]
+	}
+	return s
 }
 
 // -----------------------------------------------------------------------------

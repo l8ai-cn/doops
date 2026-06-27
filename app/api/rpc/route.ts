@@ -11,6 +11,8 @@ interface RpcBody {
   arguments: Record<string, unknown>
 }
 
+const AGENT_PROMPT_SILENCE_MS = 45_000
+
 // 通过服务端 WS 桥接 gateway /v1/rpc。
 // 浏览器 POST 工具调用，服务端注入 Bearer token，
 // 并把 notifications/message 与最终结果以 NDJSON 行流式回传。
@@ -56,6 +58,32 @@ export async function POST(req: Request) {
       }
 
       let ws: WebSocket
+      let sawToolEvent = false
+      let silenceTimer: ReturnType<typeof setTimeout> | null = null
+      const clearSilenceTimer = () => {
+        if (silenceTimer) {
+          clearTimeout(silenceTimer)
+          silenceTimer = null
+        }
+      }
+      const armSilenceTimer = () => {
+        clearSilenceTimer()
+        if (tool !== "doops_agent_prompt") return
+        silenceTimer = setTimeout(() => {
+          if (closed || sawToolEvent) return
+          send({
+            type: "error",
+            error:
+              "智能体长时间没有返回任何事件。远端 doagent 可能模型凭据过期、模型服务不可用，或 ACP 事件流没有结束。请检查目标节点 /var/log/do-agent-acp.log。",
+          })
+          try {
+            ws.close()
+          } catch {
+            /* noop */
+          }
+          finish()
+        }, AGENT_PROMPT_SILENCE_MS)
+      }
       try {
         ws = new WebSocket(wsUrl, {
           headers: { Authorization: `Bearer ${token}` },
@@ -96,11 +124,14 @@ export async function POST(req: Request) {
               params: { name: tool, arguments: args || {} },
             }),
           )
+          armSilenceTimer()
           return
         }
 
         // 流式输出通知
         if (msg.method === "notifications/message") {
+          sawToolEvent = true
+          clearSilenceTimer()
           const data = msg.params?.data ?? ""
           send({ type: "output", data, session: msg.params?.sessionID })
           return
@@ -108,6 +139,8 @@ export async function POST(req: Request) {
 
         // 最终结果
         if (msg.id === callId) {
+          sawToolEvent = true
+          clearSilenceTimer()
           if (msg.error) {
             send({ type: "error", error: msg.error?.message || "执行失败", code: msg.error?.code })
           } else {
@@ -118,17 +151,20 @@ export async function POST(req: Request) {
       })
 
       ws.on("error", (err: Error) => {
+        clearSilenceTimer()
         send({ type: "error", error: `连接错误: ${err.message}` })
         finish()
       })
 
       ws.on("close", () => {
+        clearSilenceTimer()
         send({ type: "done" })
         finish()
       })
 
       // 客户端取消时关闭上游 WS
       req.signal.addEventListener("abort", () => {
+        clearSilenceTimer()
         try {
           ws.close()
         } catch {

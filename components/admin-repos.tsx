@@ -88,7 +88,7 @@ export function AdminRepos({ session }: { session: Session }) {
           <div>
             <h1 className="text-lg font-semibold text-foreground">代码仓库</h1>
             <p className="mt-1 text-sm text-muted-foreground text-pretty">
-              关联任意 Git 仓库（GitHub / Gitee / GitLab / 自建均可），AI 部署时可直接选用，私有仓库用用户名 + 密码 / 令牌认证。
+              关联任意 Git 仓库（GitHub / Gitee / GitLab / 自建均可），AI 部署时可直接选用；测试连接会从 gateway 校验远端分支。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -185,7 +185,7 @@ export function AdminRepos({ session }: { session: Session }) {
                     className="flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                   >
                     <PlugIcon width={13} height={13} />
-                    {testingId === repo.id ? "测试中…" : "测试连接"}
+                          {testingId === repo.id ? "测试中…" : "测试连接"}
                   </button>
                   <button
                     onClick={() => setEditing(repo)}
@@ -300,7 +300,7 @@ function RepoDialog({
           {isNew ? "关联代码仓库" : "编辑仓库"}
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          支持任意 Git 服务，私有仓库填用户名 + 密码 / 访问令牌；公开仓库或 SSH 部署密钥可留空。
+          支持任意 Git 服务，HTTPS 私有仓库填用户名 + 密码 / 访问令牌；公开仓库或 gateway 环境已有的 Git 凭据可留空。
         </p>
 
         <div className="mt-4 flex flex-col gap-3">
@@ -343,7 +343,7 @@ function RepoDialog({
                   </button>
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  凭据加密存储，仅用于拉取代码，不会回传明文。
+                  凭据在 gateway 本地加密存储，仅用于 Git 连接校验和后续拉取代码，不会回传明文。
                 </span>
               </label>
             </div>

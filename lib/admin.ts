@@ -67,7 +67,7 @@ export interface SchedulerJob {
   instance_glob: string
   interval_sec: number
   scan_mode: string // ask | exec | audit
-  scan_config: string
+  scan_config: Record<string, unknown> | string
   platform: string // github | cnb
   repo_slug: string
   labels: string
@@ -240,7 +240,7 @@ export async function listJobs(s: Session): Promise<SchedulerJob[]> {
 
 export async function createJob(
   s: Session,
-  body: Partial<SchedulerJob>,
+  body: Partial<Omit<SchedulerJob, "scan_config">> & { scan_config?: Record<string, unknown> },
 ): Promise<SchedulerJob> {
   if (s.demo) return (await import("./demo")).demoCreateJob(body)
   return req<SchedulerJob>(s, "jobs", { method: "POST", body: JSON.stringify(body) })
@@ -314,5 +314,17 @@ export async function testRepo(
   if (s.demo) return (await import("./demo")).demoTestRepo(id)
   return req<{ ok: boolean; message: string }>(s, `repos/test?id=${encodeURIComponent(id)}`, {
     method: "POST",
+  })
+}
+
+export async function cloneRepoToTarget(
+  s: Session,
+  id: string,
+  body: { cluster: string; instance: string; session_id: string; directory?: string },
+): Promise<{ ok: boolean; message: string }> {
+  if (s.demo) return { ok: true, message: "(演示) 已通过 doops 克隆仓库到当前工作区" }
+  return req<{ ok: boolean; message: string }>(s, `repos/clone?id=${encodeURIComponent(id)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
   })
 }

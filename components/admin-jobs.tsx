@@ -307,10 +307,10 @@ function CreateJobDialog({
     setErr("")
     const scanConfig =
       scanMode === "exec"
-        ? JSON.stringify({ command: scanText })
+        ? { command: scanText }
         : scanMode === "ask"
-          ? JSON.stringify({ prompt: scanText })
-          : JSON.stringify({})
+          ? { instruction: scanText }
+          : {}
     try {
       const job = await createJob(session, {
         name: name.trim(),

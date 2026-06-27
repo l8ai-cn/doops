@@ -3,7 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Deploy doops-webui to a gateway host over SSH.
+Legacy script for the old Go doops-webui.
+
+The production console is now the Next.js web image built from Dockerfile.web
+and released by .cnb.yml as <repo>/web:<tag>. This legacy script is disabled
+because normal doops environments do not provide direct SSH connections.
 
 Usage:
   bash scripts/deploy-webui.sh --host 203.0.113.10 --user ubuntu
@@ -21,6 +25,17 @@ Options:
   -h, --help              Show help.
 EOF
 }
+
+if [[ "${DOOPS_ALLOW_LEGACY_SSH_WEBUI_DEPLOY:-}" != "1" ]]; then
+  cat >&2 <<'EOF'
+Error: scripts/deploy-webui.sh is a legacy SSH deployment path and is disabled.
+
+Deploy the production console with the Dockerfile.web / CNB web image instead.
+Set DOOPS_ALLOW_LEGACY_SSH_WEBUI_DEPLOY=1 only for explicitly audited legacy
+maintenance where a real SSH host is available.
+EOF
+  exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST=""

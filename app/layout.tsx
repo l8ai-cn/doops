@@ -1,21 +1,10 @@
 import type { Metadata, Viewport } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
-
-const geistSans = Geist({
-  subsets: ["latin"],
-  variable: "--font-geist-sans",
-})
-
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-geist-mono",
-})
 
 export const metadata: Metadata = {
   title: "Doops Console — 智能运维控制台",
   description:
-    "连接 doops-gateway，执行 SSH 命令、自然语言运维与自动化部署的智能运维控制台。",
+    "连接 doops-gateway，通过 doops agent 执行命令、自然语言运维与自动化部署的智能运维控制台。",
 }
 
 export const viewport: Viewport = {
@@ -30,7 +19,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable} bg-background`}>
+    <html lang="zh-CN" className="bg-background">
       <body className="font-sans antialiased">{children}</body>
     </html>
   )

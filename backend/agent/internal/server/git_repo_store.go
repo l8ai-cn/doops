@@ -10,16 +10,17 @@ import (
 // GitRepo is a stored deployable source repository visible in the admin UI.
 // Password material is never returned to clients.
 type GitRepo struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	URL          string     `json:"url"`
-	Branch       string     `json:"branch"`
-	Username     string     `json:"username"`
-	PasswordHash string     `json:"-"`
-	HasPassword  bool       `json:"has_password"`
-	Description  string     `json:"description"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	URL                string     `json:"url"`
+	Branch             string     `json:"branch"`
+	Username           string     `json:"username"`
+	PasswordHash       string     `json:"-"`
+	PasswordCiphertext string     `json:"-"`
+	HasPassword        bool       `json:"has_password"`
+	Description        string     `json:"description"`
+	LastUsedAt         *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 type GitRepoInput struct {
@@ -32,7 +33,7 @@ type GitRepoInput struct {
 }
 
 func (s *GatewayStore) ListGitRepos() ([]GitRepo, error) {
-	rows, err := s.db.Query(`SELECT id, name, url, branch, username, password_hash, description, last_used_at, created_at
+	rows, err := s.db.Query(`SELECT id, name, url, branch, username, password_hash, password_ciphertext, description, last_used_at, created_at
 		FROM git_repos ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -50,23 +51,27 @@ func (s *GatewayStore) ListGitRepos() ([]GitRepo, error) {
 }
 
 func (s *GatewayStore) CreateGitRepo(input GitRepoInput) (GitRepo, error) {
-	repo, passwordHash, err := normalizeGitRepoInput(input, true)
+	repo, password, err := normalizeGitRepoInput(input, true)
+	if err != nil {
+		return GitRepo{}, err
+	}
+	passwordCiphertext, err := s.encryptSecret(password)
 	if err != nil {
 		return GitRepo{}, err
 	}
 	now := time.Now().UTC()
 	repo.ID = "repo_" + randomHex(12)
 	repo.CreatedAt = now
-	repo.PasswordHash = passwordHash
+	repo.PasswordCiphertext = passwordCiphertext
 	_, err = s.db.Exec(`INSERT INTO git_repos
-		(id, name, url, branch, username, password_hash, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		repo.ID, repo.Name, repo.URL, repo.Branch, repo.Username, repo.PasswordHash,
+		(id, name, url, branch, username, password_hash, password_ciphertext, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		repo.ID, repo.Name, repo.URL, repo.Branch, repo.Username, "", repo.PasswordCiphertext,
 		repo.Description, formatTime(now), formatTime(now))
 	if err != nil {
 		return GitRepo{}, err
 	}
-	repo.HasPassword = repo.PasswordHash != ""
+	repo.HasPassword = repo.PasswordCiphertext != ""
 	return repo, nil
 }
 
@@ -95,20 +100,21 @@ func (s *GatewayStore) UpdateGitRepo(id string, input GitRepoInput) (GitRepo, er
 		current.Description = strings.TrimSpace(input.Description)
 	}
 	if strings.TrimSpace(input.Password) != "" {
-		hash, err := hashPassword(input.Password)
+		ciphertext, err := s.encryptSecret(input.Password)
 		if err != nil {
 			return GitRepo{}, err
 		}
-		current.PasswordHash = hash
+		current.PasswordHash = ""
+		current.PasswordCiphertext = ciphertext
 	}
 	if err := validateGitRepo(current.Name, current.URL, current.Branch); err != nil {
 		return GitRepo{}, err
 	}
 	now := time.Now().UTC()
 	res, err := s.db.Exec(`UPDATE git_repos SET
-		name = ?, url = ?, branch = ?, username = ?, password_hash = ?, description = ?, updated_at = ?
+		name = ?, url = ?, branch = ?, username = ?, password_hash = ?, password_ciphertext = ?, description = ?, updated_at = ?
 		WHERE id = ?`,
-		current.Name, current.URL, current.Branch, current.Username, current.PasswordHash,
+		current.Name, current.URL, current.Branch, current.Username, current.PasswordHash, current.PasswordCiphertext,
 		current.Description, formatTime(now), id)
 	if err != nil {
 		return GitRepo{}, err
@@ -116,7 +122,7 @@ func (s *GatewayStore) UpdateGitRepo(id string, input GitRepoInput) (GitRepo, er
 	if affected, _ := res.RowsAffected(); affected == 0 {
 		return GitRepo{}, sql.ErrNoRows
 	}
-	current.HasPassword = current.PasswordHash != ""
+	current.HasPassword = current.PasswordCiphertext != "" || current.PasswordHash != ""
 	return current, nil
 }
 
@@ -136,9 +142,21 @@ func (s *GatewayStore) DeleteGitRepo(id string) error {
 }
 
 func (s *GatewayStore) GetGitRepo(id string) (GitRepo, error) {
-	row := s.db.QueryRow(`SELECT id, name, url, branch, username, password_hash, description, last_used_at, created_at
+	row := s.db.QueryRow(`SELECT id, name, url, branch, username, password_hash, password_ciphertext, description, last_used_at, created_at
 		FROM git_repos WHERE id = ?`, strings.TrimSpace(id))
 	return scanGitRepo(row)
+}
+
+func (s *GatewayStore) GitRepoPassword(id string) (string, error) {
+	var ciphertext string
+	err := s.db.QueryRow(`SELECT password_ciphertext FROM git_repos WHERE id = ?`, strings.TrimSpace(id)).Scan(&ciphertext)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(ciphertext) == "" {
+		return "", nil
+	}
+	return s.decryptSecret(ciphertext)
 }
 
 func (s *GatewayStore) MarkGitRepoUsed(id string, at time.Time) (GitRepo, error) {
@@ -162,13 +180,14 @@ type gitRepoScanner interface {
 
 func scanGitRepo(scanner gitRepoScanner) (GitRepo, error) {
 	var repo GitRepo
-	var passwordHash, lastUsed, created string
+	var passwordHash, passwordCiphertext, lastUsed, created string
 	if err := scanner.Scan(&repo.ID, &repo.Name, &repo.URL, &repo.Branch, &repo.Username,
-		&passwordHash, &repo.Description, &lastUsed, &created); err != nil {
+		&passwordHash, &passwordCiphertext, &repo.Description, &lastUsed, &created); err != nil {
 		return GitRepo{}, err
 	}
 	repo.PasswordHash = passwordHash
-	repo.HasPassword = strings.TrimSpace(passwordHash) != ""
+	repo.PasswordCiphertext = passwordCiphertext
+	repo.HasPassword = strings.TrimSpace(passwordCiphertext) != "" || strings.TrimSpace(passwordHash) != ""
 	if lastUsed != "" {
 		if parsed, err := parseTime(lastUsed); err == nil {
 			repo.LastUsedAt = &parsed
@@ -190,13 +209,9 @@ func normalizeGitRepoInput(input GitRepoInput, requireURL bool) (GitRepo, string
 			return GitRepo{}, "", err
 		}
 	}
-	passwordHash := ""
+	password := ""
 	if strings.TrimSpace(input.Password) != "" {
-		hash, err := hashPassword(input.Password)
-		if err != nil {
-			return GitRepo{}, "", err
-		}
-		passwordHash = hash
+		password = strings.TrimSpace(input.Password)
 	}
 	return GitRepo{
 		Name:        name,
@@ -204,7 +219,7 @@ func normalizeGitRepoInput(input GitRepoInput, requireURL bool) (GitRepo, string
 		Branch:      branch,
 		Username:    strings.TrimSpace(input.Username),
 		Description: strings.TrimSpace(input.Description),
-	}, passwordHash, nil
+	}, password, nil
 }
 
 func validateGitRepo(name, repoURL, branch string) error {

@@ -69,7 +69,7 @@ const CASES: Case[] = [
     challenge:
       "不同区域节点的配置文件、模型参数经常各自为政，一处改动要手动同步到几十台机器，漏改、改错时有发生。",
     solution:
-      "把大模型与配置文件统一收进 Doops 配置中心，改完一键发布下发到指定节点；发布前需「应用」确认，避免误推。",
+      "把大模型与配置文件沉淀为本地配置模板，改完通过 doops 下发到指定节点；发布前需「应用」确认，避免误推。",
     results: [
       "配置同步从半天缩短到 1 分钟",
       "彻底消除区域间配置漂移",
@@ -285,7 +285,7 @@ export function CasesPage() {
             {[
               { icon: SparkIcon, label: "自然语言运维" },
               { icon: ActivityIcon, label: "定时巡检 · 自动提单" },
-              { icon: LayersIcon, label: "配置中心 · 一键下发" },
+              { icon: LayersIcon, label: "配置模板 · 一键下发" },
               { icon: TerminalIcon, label: "远程终端" },
               { icon: ShieldIcon, label: "权限与审计" },
             ].map((cap) => {

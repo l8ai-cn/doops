@@ -1,6 +1,10 @@
 # Doops WebUI
 
-`doops-webui` 是一个轻量 Web 控制台：在浏览器里连接 `doops-gateway`，列出在线
+> 当前生产控制台是仓库根目录的 Next.js Web 应用，通过 `Dockerfile.web` 和 CNB
+> `web:<tag>` 镜像交付。本文描述的是旧 Go `doops-webui`，只保留给明确审计过的
+> legacy 维护场景；日常环境不提供真实 SSH 连接时，不应使用 `scripts/deploy-webui.sh`。
+
+`doops-webui` 是一个轻量 legacy Web 控制台：在浏览器里连接 `doops-gateway`，列出在线
 `cluster/instance`，并对选中的实例发起 `ask` 自然语言任务，实时看到 doagent 的
 流式执行过程。
 
@@ -54,7 +58,9 @@ cd agent && go run ./cmd/webui -port 8088
 
 ## 部署建议
 
-- 生产环境建议把 `doops-webui` 与 gateway 放在同机或内网，并在前面用 TLS 反代。
+- 生产环境使用 `Dockerfile.web` 构建的 Next.js 控制台镜像，不使用本 legacy 二进制。
+- `scripts/deploy-webui.sh` 默认禁用；只有显式设置
+  `DOOPS_ALLOW_LEGACY_SSH_WEBUI_DEPLOY=1` 且确有真实 SSH 主机时才允许 legacy 维护。
 - WS 升级放开了 `CheckOrigin`，公网暴露时应由反向代理/防火墙限制来源。
 - 每个浏览器会话使用独立 `session_id`（`webui-<rand>`），与 gateway 的串行/排队
   语义一致。

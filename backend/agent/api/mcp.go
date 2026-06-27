@@ -67,6 +67,16 @@ type AgentPromptParams struct {
 	Model       string `json:"model,omitempty"`
 }
 
+// GitCloneParams clones a configured repository into a session workspace.
+type GitCloneParams struct {
+	SessionID string `json:"session_id"`
+	URL       string `json:"url"`
+	Branch    string `json:"branch"`
+	Username  string `json:"username,omitempty"`
+	Password  string `json:"password,omitempty"`
+	Directory string `json:"directory,omitempty"`
+}
+
 // --- 异步任务相关类型 (doops_bg / doops_task_status) ---
 
 // BgExecParams 用于 doops_bg 后台异步任务提交。

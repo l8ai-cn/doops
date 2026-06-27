@@ -243,6 +243,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
 	mux.HandleFunc("/v1/admin/repos", h.HandleAdminRepos)
 	mux.HandleFunc("/v1/admin/repos/test", h.HandleAdminRepoTest)
+	mux.HandleFunc("/v1/admin/repos/clone", h.HandleAdminRepoClone)
 	mux.HandleFunc("/v1/admin/jobs", h.HandleAdminJobs)
 	mux.HandleFunc("/v1/admin/jobs/run", h.HandleAdminJobRun)
 	mux.HandleFunc("/v1/admin/jobs/issues", h.HandleAdminJobIssues)
@@ -1584,6 +1585,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionExec
 	case "doops_agent_prompt":
 		return ActionAsk
+	case "doops_git_clone":
+		return ActionPull
 	case "doops_file_read":
 		return ActionRead
 	case "doops_file_write":
@@ -1671,6 +1674,10 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		if msg, _ := m["instruction"].(string); msg != "" {
 			return trimTail(msg, 512)
 		}
+	case "doops_git_clone":
+		repoURL, _ := m["url"].(string)
+		branch, _ := m["branch"].(string)
+		return trimTail("doops_git_clone "+repoURL+" "+branch, 512)
 	case "doops_file_read", "doops_file_write":
 		if p, _ := m["path"].(string); p != "" {
 			return tool + " " + p

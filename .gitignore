@@ -42,6 +42,11 @@ skills/doops-cli/.doops/
 tmp_agent/
 tmp-openwork/
 
+# Local scratch areas from ad-hoc browser / media tests. Project tests live
+# under backend/test and source examples should be added in a named package.
+/examples/
+/test/
+
 # ========================================
 # 操作系统 / 编辑器
 # ========================================

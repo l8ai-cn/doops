@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { listRepos, type GitRepo } from "@/lib/admin"
+import { cloneRepoToTarget, listRepos, type GitRepo } from "@/lib/admin"
 import {
   SparkIcon,
   SendIcon,
@@ -42,16 +42,13 @@ function deployTemplate(sessionId: string) {
 所有命令必须可追溯。`
 }
 
-function deployFromRepo(sessionId: string, repo: GitRepo) {
-  const auth = repo.has_password
-    ? `使用已配置的凭据（用户名 ${repo.username || "见环境"}）进行认证拉取`
-    : `按公开仓库 / SSH 部署密钥方式拉取`
-  return `你正在部署代码仓库「${repo.name}」。只能在 /root/ws/${sessionId} 内工作。
-1. 克隆 ${repo.url}（分支 ${repo.branch}），${auth}。
-2. 检查项目结构；如果已有 deploy.sh，优先使用它。
-3. 使用 BuildKit 构建镜像；Kubernetes 变更必须先 server-side dry-run，再真实 apply。
-4. 等待 rollout 完成，把最终报告写入 /root/ws/${sessionId}/doops-report.md。
-所有命令必须可追溯。`
+function deployAfterCloneTemplate(sessionId: string, repo: GitRepo) {
+  return `仓库「${repo.name}」已通过 doops 克隆到 /root/ws/${sessionId}/repo。
+只能在 /root/ws/${sessionId} 内工作。
+1. 检查 repo/ 项目结构；如果已有 deploy.sh，优先使用它。
+2. 使用 BuildKit 构建镜像；Kubernetes 变更必须先 server-side dry-run，再真实 apply。
+3. 等待 rollout 完成，把最终报告写入 /root/ws/${sessionId}/doops-report.md。
+所有远端操作只能通过当前 doops agent 执行，不能要求 SSH 连接；所有命令必须可追溯。`
 }
 
 export function AskPanel({
@@ -74,6 +71,7 @@ export function AskPanel({
   // 连接状态：是否已为该节点配置可用大模型
   const [modelStatus, setModelStatus] = useState<"loading" | "connected" | "unconfigured">("loading")
   const [repos, setRepos] = useState<GitRepo[]>([])
+  const [cloningRepoId, setCloningRepoId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -171,8 +169,9 @@ export function AskPanel({
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.prompt,
-          // 同一 session_id 让 ACP agent 维持多轮上下文；不传 model，由节点配置决定
-          arguments: { session_id: sessionId, instruction: text },
+          // 同一 session_id 让 ACP agent 维持多轮上下文；显式传当前节点 settings.json
+          // 中展示的模型，避免 UI 显示模型与 doagent 实际调用模型不一致。
+          arguments: { session_id: sessionId, instruction: text, model: activeModel || undefined },
           signal: ac.signal,
         },
         (ev) => {
@@ -204,6 +203,56 @@ export function AskPanel({
   function useQuick(q: string) {
     setInstruction(q)
     requestAnimationFrame(() => taRef.current?.focus())
+  }
+
+  async function cloneRepo(repo: GitRepo) {
+    if (running || cloningRepoId) return
+    const turn: Turn = {
+      id: crypto.randomUUID(),
+      user: `通过 doops 克隆仓库「${repo.name}」到当前工作区`,
+      process: "",
+      answer: "",
+      running: true,
+    }
+    setTurns((p) => [...p, turn])
+    setCloningRepoId(repo.id)
+    const started = Date.now()
+    try {
+      const res = await cloneRepoToTarget(session, repo.id, {
+        cluster: target.cluster,
+        instance: target.instance,
+        session_id: sessionId,
+        directory: "repo",
+      })
+      setTurns((p) =>
+        p.map((t) =>
+          t.id === turn.id
+            ? {
+                ...t,
+                running: false,
+                elapsed: Math.round((Date.now() - started) / 1000),
+                answer: res.message,
+              }
+            : t,
+        ),
+      )
+      useQuick(deployAfterCloneTemplate(sessionId, repo))
+    } catch (err) {
+      setTurns((p) =>
+        p.map((t) =>
+          t.id === turn.id
+            ? {
+                ...t,
+                running: false,
+                elapsed: Math.round((Date.now() - started) / 1000),
+                error: (err as Error).message,
+              }
+            : t,
+        ),
+      )
+    } finally {
+      setCloningRepoId(null)
+    }
   }
 
   return (
@@ -320,7 +369,8 @@ export function AskPanel({
                   {repos.map((repo) => (
                     <button
                       key={repo.id}
-                      onClick={() => useQuick(deployFromRepo(sessionId, repo))}
+                      onClick={() => cloneRepo(repo)}
+                      disabled={!!cloningRepoId}
                       className="group flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-muted"
                     >
                       <GitIcon width={14} height={14} className="shrink-0 text-muted-foreground" />
@@ -335,7 +385,9 @@ export function AskPanel({
                       <ChevronRightIcon
                         width={13}
                         height={13}
-                        className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                        className={`shrink-0 text-muted-foreground transition-transform ${
+                          cloningRepoId === repo.id ? "animate-spin" : "group-hover:translate-x-0.5"
+                        }`}
                       />
                     </button>
                   ))}

@@ -66,6 +66,90 @@ func TestAgentWebSocketFileToolsRejectWorkspaceEscape(t *testing.T) {
 	}
 }
 
+func TestGitCloneToolClonesIntoWorkspace(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	repoPath := createLocalBareGitRepo(t)
+
+	result, err := handleGitClone(mustJSON(t, map[string]interface{}{
+		"session_id": "clone",
+		"url":        repoPath,
+		"branch":     "main",
+		"directory":  "app",
+	}))
+	if err != nil {
+		t.Fatalf("git clone: %v", err)
+	}
+	if !strings.Contains(result, "cloned") {
+		t.Fatalf("unexpected clone result: %s", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "clone", "app", "README.md")); err != nil {
+		t.Fatalf("expected cloned file: %v", err)
+	}
+}
+
+func TestGitCloneToolRejectsDirectoryEscape(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	_, err := handleGitClone(mustJSON(t, map[string]interface{}{
+		"session_id": "clone",
+		"url":        "https://example.com/repo.git",
+		"branch":     "main",
+		"directory":  "../escape",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("expected directory validation error, got %v", err)
+	}
+}
+
+func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-no-final", func(s string) {
+		progress.WriteString(s)
+	})
+	if err == nil {
+		t.Fatal("expected error when SSE ends before final event")
+	}
+	if !strings.Contains(err.Error(), "ended before final") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := progress.String(); got != "partial" {
+		t.Fatalf("progress mismatch: %q", got)
+	}
+}
+
+func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
+	t.Setenv("DOOPS_DOAGENT_SSE_IDLE_TIMEOUT", "20ms")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-idle", func(string) {})
+	if err == nil {
+		t.Fatal("expected idle timeout error")
+	}
+	if !strings.Contains(err.Error(), "idle timeout") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))

@@ -725,7 +725,8 @@ func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	reqBody := strings.NewReader(`{"name":"doops","url":"https://github.com/l8ai-cn/doops.git","branch":"main","username":"bot","password":"secret","description":"public repo"}`)
+	repoPath := createLocalBareGitRepo(t)
+	reqBody := strings.NewReader(fmt.Sprintf(`{"name":"doops","url":%q,"branch":"main","username":"bot","password":"secret","description":"public repo"}`, repoPath))
 	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/admin/repos", reqBody)
 	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
 	resp, err = http.DefaultClient.Do(req)
@@ -773,7 +774,7 @@ func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
 		t.Fatalf("unexpected repo list status=%d repos=%#v", resp.StatusCode, listed.Repos)
 	}
 
-	reqBody = strings.NewReader(`{"branch":"release","description":"updated"}`)
+	reqBody = strings.NewReader(`{"description":"updated"}`)
 	req, _ = http.NewRequest(http.MethodPatch, ts.URL+"/v1/admin/repos?id="+url.QueryEscape(created.ID), reqBody)
 	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
 	resp, err = http.DefaultClient.Do(req)
@@ -796,7 +797,7 @@ func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
 	if err := json.Unmarshal(updateBody, &updated); err != nil {
 		t.Fatalf("decode updated repo: %v", err)
 	}
-	if updated.Branch != "release" || updated.Description != "updated" || !updated.HasPassword {
+	if updated.Branch != "main" || updated.Description != "updated" || !updated.HasPassword {
 		t.Fatalf("unexpected updated repo: %#v", updated)
 	}
 
@@ -818,8 +819,8 @@ func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&tested); err != nil {
 		t.Fatalf("decode repo test response: %v", err)
 	}
-	if !strings.Contains(tested.Message, "已保存") {
-		t.Fatalf("expected saved repo test message, got %#v", tested)
+	if !tested.OK || !strings.Contains(tested.Message, "连接成功") {
+		t.Fatalf("expected successful repo test message, got %#v", tested)
 	}
 
 	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/v1/admin/repos?id="+url.QueryEscape(created.ID), nil)

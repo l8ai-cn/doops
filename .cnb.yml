@@ -1,3 +1,41 @@
+main:
+  pull_request:
+    - name: ai-review
+      stages:
+        - name: AI code review
+          image: cnbcool/code-review:latest
+          settings:
+            comment: true
+            max_comments: 10
+            fail_on_critical: false
+  push:
+    - name: ci
+      runner:
+        cpus: 2
+      docker:
+        image: golang:1.24-alpine
+      stages:
+        - name: prepare tools
+          script: apk add --no-cache bash git nodejs npm
+        - name: agent tests
+          script: |
+            cd backend/agent
+            go test ./...
+        - name: gateway tests
+          script: |
+            cd backend/gateway
+            go test ./...
+        - name: cli tests
+          script: |
+            cd backend/skills/doops-cli
+            go test ./...
+        - name: web build
+          script: |
+            npm i -g pnpm@11.7.0
+            pnpm install --frozen-lockfile
+            pnpm exec tsc --noEmit
+            pnpm build
+
 master:
   pull_request:
     - name: ai-review

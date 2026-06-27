@@ -32,8 +32,8 @@ const FEATURES = [
   },
   {
     icon: LayersIcon,
-    title: "配置中心 · 一键下发",
-    desc: "集中管理大模型与配置文件，发布上线一键同步到任意节点。",
+    title: "配置模板 · 一键下发",
+    desc: "在浏览器保存常用大模型与配置文件模板，通过 doops 发布到指定节点。",
   },
   {
     icon: FileIcon,

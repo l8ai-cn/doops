@@ -194,9 +194,9 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-card/50 px-4 py-3">
           <div className="min-w-0">
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <LayersIcon width={16} height={16} className="text-primary" /> 配置中心
+              <LayersIcon width={16} height={16} className="text-primary" /> 配置模板
             </h2>
-            <p className="text-xs text-muted-foreground">统一管理大模型与配置文件，发布后才会下发到线上</p>
+            <p className="text-xs text-muted-foreground">浏览器本地保存模板，发布时通过 doops 写入所选节点</p>
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -296,9 +296,9 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-card/50 px-4 py-3">
           <div>
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <RocketIcon width={16} height={16} className="text-primary" /> 应用 / 发布上线
+              <RocketIcon width={16} height={16} className="text-primary" /> 应用到节点
             </h2>
-            <p className="text-xs text-muted-foreground">选择配置与目标实例，应用后写入节点并标记为已发布</p>
+            <p className="text-xs text-muted-foreground">选择模板与目标实例，应用后写入节点并标记本地发布时间</p>
           </div>
           <button
             onClick={loadInst}

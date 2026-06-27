@@ -36,6 +36,13 @@ type adminGrantRequest struct {
 	Actions  []string `json:"actions"`
 }
 
+type adminRepoCloneRequest struct {
+	Cluster   string `json:"cluster"`
+	Instance  string `json:"instance"`
+	SessionID string `json:"session_id"`
+	Directory string `json:"directory"`
+}
+
 // HandleAdminUsers 处理 GET(列出) 与 POST(创建) 用户。
 func (h *GatewayHub) HandleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdmin(w, r) {
@@ -305,9 +312,9 @@ func (h *GatewayHub) HandleAdminRepos(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAdminRepoTest validates that the saved repository record is usable by
-// the console. Network reachability is intentionally left to deployment-time
-// agent workflows so gateway startup is not coupled to external Git hosts.
+// HandleAdminRepoTest validates that the saved repository record can reach the
+// configured remote branch from the gateway process. Target-side deploys still
+// run through doops RPC/agent tools; this endpoint does not open SSH sessions.
 func (h *GatewayHub) HandleAdminRepoTest(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdmin(w, r) {
 		return
@@ -321,7 +328,7 @@ func (h *GatewayHub) HandleAdminRepoTest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	repo, err := h.store.MarkGitRepoUsed(id, time.Now().UTC())
+	repo, err := h.store.GetGitRepo(id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "repo not found", http.StatusNotFound)
@@ -330,10 +337,87 @@ func (h *GatewayHub) HandleAdminRepoTest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	result, err := h.store.TestGitRepoConnection(r.Context(), repo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	repo, err = h.store.MarkGitRepoUsed(id, time.Now().UTC())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSONHTTP(w, map[string]interface{}{
 		"ok":      true,
-		"message": fmt.Sprintf("仓库配置已保存：%s (%s)", repo.Name, repo.Branch),
+		"message": fmt.Sprintf("仓库连接成功：%s (%s @ %s)", repo.Name, result.Branch, shortGitRef(result.Ref)),
 	})
+}
+
+func (h *GatewayHub) HandleAdminRepoClone(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var req adminRepoCloneRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid clone request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "" || strings.TrimSpace(req.SessionID) == "" {
+		http.Error(w, "missing cluster / instance / session_id", http.StatusBadRequest)
+		return
+	}
+	repo, err := h.store.GetGitRepo(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "repo not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	password, err := h.store.GitRepoPassword(repo.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	directory := strings.TrimSpace(req.Directory)
+	if directory == "" {
+		directory = "repo"
+	}
+	out, err := h.RunInternalToolCall(r.Context(), req.Cluster, req.Instance, "doops_git_clone", map[string]interface{}{
+		"session_id": req.SessionID,
+		"url":        repo.URL,
+		"branch":     repo.Branch,
+		"username":   repo.Username,
+		"password":   password,
+		"directory":  directory,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	_, _ = h.store.MarkGitRepoUsed(id, time.Now().UTC())
+	writeJSONHTTP(w, map[string]interface{}{
+		"ok":      true,
+		"message": out,
+	})
+}
+
+func shortGitRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if len(ref) > 12 {
+		return ref[:12]
+	}
+	return ref
 }
 
 // resolveUserID 优先用 user_id，否则按用户名查找。

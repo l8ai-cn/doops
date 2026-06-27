@@ -19,23 +19,40 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: agent/go.mod
+          go-version-file: backend/agent/go.mod
           cache-dependency-path: |
-            agent/go.sum
-            gateway/go.sum
-            skills/doops-cli/go.sum
+            backend/agent/go.sum
+            backend/gateway/go.sum
+            backend/skills/doops-cli/go.sum
 
       - name: Test agent
-        working-directory: agent
+        working-directory: backend/agent
         run: go test ./...
 
       - name: Test gateway
-        working-directory: gateway
+        working-directory: backend/gateway
         run: go test ./...
 
       - name: Test CLI
-        working-directory: skills/doops-cli
+        working-directory: backend/skills/doops-cli
         run: go test ./...
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web console
+        run: pnpm exec tsc --noEmit
+
+      - name: Build web console
+        run: pnpm build
 
   secret-scan:
     name: Secret scan

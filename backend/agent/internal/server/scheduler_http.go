@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,9 +53,10 @@ func (h *GatewayHub) HandleAdminJobs(w http.ResponseWriter, r *http.Request) {
 		if req.Enabled != nil {
 			enabled = *req.Enabled
 		}
-		scanConfig := strings.TrimSpace(string(req.ScanConfig))
-		if scanConfig == "" || scanConfig == "null" {
-			scanConfig = "{}"
+		scanConfig, err := normalizeScanConfig(req.ScanConfig)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		job, err := h.store.CreateSchedulerJob(SchedulerJob{
 			Name:           req.Name,
@@ -94,6 +96,25 @@ func (h *GatewayHub) HandleAdminJobs(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func normalizeScanConfig(raw json.RawMessage) (string, error) {
+	scanConfig := strings.TrimSpace(string(raw))
+	if scanConfig == "" || scanConfig == "null" {
+		return "{}", nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", fmt.Errorf("scan_config must be a JSON object")
+	}
+	if obj == nil {
+		return "{}", nil
+	}
+	normalized, err := json.Marshal(obj)
+	if err != nil {
+		return "", fmt.Errorf("scan_config must be a JSON object")
+	}
+	return string(normalized), nil
 }
 
 // HandleAdminJobRun 立即执行一个任务，或开关启用状态。

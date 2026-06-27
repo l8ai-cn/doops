@@ -7,9 +7,11 @@ Thanks for improving doops. Keep changes focused, tested, and free of environmen
 Run the relevant package tests before opening a pull request:
 
 ```bash
-(cd agent && go test ./...)
-(cd gateway && go test ./...)
-(cd skills/doops-cli && go test ./...)
+(cd backend/agent && go test ./...)
+(cd backend/gateway && go test ./...)
+(cd backend/skills/doops-cli && go test ./...)
+pnpm exec tsc --noEmit
+pnpm build
 ```
 
 ## Security and Configuration

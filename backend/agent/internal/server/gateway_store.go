@@ -282,12 +282,13 @@ func (s *GatewayStore) migrate() error {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			url TEXT NOT NULL,
-			branch TEXT NOT NULL DEFAULT 'main',
-			username TEXT NOT NULL DEFAULT '',
-			password_hash TEXT NOT NULL DEFAULT '',
-			description TEXT NOT NULL DEFAULT '',
-			last_used_at TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL,
+				branch TEXT NOT NULL DEFAULT 'main',
+				username TEXT NOT NULL DEFAULT '',
+				password_hash TEXT NOT NULL DEFAULT '',
+				password_ciphertext TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				last_used_at TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_git_repos_created ON git_repos(created_at)`,
@@ -298,6 +299,9 @@ func (s *GatewayStore) migrate() error {
 		}
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("git_repos", "password_ciphertext", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil
