@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import { SparkIcon, SendIcon, StopIcon, PlusIcon, ChevronRightIcon, KeyIcon, CopyIcon, CheckIcon } from "./icons"
+import { Markdown } from "./markdown"
 
 interface Turn {
   id: string
@@ -327,9 +328,7 @@ function TurnView({ turn }: { turn: Turn }) {
                 {copied ? "已复制" : "复制"}
               </button>
             </div>
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-              {turn.answer}
-            </p>
+            <Markdown content={turn.answer} />
           </div>
         )}
 

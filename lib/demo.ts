@@ -273,7 +273,18 @@ export async function demoCallTool(
         "[observe] 磁盘 37%，无 error 级日志\n",
         "[done] 巡检完成，节点健康。\n",
       ]
-      summary = "巡检结果：负载正常、服务全部 active、磁盘 37%、无错误日志。"
+      summary = `## 巡检结果：节点健康 ✅
+
+**总体状态**：负载正常、核心服务全部存活、无错误日志。
+
+| 检查项 | 结果 | 说明 |
+| --- | --- | --- |
+| 系统负载 | 正常 | load 0.18，低于告警阈值 |
+| 服务存活 | 正常 | \`doops-app\` / \`nginx\` / \`redis\` 均 active |
+| 磁盘使用 | 正常 | 根分区 37% |
+| 错误日志 | 无 | 近 1 小时无 error 级日志 |
+
+**建议**：无需处理，保持当前监控频率即可。`
     } else if (/回滚|rollback|上一个版本|恢复/.test(p)) {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -282,7 +293,23 @@ export async function demoCallTool(
         "[step 2/2] 健康检查 /healthz…\n",
         "[done] 已回滚至 1.8.2，服务恢复正常。\n",
       ]
-      summary = "已回滚到 1.8.2，/healthz 返回 200。"
+      summary = `## 回滚完成 ✅
+
+已将 \`current\` 切回上一个稳定版本 **releases/1.8.2**，服务平滑重载，未中断请求。
+
+**执行步骤**
+
+1. 定位上一个稳定版本 \`releases/1.8.2\`
+2. 切换软链并重载服务：
+
+\`\`\`bash
+ln -sfn releases/1.8.2 current
+systemctl reload doops-app
+\`\`\`
+
+3. 健康检查 \`/healthz\` 返回 **200 OK**
+
+> 如需进一步排查 1.8.3 的问题，可在测试环境复现后再重新发布。`
     } else {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -294,7 +321,25 @@ export async function demoCallTool(
         "[step 4/4] 健康检查 /healthz 返回 200，部署完成。\n",
         "[done] 已将 doops-app 滚动升级到 1.8.3，无停机。\n",
       ]
-      summary = "任务完成：部署成功，服务健康。"
+      summary = `## 部署完成 ✅
+
+已将 **doops-app** 滚动升级到 \`1.8.3\`，全程无停机。
+
+**变更摘要**
+
+- 新增发布：\`releases/1.8.3\`
+- \`current\` 软链已指向新版本
+- \`nginx\` 平滑重载，连接无中断
+- 健康检查 \`/healthz\` → **200 OK**
+
+**关键命令**
+
+\`\`\`bash
+ln -sfn releases/1.8.3 current
+nginx -s reload
+\`\`\`
+
+完整报告已写入 \`doops-report.md\`。`
     }
 
     await emitChunks(chunks, onEvent, signal, 340)
