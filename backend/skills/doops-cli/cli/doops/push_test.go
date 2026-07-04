@@ -31,7 +31,7 @@ func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 	server := Server{
 		Name:     "oilan",
-		Gateway:  "http://gateway.example.com:42222",
+		Gateway:  "https://gateway.example.com:42222",
 		Cluster:  "doops-oilan",
 		Instance: "oilan-node",
 	}
@@ -40,7 +40,7 @@ func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build gateway git URL: %v", err)
 	}
-	want := "http://doops:secret-token@gateway.example.com:42222/v1/git/doops-oilan/oilan-node/deploy-main.git"
+	want := "https://doops:secret-token@gateway.example.com:42222/v1/git/doops-oilan/oilan-node/deploy-main.git"
 	if got != want {
 		t.Fatalf("gateway git URL mismatch:\nwant %s\n got %s", want, got)
 	}

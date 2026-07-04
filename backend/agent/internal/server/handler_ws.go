@@ -348,8 +348,37 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 	log.Printf("🔗 WS Client Disconnected: %s", remoteAddr)
 }
 
-// notificationSender 抽象了发送 notifications/message 的能力
-type notificationSender func(text string)
+// notificationSender 抽象了发送 notifications/message 的能力。
+type notificationSender func(notificationEvent)
+
+type notificationEvent struct {
+	Kind   string
+	Data   string
+	Tool   string
+	Status string
+	Path   string
+}
+
+func rawNotification(text string) notificationEvent {
+	return notificationEvent{Kind: "raw", Data: text}
+}
+
+func assistantDeltaNotification(text string) notificationEvent {
+	return notificationEvent{Kind: "assistant_delta", Data: text}
+}
+
+func toolNotification(toolName, status string) notificationEvent {
+	return notificationEvent{
+		Kind:   "tool",
+		Data:   fmt.Sprintf("[tool:%s]", toolName),
+		Tool:   toolName,
+		Status: status,
+	}
+}
+
+func errorNotification(text string) notificationEvent {
+	return notificationEvent{Kind: "error", Data: text}
+}
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
@@ -367,14 +396,28 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 
 	// 统一流式推送方法
-	pushProgress := func(text string) {
+	pushProgress := func(evt notificationEvent) {
+		if evt.Kind == "" {
+			evt.Kind = "raw"
+		}
+		params := map[string]interface{}{
+			"sessionID": sessionID,
+			"data":      evt.Data,
+			"kind":      evt.Kind,
+		}
+		if evt.Tool != "" {
+			params["tool"] = evt.Tool
+		}
+		if evt.Status != "" {
+			params["status"] = evt.Status
+		}
+		if evt.Path != "" {
+			params["path"] = evt.Path
+		}
 		writeJSON(map[string]interface{}{
 			"jsonrpc": "2.0",
 			"method":  "notifications/message",
-			"params": map[string]interface{}{
-				"sessionID": sessionID,
-				"data":      text,
-			},
+			"params":  params,
 		})
 	}
 
@@ -1405,7 +1448,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 			// doagent SSE 使用 JSON-RPC 2.0 通知格式：{"jsonrpc":"2.0","method":"...","params":{...}}
 			var update map[string]interface{}
 			if json.Unmarshal([]byte(data), &update) != nil {
-				pushProgress(data)
+				pushProgress(rawNotification(data))
 				continue
 			}
 
@@ -1424,11 +1467,11 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 					switch c := sessionUpdate["content"].(type) {
 					case map[string]interface{}:
 						if text, ok := c["text"].(string); ok && text != "" {
-							pushProgress(text)
+							pushProgress(assistantDeltaNotification(text))
 						}
 					case string:
 						if c != "" {
-							pushProgress(c)
+							pushProgress(assistantDeltaNotification(c))
 						}
 					}
 				case "tool_call_update":
@@ -1436,28 +1479,28 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 					toolName, _ := sessionUpdate["toolName"].(string)
 					status, _ := sessionUpdate["status"].(string)
 					if toolName != "" && status == "in_progress" {
-						pushProgress(fmt.Sprintf("[tool:%s]", toolName))
+						pushProgress(toolNotification(toolName, status))
 					}
 				case "agent_message":
 					// agent 完成最终回复：content 同样是 map 或 []interface{}
 					switch c := sessionUpdate["content"].(type) {
 					case map[string]interface{}:
 						if text, ok := c["text"].(string); ok && text != "" {
-							pushProgress(text)
+							pushProgress(assistantDeltaNotification(text))
 						}
 					case []interface{}:
 						for _, item := range c {
 							if m, ok := item.(map[string]interface{}); ok {
 								if inner, ok := m["content"].(map[string]interface{}); ok {
 									if text, ok := inner["text"].(string); ok && text != "" {
-										pushProgress(text)
+										pushProgress(assistantDeltaNotification(text))
 									}
 								}
 							}
 						}
 					case string:
 						if c != "" {
-							pushProgress(c)
+							pushProgress(assistantDeltaNotification(c))
 						}
 					}
 					return nil
@@ -1490,7 +1533,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 				if msg, ok := params["message"].(string); ok {
 					errMsg = msg
 				}
-				pushProgress("[error] " + errMsg)
+				pushProgress(errorNotification("[error] " + errMsg))
 				return fmt.Errorf("doagent: %s", errMsg)
 
 			default:
@@ -1498,7 +1541,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 				if method != "" {
 					log.Printf("🔔 SSE event: %s", method)
 				} else {
-					pushProgress(data)
+					pushProgress(rawNotification(data))
 				}
 			}
 			continue
@@ -1601,7 +1644,7 @@ func streamReader(pipe io.ReadCloser, pushProgress notificationSender) {
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 允许长行
 	for scanner.Scan() {
 		line := scanner.Text() + "\n"
-		pushProgress(line)
+		pushProgress(rawNotification(line))
 	}
 }
 
@@ -1616,7 +1659,7 @@ func slowProgressHeartbeat(doneCh chan struct{}, pushProgress notificationSender
 			return
 		case <-ticker.C:
 			elapsed += 5
-			pushProgress(fmt.Sprintf("\r\033[K[agent] ⏳ 命令后台执行中... (耗时 %ds)", elapsed))
+			pushProgress(rawNotification(fmt.Sprintf("\r\033[K[agent] ⏳ 命令后台执行中... (耗时 %ds)", elapsed)))
 		}
 	}
 }

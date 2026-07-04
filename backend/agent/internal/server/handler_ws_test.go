@@ -187,6 +187,107 @@ func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 	}
 }
 
+func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode rpc: %v", err)
+			}
+			switch req["method"] {
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "doagent-kind"},
+				})
+			case "session/prompt":
+				w.WriteHeader(http.StatusAccepted)
+			default:
+				t.Fatalf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"done"}}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	rawArgs, _ := json.Marshal(map[string]interface{}{
+		"session_id":  "kind-prompt",
+		"instruction": "hello",
+	})
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      42,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      "doops_agent_prompt",
+			"arguments": json.RawMessage(rawArgs),
+		},
+	}); err != nil {
+		t.Fatalf("call prompt: %v", err)
+	}
+
+	msg := readNotification(t, conn)
+	params, _ := msg["params"].(map[string]interface{})
+	if params["kind"] != "assistant_delta" {
+		t.Fatalf("expected assistant_delta notification kind, got %#v", params)
+	}
+	if params["data"] != "hello" {
+		t.Fatalf("expected first assistant chunk, got %#v", params["data"])
+	}
+}
+
+func TestShellNotificationIncludesRawKind(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	rawArgs, _ := json.Marshal(map[string]interface{}{
+		"session_id": "kind-shell",
+		"command":    "printf 'raw-kind\\n'",
+	})
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      43,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      "doops_shell",
+			"arguments": json.RawMessage(rawArgs),
+		},
+	}); err != nil {
+		t.Fatalf("call shell: %v", err)
+	}
+
+	msg := readNotification(t, conn)
+	params, _ := msg["params"].(map[string]interface{})
+	if params["kind"] != "raw" {
+		t.Fatalf("expected raw notification kind, got %#v", params)
+	}
+	if params["data"] != "raw-kind\n" {
+		t.Fatalf("expected shell output, got %#v", params["data"])
+	}
+}
+
 func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
@@ -199,8 +300,8 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testi
 	defer ts.Close()
 
 	var progress strings.Builder
-	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-no-final", func(s string) {
-		progress.WriteString(s)
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-no-final", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
 	})
 	if err == nil {
 		t.Fatal("expected error when SSE ends before final event")
@@ -227,7 +328,7 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-idle", func(string) {})
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-idle", func(notificationEvent) {})
 	if err == nil {
 		t.Fatal("expected idle timeout error")
 	}
@@ -887,6 +988,19 @@ func callToolResult(t *testing.T, conn *websocket.Conn, tool string, args map[st
 			continue
 		}
 		return msg
+	}
+}
+
+func readNotification(t *testing.T, conn *websocket.Conn) map[string]interface{} {
+	t.Helper()
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			t.Fatalf("read notification: %v", err)
+		}
+		if method, _ := msg["method"].(string); method == "notifications/message" {
+			return msg
+		}
 	}
 }
 

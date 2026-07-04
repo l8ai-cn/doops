@@ -20,14 +20,10 @@ func TestGatewayAuthLoginURLUsesVersionedEndpoint(t *testing.T) {
 	}
 }
 
-func TestGatewayLoginURLAllowsHTTPGatewayByDefault(t *testing.T) {
-	got, err := gatewayAuthLoginURL("http://203.0.113.10:42222")
-	if err != nil {
-		t.Fatalf("http gateway login URL should be allowed by default: %v", err)
-	}
-	want := "http://203.0.113.10:42222/v1/auth/login"
-	if got != want {
-		t.Fatalf("login URL mismatch\nwant: %s\n got: %s", want, got)
+func TestGatewayLoginURLRejectsExternalHTTPGatewayByDefault(t *testing.T) {
+	t.Setenv("DOOPS_ALLOW_INSECURE_GATEWAY", "")
+	if _, err := gatewayAuthLoginURL("http://203.0.113.10:42222"); err == nil {
+		t.Fatalf("expected external http gateway to be rejected by default")
 	}
 }
 
