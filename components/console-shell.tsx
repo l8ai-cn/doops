@@ -273,9 +273,11 @@ export function ConsoleShell() {
             <DashboardPanel
               session={session}
               targets={targets}
+              selected={selected}
               loading={loading}
               onRefresh={refresh}
               onDeployAgent={() => setView("deploy")}
+              onOpenJobs={() => setTab("jobs")}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
                 setTab(nextTab)

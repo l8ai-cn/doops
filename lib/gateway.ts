@@ -11,6 +11,7 @@ export interface Target {
   status?: string
   active_ops?: number
   queued_ops?: number
+  busy_reason?: string
   resources?: string[]
   sessions?: string[]
 }
