@@ -1,8 +1,8 @@
 "use client"
 
-import type { Target, AuditEvent } from "./gateway"
+import type { Target, AuditEvent, AuditSummary } from "./gateway"
 
-export type { Target, AuditEvent }
+export type { Target, AuditEvent, AuditSummary }
 
 export interface Session {
   gateway: string
@@ -55,19 +55,44 @@ export async function fetchTargets(s: Session): Promise<Target[]> {
 export async function fetchAudit(
   s: Session,
   params: Record<string, string>,
-): Promise<{ events?: AuditEvent[]; error?: string; status?: number }> {
+): Promise<{ events?: AuditEvent[]; summary?: AuditSummary; error?: string; status?: number }> {
   if (s.demo) {
     const { DEMO_AUDIT } = await import("./demo")
     const inst = params.instance
-    return {
-      events: inst ? DEMO_AUDIT.filter((e) => !e.instance || e.instance === inst) : DEMO_AUDIT,
-    }
+    const events = inst ? DEMO_AUDIT.filter((e) => !e.instance || e.instance === inst) : DEMO_AUDIT
+    return { events, summary: summarizeAuditEvents(events) }
   }
   const qs = new URLSearchParams(params)
   const res = await fetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
   const data = await res.json()
   if (!res.ok) return { error: data.error || "查询审计失败", status: res.status }
-  return { events: (data.events || []) as AuditEvent[] }
+  return {
+    events: (data.events || []) as AuditEvent[],
+    summary: data.summary as AuditSummary | undefined,
+  }
+}
+
+function summarizeAuditEvents(events: AuditEvent[]): AuditSummary {
+  const summary: AuditSummary = {
+    total: 0,
+    running: 0,
+    success: 0,
+    failed: 0,
+    bytes_in: 0,
+    bytes_out: 0,
+    status: {},
+  }
+  for (const event of events) {
+    const status = event.status || "unknown"
+    summary.total += 1
+    summary.bytes_in += event.bytes_in || 0
+    summary.bytes_out += event.bytes_out || 0
+    summary.status![status] = (summary.status![status] || 0) + 1
+    if (status === "running") summary.running += 1
+    else if (status === "success") summary.success += 1
+    else summary.failed += 1
+  }
+  return summary
 }
 
 // 调用一个 gateway 工具并流式返回事件

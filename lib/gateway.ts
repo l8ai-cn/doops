@@ -33,6 +33,16 @@ export interface AuditEvent {
   ended_at?: string
 }
 
+export interface AuditSummary {
+  total: number
+  running: number
+  success: number
+  failed: number
+  bytes_in: number
+  bytes_out: number
+  status?: Record<string, number>
+}
+
 // gateway 目标动作工具名
 export const TOOLS = {
   shell: "doops_shell",

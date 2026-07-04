@@ -57,6 +57,9 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
+  const [adminDefaultTab, setAdminDefaultTab] = useState<
+    "instances" | "config" | "repos" | "jobs" | "users" | "grants" | "tokens" | "operations"
+  >("instances")
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -221,7 +224,7 @@ export function ConsoleShell() {
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
       {view === "admin" ? (
-        <AdminConsole session={session} />
+        <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DeployGuideBody
@@ -277,7 +280,10 @@ export function ConsoleShell() {
               loading={loading}
               onRefresh={refresh}
               onDeployAgent={() => setView("deploy")}
-              onOpenJobs={() => setTab("jobs")}
+              onOpenJobs={() => {
+                setAdminDefaultTab("jobs")
+                setView("admin")
+              }}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
                 setTab(nextTab)

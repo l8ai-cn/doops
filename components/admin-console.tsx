@@ -71,8 +71,18 @@ function fmtTime(v?: string): string {
   return d.toLocaleString()
 }
 
-export function AdminConsole({ session }: { session: Session }) {
-  const [tab, setTab] = useState<AdminTab>("instances")
+export function AdminConsole({
+  session,
+  defaultTab = "instances",
+}: {
+  session: Session
+  defaultTab?: AdminTab
+}) {
+  const [tab, setTab] = useState<AdminTab>(defaultTab)
+
+  useEffect(() => {
+    setTab(defaultTab)
+  }, [defaultTab])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
