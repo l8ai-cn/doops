@@ -101,6 +101,92 @@ func TestGitCloneToolRejectsDirectoryEscape(t *testing.T) {
 	}
 }
 
+func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	t.Setenv("DO_AGENT_SETTINGS", settingsPath)
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "model": "minimax/MiniMax-M3",
+  "provider": {
+    "minimax": {
+      "options": {"apiKey": "real-key", "baseURL": "https://api.minimaxi.com/anthropic", "kind": "anthropic"},
+      "models": {"MiniMax-M3": {"name": "MiniMax-M3"}}
+    }
+  }
+}`), 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc" {
+			http.NotFound(w, r)
+			return
+		}
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode rpc: %v", err)
+		}
+		if req["method"] != "initialize" {
+			t.Fatalf("metadata mode should only initialize doagent, got method %v", req["method"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      req["id"],
+			"result": map[string]interface{}{
+				"_meta": map[string]interface{}{"model": "MiniMax-M3"},
+			},
+		})
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	got := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": "metadata-smoke",
+		"mode":       "metadata",
+	})
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(got), &meta); err != nil {
+		t.Fatalf("metadata should be JSON, got %q: %v", got, err)
+	}
+	if meta["status"] != "connected" || meta["provider"] != "minimax" || meta["model"] != "minimax/MiniMax-M3" {
+		t.Fatalf("metadata mismatch: %+v", meta)
+	}
+}
+
+func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("history mode without a bound session should not call doagent: %s", r.URL.Path)
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	got := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": "empty-history",
+		"mode":       "history",
+	})
+	var history map[string]interface{}
+	if err := json.Unmarshal([]byte(got), &history); err != nil {
+		t.Fatalf("history should be JSON, got %q: %v", got, err)
+	}
+	messages, _ := history["messages"].([]interface{})
+	if history["source"] != "doagent" || history["sessionId"] != "empty-history" || len(messages) != 0 {
+		t.Fatalf("history mismatch: %+v", history)
+	}
+}
+
 func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {

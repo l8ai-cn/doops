@@ -634,6 +634,24 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_agent_prompt":
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
+		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
+		case "metadata":
+			result, err := gw.handleAgentMetadataWS(ctx, sessionID)
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
+			} else {
+				writeJSON(buildSuccessResponse(reqID, result))
+			}
+			return
+		case "history":
+			result, err := gw.handleAgentHistoryWS(ctx, sessionID)
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
+			} else {
+				writeJSON(buildSuccessResponse(reqID, result))
+			}
+			return
+		}
 		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON)
 
 	case "doops_git_clone":
@@ -864,6 +882,323 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+}
+
+func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
+	doagentURL := os.Getenv("DO_AGENT_URL")
+	if doagentURL == "" {
+		doagentURL = "http://127.0.0.1:9000"
+	}
+	status := inspectDoagentModelChannels()
+	if status.status == "unconfigured" && status.settingsFound {
+		return marshalDoagentMetadataStatus(status)
+	}
+	if err := ensureDoagentAvailable(doagentURL); err != nil {
+		status.status = "unavailable"
+		status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
+			Name:    "acp",
+			Status:  "error",
+			Message: err.Error(),
+		})
+		return marshalDoagentMetadataStatus(status)
+	}
+
+	resp, err := doagentRPC(doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "metadata-" + doopsSessionID,
+		"method":  "initialize",
+		"params":  map[string]interface{}{},
+	})
+	if err != nil {
+		status.status = "unavailable"
+		status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
+			Name:    "acp",
+			Status:  "error",
+			Message: err.Error(),
+		})
+		return marshalDoagentMetadataStatus(status)
+	}
+
+	result, ok := resp["result"].(map[string]interface{})
+	if !ok {
+		status.status = "unavailable"
+		status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
+			Name:    "acp",
+			Status:  "error",
+			Message: "doagent initialize returned no result",
+		})
+		return marshalDoagentMetadataStatus(status)
+	}
+	meta, _ := result["_meta"].(map[string]interface{})
+	model, _ := meta["model"].(string)
+	tools, _ := meta["tools"].([]interface{})
+	if strings.TrimSpace(model) != "" {
+		status.model = normalizeProviderModel(status.provider, model)
+	}
+	status.status = "connected"
+	status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
+		Name:    "acp",
+		Status:  "ok",
+		Message: "doagent ACP initialize ok",
+	})
+	data, err := json.Marshal(map[string]interface{}{
+		"source":         "doagent",
+		"status":         status.status,
+		"provider":       status.provider,
+		"model":          status.model,
+		"models":         status.models,
+		"tools":          tools,
+		"channels":       status.channels,
+		"channel_status": modelChannelsByName(status.channels),
+		"metadata":       meta,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal doagent metadata: %w", err)
+	}
+	return string(data), nil
+}
+
+func (gw *Gateway) handleAgentHistoryWS(ctx context.Context, doopsSessionID string) (string, error) {
+	_ = ctx
+	gw.sessionMapMu.RLock()
+	entry := gw.sessionMap[doopsSessionID]
+	gw.sessionMapMu.RUnlock()
+	if entry == nil || strings.TrimSpace(entry.doagentSessionID) == "" {
+		return marshalDoagentHistory(doopsSessionID, nil)
+	}
+
+	doagentURL := os.Getenv("DO_AGENT_URL")
+	if doagentURL == "" {
+		doagentURL = "http://127.0.0.1:9000"
+	}
+	if err := ensureDoagentAvailable(doagentURL); err != nil {
+		return "", err
+	}
+	resp, err := doagentRPC(doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "history-" + doopsSessionID,
+		"method":  "session/messages",
+		"params": map[string]interface{}{
+			"sessionId": entry.doagentSessionID,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return marshalDoagentHistory(doopsSessionID, resp["result"])
+}
+
+func marshalDoagentHistory(doopsSessionID string, messages interface{}) (string, error) {
+	if messages == nil {
+		messages = []interface{}{}
+	}
+	data, err := json.Marshal(map[string]interface{}{
+		"source":    "doagent",
+		"sessionId": doopsSessionID,
+		"messages":  messages,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal doagent history: %w", err)
+	}
+	return string(data), nil
+}
+
+type agentModelChannelStatus struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+type agentModelRuntimeStatus struct {
+	status        string
+	source        string
+	provider      string
+	model         string
+	models        []string
+	settingsFound bool
+	channels      []agentModelChannelStatus
+}
+
+func inspectDoagentModelChannels() agentModelRuntimeStatus {
+	path := doagentSettingsPath()
+	status := agentModelRuntimeStatus{
+		status: "unconfigured",
+		source: "doagent-settings",
+		channels: []agentModelChannelStatus{
+			{Name: "settings", Status: "error", Message: "settings.json not found"},
+			{Name: "api_key", Status: "error", Message: "API key is missing"},
+			{Name: "acp", Status: "unknown", Message: "not checked yet"},
+		},
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return status
+	}
+	status.settingsFound = true
+	status.channels[0] = agentModelChannelStatus{Name: "settings", Status: "ok", Message: path}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		status.channels[0] = agentModelChannelStatus{Name: "settings", Status: "error", Message: "settings.json is not valid JSON"}
+		return status
+	}
+
+	status.model, _ = settings["model"].(string)
+	providers, _ := settings["provider"].(map[string]interface{})
+	if len(providers) > 0 {
+		status.provider = providerForSettingsModel(providers, status.model)
+		if status.provider == "" {
+			status.provider = firstSettingsProvider(providers)
+		}
+		status.models = modelsForSettingsProvider(providers, status.provider)
+	}
+	if len(status.models) == 0 && strings.TrimSpace(status.model) != "" {
+		status.models = []string{status.model}
+	}
+	if strings.TrimSpace(status.model) == "" || strings.TrimSpace(status.provider) == "" {
+		status.channels[1] = agentModelChannelStatus{Name: "api_key", Status: "error", Message: "model or provider is missing"}
+		return status
+	}
+
+	apiKey, baseURL := providerCredentials(providers, status.provider)
+	switch {
+	case strings.TrimSpace(apiKey) == "":
+		status.channels[1] = agentModelChannelStatus{Name: "api_key", Status: "error", Message: "API key is empty"}
+	case isPlaceholderAPIKey(apiKey):
+		status.channels[1] = agentModelChannelStatus{Name: "api_key", Status: "error", Message: "API key is still a placeholder"}
+	default:
+		msg := "API key configured"
+		if strings.TrimSpace(baseURL) != "" {
+			msg = "API key configured; baseURL=" + strings.TrimSpace(baseURL)
+		}
+		status.channels[1] = agentModelChannelStatus{Name: "api_key", Status: "ok", Message: msg}
+		status.status = "configured"
+	}
+	return status
+}
+
+func marshalDoagentMetadataStatus(status agentModelRuntimeStatus) (string, error) {
+	data, err := json.Marshal(map[string]interface{}{
+		"source":         status.source,
+		"status":         status.status,
+		"provider":       status.provider,
+		"model":          status.model,
+		"models":         status.models,
+		"channels":       status.channels,
+		"channel_status": modelChannelsByName(status.channels),
+		"metadata": map[string]interface{}{
+			"model":    status.model,
+			"provider": status.provider,
+			"models":   status.models,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal doagent metadata status: %w", err)
+	}
+	return string(data), nil
+}
+
+func modelChannelsByName(channels []agentModelChannelStatus) map[string]agentModelChannelStatus {
+	out := make(map[string]agentModelChannelStatus, len(channels))
+	for _, ch := range channels {
+		if ch.Name != "" {
+			out[ch.Name] = ch
+		}
+	}
+	return out
+}
+
+func upsertModelChannel(channels []agentModelChannelStatus, next agentModelChannelStatus) []agentModelChannelStatus {
+	for i := range channels {
+		if channels[i].Name == next.Name {
+			channels[i] = next
+			return channels
+		}
+	}
+	return append(channels, next)
+}
+
+func providerForSettingsModel(providers map[string]interface{}, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	for name, raw := range providers {
+		cfg, _ := raw.(map[string]interface{})
+		models, _ := cfg["models"].(map[string]interface{})
+		if _, ok := models[model]; ok {
+			return name
+		}
+		if _, ok := models[providerModelKey(name, model)]; ok {
+			return name
+		}
+	}
+	if strings.Contains(model, "/") {
+		name := strings.SplitN(model, "/", 2)[0]
+		if _, ok := providers[name]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func firstSettingsProvider(providers map[string]interface{}) string {
+	for name := range providers {
+		return name
+	}
+	return ""
+}
+
+func modelsForSettingsProvider(providers map[string]interface{}, provider string) []string {
+	cfg, _ := providers[provider].(map[string]interface{})
+	modelsMap, _ := cfg["models"].(map[string]interface{})
+	models := make([]string, 0, len(modelsMap))
+	for model := range modelsMap {
+		if strings.Contains(model, "/") {
+			models = append(models, model)
+		} else {
+			models = append(models, provider+"/"+model)
+		}
+	}
+	return models
+}
+
+func providerCredentials(providers map[string]interface{}, provider string) (string, string) {
+	cfg, _ := providers[provider].(map[string]interface{})
+	options, _ := cfg["options"].(map[string]interface{})
+	apiKey, _ := options["apiKey"].(string)
+	baseURL, _ := options["baseURL"].(string)
+	if apiKey == "" {
+		apiKey, _ = options["api_key"].(string)
+	}
+	return apiKey, baseURL
+}
+
+func providerModelKey(provider, model string) string {
+	if strings.HasPrefix(model, provider+"/") {
+		return strings.TrimPrefix(model, provider+"/")
+	}
+	return provider + "/" + model
+}
+
+func normalizeProviderModel(provider, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || strings.Contains(model, "/") || strings.TrimSpace(provider) == "" {
+		return model
+	}
+	return strings.TrimSpace(provider) + "/" + model
+}
+
+func isPlaceholderAPIKey(apiKey string) bool {
+	apiKey = strings.TrimSpace(strings.ToLower(apiKey))
+	return apiKey == "" || strings.Contains(apiKey, "your_") || strings.Contains(apiKey, "replace") || strings.Contains(apiKey, "placeholder")
+}
+
+func doagentSettingsPath() string {
+	if path := strings.TrimSpace(os.Getenv("DO_AGENT_SETTINGS")); path != "" {
+		return path
+	}
+	return "/root/.agent/settings.json"
 }
 
 func ensureDoagentAvailable(baseURL string) error {

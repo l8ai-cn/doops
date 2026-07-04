@@ -65,6 +65,7 @@ type AgentPromptParams struct {
 	SessionID   string `json:"session_id"`
 	Instruction string `json:"instruction"`
 	Model       string `json:"model,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 }
 
 // GitCloneParams clones a configured repository into a session workspace.

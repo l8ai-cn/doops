@@ -178,9 +178,9 @@ export function LandingPage() {
       <section id="how" className="border-t border-border/60 bg-card/30 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <div className="mx-auto mb-12 max-w-2xl text-center">
-            <h2 className="text-balance text-3xl font-semibold tracking-tight">���步即可上手</h2>
+            <h2 className="text-balance text-3xl font-semibold tracking-tight">三步即可上手</h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              不懂复杂运维也没关系，跟���三步就能开始。
+              不懂复杂运维也没关系，跟着三步就能开始。
             </p>
           </div>
           <div className="grid gap-6 md:grid-cols-3">

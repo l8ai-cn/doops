@@ -494,7 +494,7 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删�����该授权？")) return
+    if (!window.confirm("确认删除该授权？")) return
     setError("")
     try {
       await deleteGrant(session, id)
