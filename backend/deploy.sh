@@ -255,6 +255,7 @@ done
 
 step 4 "滚动重启 DaemonSet 并等待就绪"
 $DOOPS -session "${SESSION}" exec --target "${TARGET}" --cmd "\
+  kubectl -n ${NAMESPACE} set image ${DEPLOY_NAME} doops-agent=${IMAGE} && \
   kubectl rollout restart ${DEPLOY_NAME} -n ${NAMESPACE} && \
   kubectl rollout status ${DEPLOY_NAME} -n ${NAMESPACE} --timeout=120s"
 

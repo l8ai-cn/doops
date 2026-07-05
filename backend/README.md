@@ -59,14 +59,14 @@ flowchart LR
 
 ## 当前镜像与协议
 
-当前维护版 agent 采用双镜像发布：
+当前维护版 agent 默认采用轻量双镜像发布：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base:v1  # 重基础镜像：sandbox / doagent / buildkit / 系统工具
-docker.cnb.cool/l8ai/ai/doops.sh:v1.1       # 轻更新镜像：doops-agent / skills / docs / entrypoint
+docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：doagent / buildkit / git / tini / bash
+docker.cnb.cool/l8ai/ai/doops.sh:<release>             # 轻更新镜像：doops-agent / skills / docs / entrypoint
 ```
 
-如果目标环境不需要 WebIDE 兼容层，优先使用新的轻量基础镜像构建链：
+本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；release 流水线会用 `DOOPS_AGENT_BASE_IMAGE` 固定到本次 tag 对应的 `base-light:<release>`。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / git / tini / bash
@@ -78,13 +78,13 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 镜像构成：
 
-- 基础镜像源码：`Dockerfile.base`
+- 基础镜像源码：`Dockerfile.base.light`
 - 更新镜像源码：`Dockerfile` / `agent/Dockerfile`
-- 基础镜像来源：由 `Dockerfile.base` 的 `DO_AGENT_IMAGE` 指定，默认使用保留的 doops-agent 基线镜像
+- 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，默认使用保留的 doops-agent 基线镜像
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`；更新镜像还会执行 `buildctl --version`
-- 发布原则：先用受控远端构建发布 `doops.sh/base:<release>`，CNB release 只校验并复用该基础镜像来构建 `doops.sh:<release>`；K8s 默认只滚动 `doops.sh:<release>`。
+- 发布原则：CNB release 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
 
 协议与端点：
 
@@ -96,7 +96,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 - 修复 `agent-entrypoint.sh` 把 `-port/-token` 透传给 WebIDE 启动脚本导致的 `Unknown option -port`
 - 将 doagent 依赖镜像改为可覆盖的固定 `DO_AGENT_IMAGE`，默认使用 Harbor 中可拉取的 doops-agent 基线，避免历史 `oilan-system/do-agent:*` tag 缺失阻断构建
-- 将 agent 发布拆为 `doops.sh/base:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
+- 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
 - 统一发布脚本与 DaemonSet 默认更新镜像为 `docker.cnb.cool/l8ai/ai/doops.sh:v1.1`
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
 - 将核心协议文档统一为 `/ws`
@@ -132,18 +132,18 @@ bash scripts/build-gateway.sh
 正式发布由 CNB release tag 触发，同一版本会产出两类镜像：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base:<release>
+docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
 分层边界：
 
-- `doops.sh/base`：sandbox 文件系统、doagent、BuildKit、系统包、通用运行工具；变化频率低，拉取成本高。
+- `doops.sh/base-light`：doagent、BuildKit、kubectl、系统包、通用运行工具；变化频率低，拉取成本高。
 - `doops.sh`：`/app/doops-agent`、`/app/skills`、`/app/self-docs`、entrypoint；变化频率高，拉取成本低。
 
 禁止把基础 rootfs 压平成每次 release 都变化的大层。线上升级默认只替换 `doops.sh:<release>`，这样节点已缓存的基础层可以复用，避免 doops-agent 在拉镜像阶段长时间离线。
 
-CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
+CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
 
 ## 固定路径
 
