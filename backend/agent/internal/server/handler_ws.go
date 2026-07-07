@@ -1576,7 +1576,14 @@ func doagentSSEIdleTimeout() time.Duration {
 			return d
 		}
 	}
-	return 30 * time.Second
+	// Idle = no SSE event from the agent-core for this long. The timer resets on
+	// every streamed event, so this only fires during a genuine silent gap.
+	// Agent-driven work (a reasoning step plus a long tool call: build, image
+	// pull, kubectl wait) routinely stays silent well beyond 30s, so a short
+	// default aborts healthy long-running stages (notably agent-driven CI/CD).
+	// Default to a generous 5m; set DOOPS_DOAGENT_SSE_IDLE_TIMEOUT higher for
+	// heavy build stages, or lower for snappy hang-detection in interactive use.
+	return 5 * time.Minute
 }
 
 func recentDoagentLogSummary() string {
