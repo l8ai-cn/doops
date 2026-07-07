@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -35,6 +36,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
+  k8s         受限 Kubernetes 运维入口 (get/logs/rollout/scale/deploy-image/plan/apply-plan)
+  cicd        声明式 CI/CD workflow 入口 (lint/plan/run)
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -68,6 +71,15 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   
   # 4. 闭环验证：未来的日常部署，只需无脑触发确定流水线
   doops -session test_ops exec --target api-node --cmd "cd /root/ws/test_ops && ./deploy.sh"
+
+  # K8S 受限运维：先生成版本化步骤文件，再显式确认执行
+  doops k8s plan deploy-image deploy/app --target prod --namespace oilan-system --container app --image registry/app:v2 --out ops/k8s/changes/app-v2.yaml
+  doops -session prod_rollout k8s apply-plan ops/k8s/changes/app-v2.yaml --target prod --confirm
+
+  # CI/CD workflow：先 lint/plan/dry-run，真实变更必须显式 --allow-mutate
+  doops cicd lint -f ops/cicd/zhiyong.deploy.yaml
+  doops cicd plan -f ops/cicd/zhiyong.deploy.yaml --set workspace=/tmp/doops-cicd-zhiyong --set target=test --set reason=smoke
+  doops cicd run -f ops/cicd/zhiyong.deploy.yaml --dry-run --set workspace=/tmp/doops-cicd-zhiyong --set target=test --set reason=smoke
 `)
 	}
 	flag.Parse()
@@ -275,6 +287,78 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("token_id=%s\n", issued.TokenID)
 		fmt.Printf("token=%s\n", issued.Token)
 		fmt.Println("warning=store this token now; gateway only keeps its hash")
+
+	case "k8s":
+		req, err := buildK8SRequest(cmdArgs)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		requireConfig(configErr)
+		server := findServer(servers, req.Target)
+		if server == nil {
+			fmt.Printf("Error: Server '%s' not found.\n", req.Target)
+			os.Exit(1)
+		}
+
+		if req.Payload["operation"] == "plan-set-image" {
+			msg, err := runK8SRequest(nil, req, time.Now())
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(msg)
+			RecordHistory(server.Name, "", fmt.Sprintf("k8s plan %s", req.PlanOut))
+			return
+		}
+
+		if *sessionName == "" {
+			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离 K8S 运维操作")
+			os.Exit(1)
+		}
+		if strings.TrimSpace(server.Gateway) == "" && strings.TrimSpace(server.IP) == "" {
+			fmt.Printf("Error: target '%s' has neither a gateway nor an SSH IP configured.\n", req.Target)
+			os.Exit(1)
+		}
+		token := ResolveToken(server.Name, server.Token)
+		client := NewMCPClient(*server, ss, *sessionName, *verbose)
+		client.Token = token
+		defer client.Close()
+
+		msg, err := runK8SRequest(client, req, time.Now())
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		if msg != "" {
+			fmt.Println(msg)
+		}
+		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
+
+	case "cicd":
+		// Factory that builds a live gateway executor for real (mutating) runs.
+		// It mirrors the wiring used by the `k8s` and `exec` commands so
+		// agent-native stages dispatch over the same authenticated WebSocket.
+		newExecutor := func(target string) (cicdExecutor, func(), error) {
+			requireConfig(configErr)
+			server := findServer(servers, target)
+			if server == nil {
+				return nil, nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", target)
+			}
+			if *sessionName == "" {
+				return nil, nil, fmt.Errorf("-session is required for `cicd run` (isolates the agent-native executor workspace)")
+			}
+			if strings.TrimSpace(server.Gateway) == "" && strings.TrimSpace(server.IP) == "" {
+				return nil, nil, fmt.Errorf("target '%s' has neither a gateway nor an SSH IP configured", target)
+			}
+			client := NewMCPClient(*server, ss, *sessionName, *verbose)
+			client.Token = ResolveToken(server.Name, server.Token)
+			return client, func() { client.Close() }, nil
+		}
+		if err := runCICDCommand(context.Background(), cmdArgs, newExecutor); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
