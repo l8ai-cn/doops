@@ -88,7 +88,9 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode string) strin
 		}
 	}
 
-	b.WriteString("\nReport a concise structured result: what you did, evidence of success (or the blocker if it failed), and leave behind a repeatable script/record where useful.\n")
+	b.WriteString("\nThis stage is self-contained. Do the work idempotently, verify the outcome, then STOP.\n")
+	b.WriteString("Do NOT build up cross-stage artifacts: do not read, append to, or rewrite a cumulative deploy script, audit log, or per-stage result file carried over from previous stages. Those unbounded artifacts grow past tool limits and stall the run. If you must write a file, keep it small and stage-local.\n")
+	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short.\n")
 	return b.String()
 }
 
