@@ -1,4 +1,4 @@
-ARG DOOPS_AGENT_BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base:v1
+ARG DOOPS_AGENT_BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:latest
 
 # Stage 1: Build doops-agent (Go gateway)
 FROM golang:1.24-alpine AS builder
@@ -12,6 +12,8 @@ RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
 # The base image owns sandbox/doagent/buildkit/system packages. This layer only
 # changes when doops code, skills, docs, or entrypoints change.
 FROM ${DOOPS_AGENT_BASE_IMAGE}
+ARG DOOPS_AGENT_BASE_IMAGE
+LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
 COPY --from=builder /app/agent/skills /app/skills

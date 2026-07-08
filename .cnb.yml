@@ -8,6 +8,16 @@ main:
             comment: true
             max_comments: 10
             fail_on_critical: false
+    - name: ci-contracts
+      runner:
+        cpus: 2
+      docker:
+        image: golang:1.24-alpine
+      stages:
+        - name: prepare tools
+          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+        - name: release contract tests
+          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
   push:
     - name: ci
       runner:
@@ -16,7 +26,9 @@ main:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm
+          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+        - name: release contract tests
+          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
         - name: agent tests
           script: |
             cd backend/agent
@@ -46,6 +58,16 @@ master:
             comment: true
             max_comments: 10
             fail_on_critical: false
+    - name: ci-contracts
+      runner:
+        cpus: 2
+      docker:
+        image: golang:1.24-alpine
+      stages:
+        - name: prepare tools
+          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+        - name: release contract tests
+          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
   push:
     - name: ci
       runner:
@@ -54,7 +76,9 @@ master:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm
+          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+        - name: release contract tests
+          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
         - name: agent tests
           script: |
             cd backend/agent
@@ -115,6 +139,7 @@ $:
             docker push "${BASE_LATEST_IMAGE}"
         - name: build app image
           script: |
+            : "${DOOPS_AGENT_BASE_IMAGE:?release base image was not exported}"
             APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
             APP_LATEST_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
             docker build \
@@ -123,6 +148,15 @@ $:
               -t "${APP_IMAGE}" \
               -t "${APP_LATEST_IMAGE}" \
               backend
+        - name: validate release app image
+          script: |
+            : "${DOOPS_AGENT_BASE_IMAGE:?release base image was not exported}"
+            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
+            ACTUAL_BASE="$(docker image inspect "${APP_IMAGE}" --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}')"
+            test "${ACTUAL_BASE}" = "${DOOPS_AGENT_BASE_IMAGE}"
+            docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
+            docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --help >/dev/null
+            docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" -lc "buildctl --version"
         - name: build web image
           script: |
             WEB_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/web:${CNB_BRANCH}"
