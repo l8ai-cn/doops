@@ -68,6 +68,40 @@ func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
 	}
 }
 
+func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	for _, rel := range []string{
+		"docs/readme.md",
+		"zhiyong-flow/web/src/index.ts",
+		"zhiyong-lab-api/docs/docs.go",
+	} {
+		path := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte("x\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	for _, want := range []string{
+		filepath.Join("zhiyong-flow", "web", "src", "index.ts"),
+		filepath.Join("zhiyong-lab-api", "docs", "docs.go"),
+	} {
+		if !containsString(files, want) {
+			t.Fatalf("expected required build input %s kept, got %#v", want, files)
+		}
+	}
+	if containsString(files, filepath.Join("docs", "readme.md")) {
+		t.Fatalf("expected repository documentation tree excluded, got %#v", files)
+	}
+}
+
 func TestStageSnapshotUsesGitIgnoreSemanticsAndKeepsTrackedFiles(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
