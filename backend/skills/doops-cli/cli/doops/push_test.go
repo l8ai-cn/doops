@@ -28,6 +28,46 @@ func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 	}
 }
 
+func TestDetectGitRepoNormalizesTmpAliasPaths(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS /tmp -> /private/tmp alias only")
+	}
+	src, err := os.MkdirTemp("/tmp", "doops-detect-git-")
+	if err != nil {
+		t.Fatalf("mkdir temp under /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(src) })
+
+	cmd := exec.Command("git", "init", "-b", "main")
+	cmd.Dir = src
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("ok\n"), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Pass the /tmp form even though git reports /private/tmp as toplevel.
+	repoRoot, repoPrefix, ok := detectGitRepo(src)
+	if !ok {
+		t.Fatalf("detectGitRepo failed for %s", src)
+	}
+	if repoPrefix != "" {
+		t.Fatalf("expected empty prefix for repo root, got %q (root=%q src=%q)", repoPrefix, repoRoot, src)
+	}
+	if strings.Contains(repoPrefix, "..") {
+		t.Fatalf("prefix must not escape repo: %q", repoPrefix)
+	}
+
+	filtered, err := filterGitIgnored(src+"/", []string{"README.md", ".agents/skills/edu-solid-geometry/SKILL.md"})
+	if err != nil {
+		t.Fatalf("filterGitIgnored: %v", err)
+	}
+	if !containsString(filtered, "README.md") {
+		t.Fatalf("expected README.md kept, got %#v", filtered)
+	}
+}
+
 func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 	server := Server{
 		Name:     "oilan",
