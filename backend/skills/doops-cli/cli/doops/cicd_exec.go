@@ -41,9 +41,34 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 	if strings.TrimSpace(stage.Uses) == "" {
 		return fmt.Errorf("stage %s: uses is required", stage.ID)
 	}
-	return executor.Call("doops_agent_prompt", map[string]interface{}{
-		"instruction": cicdAgentInstruction(plan, stage, mode, session),
-	})
+	instruction := cicdAgentInstruction(plan, stage, mode, session)
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		lastErr = executor.Call("doops_agent_prompt", map[string]interface{}{
+			"instruction": instruction,
+		})
+		if lastErr == nil {
+			return nil
+		}
+		if !isTransientCICDAgentError(lastErr) || attempt == maxAttempts {
+			return lastErr
+		}
+		fmt.Printf("⚠️ stage %s: transient agent connection error (attempt %d/%d): %v; retrying...\n",
+			stage.ID, attempt, maxAttempts, lastErr)
+	}
+	return lastErr
+}
+
+func isTransientCICDAgentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection lost") ||
+		strings.Contains(msg, "ws connection lost") ||
+		strings.Contains(msg, "websocket: close") ||
+		strings.Contains(msg, "unexpected eof")
 }
 
 // cicdAgentInstruction renders a stable, self-contained goal for the doagent.

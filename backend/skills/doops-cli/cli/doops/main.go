@@ -366,7 +366,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			}
 			srv := *server
 			return func(src string) error {
-				return Push(srv, src, "", false, nil, session)
+				return Push(srv, src, "", false, cicdSourceExcludes, session)
 			}, nil
 		}
 		if err := runCICDCommandWithSync(context.Background(), cmdArgs, newExecutor, newSourceSync, *sessionName); err != nil {

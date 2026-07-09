@@ -28,6 +28,46 @@ func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 	}
 }
 
+func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	for _, rel := range []string{
+		"deploy/test/values.yaml",
+		"ops/cicd/zhiyong.deploy.yaml",
+		"zhiyong-frontend/package.json",
+		".codex-work/scu-datasets/big.tar.gz.b64",
+		"tools/heavy.bin",
+		"docs/readme.md",
+	} {
+		path := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte("x\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	for _, want := range []string{
+		filepath.Join("deploy", "test", "values.yaml"),
+		filepath.Join("ops", "cicd", "zhiyong.deploy.yaml"),
+		filepath.Join("zhiyong-frontend", "package.json"),
+	} {
+		if !containsString(files, want) {
+			t.Fatalf("expected %s kept, got %#v", want, files)
+		}
+	}
+	for _, f := range files {
+		if strings.Contains(f, ".codex-work") || strings.HasPrefix(f, "tools"+string(os.PathSeparator)) || strings.HasPrefix(f, "docs"+string(os.PathSeparator)) {
+			t.Fatalf("expected bulky tree excluded, got %#v", files)
+		}
+	}
+}
+
 func TestDetectGitRepoNormalizesTmpAliasPaths(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS /tmp -> /private/tmp alias only")
