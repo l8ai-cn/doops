@@ -68,6 +68,51 @@ func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
 	}
 }
 
+func TestStageSnapshotUsesGitIgnoreSemanticsAndKeepsTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(filepath.Join(src, "frontend", "src", "common", "ecp"), 0755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	runTestGit(t, src, "init", "-b", "main")
+	runTestGit(t, src, "config", "user.name", "doops")
+	runTestGit(t, src, "config", "user.email", "doops@localhost")
+
+	writeFixture := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	writeFixture(".gitignore", "/ecp\n*.log\n")
+	writeFixture("frontend/src/common/ecp/contract.test.ts", "export {};\n")
+	writeFixture("tracked.log", "tracked release evidence\n")
+	runTestGit(t, src, "add", ".gitignore", "frontend/src/common/ecp/contract.test.ts")
+	runTestGit(t, src, "add", "-f", "tracked.log")
+	runTestGit(t, src, "commit", "-m", "fixture")
+	writeFixture("untracked.log", "local only\n")
+
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	for _, want := range []string{
+		filepath.Join("frontend", "src", "common", "ecp", "contract.test.ts"),
+		"tracked.log",
+	} {
+		if !containsString(files, want) {
+			t.Fatalf("expected tracked file %q to be included, got %#v", want, files)
+		}
+	}
+	if containsString(files, "untracked.log") {
+		t.Fatalf("expected ignored untracked file to be excluded, got %#v", files)
+	}
+}
+
 func TestDetectGitRepoNormalizesTmpAliasPaths(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS /tmp -> /private/tmp alias only")

@@ -57,6 +57,8 @@ For gateway control-plane releases, additionally verify:
 
 Do not publish new agent fixes under floating `v1`; use the explicit release version.
 
+- Fixed Git-backed source snapshots to use Git's own ignore semantics, keeping
+  tracked release files and respecting root-anchored patterns such as `/ecp`.
 ## 2026-05-19 Gateway And Config Cleanup
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.

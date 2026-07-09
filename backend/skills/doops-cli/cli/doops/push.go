@@ -362,9 +362,12 @@ func stageSnapshot(src, tmpDir string, extraExcludes []string, dryRun bool) ([]s
 	if err != nil {
 		return nil, err
 	}
-	gitPatterns, err := loadIgnorePatterns(filepath.Join(src, ".gitignore"))
-	if err != nil {
-		return nil, err
+	var gitPatterns []string
+	if _, _, inGitRepo := detectGitRepo(src); !inGitRepo {
+		gitPatterns, err = loadIgnorePatterns(filepath.Join(src, ".gitignore"))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	allExcludes := dedupePatterns(append(append([]string{}, defaultExcludes...), extraExcludes...))
@@ -569,7 +572,7 @@ func gitIgnoredPaths(repoRoot string, repoPaths []string) (map[string]bool, erro
 		return map[string]bool{}, nil
 	}
 
-	cmd := exec.Command("git", "-C", repoRoot, "check-ignore", "--stdin", "--verbose", "--non-matching", "--no-index")
+	cmd := exec.Command("git", "-C", repoRoot, "check-ignore", "--stdin", "--verbose", "--non-matching")
 	cmd.Stdin = strings.NewReader(strings.Join(repoPaths, "\n") + "\n")
 
 	out, err := cmd.CombinedOutput()
