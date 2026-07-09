@@ -505,6 +505,11 @@ func detectGitRepo(src string) (repoRoot string, repoPrefix string, ok bool) {
 
 	repoRoot = strings.TrimSpace(string(out))
 	cleanSrc := strings.TrimRight(src, string(os.PathSeparator))
+	// Resolve symlinks on both sides so macOS /tmp vs /private/tmp (and similar
+	// alias paths) do not produce a "../../../tmp/..." prefix that breaks
+	// git check-ignore --stdin.
+	repoRoot = resolvePath(repoRoot)
+	cleanSrc = resolvePath(cleanSrc)
 	repoPrefix, err = filepath.Rel(repoRoot, cleanSrc)
 	if err != nil {
 		return "", "", false
@@ -512,8 +517,24 @@ func detectGitRepo(src string) (repoRoot string, repoPrefix string, ok bool) {
 	if repoPrefix == "." {
 		repoPrefix = ""
 	}
+	if strings.HasPrefix(repoPrefix, "..") {
+		// Source is not inside the detected repo after normalization; skip
+		// git-ignore filtering rather than feeding invalid paths to git.
+		return "", "", false
+	}
 	repoPrefix = filepath.ToSlash(repoPrefix)
 	return repoRoot, repoPrefix, true
+}
+
+func resolvePath(path string) string {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" {
+		return clean
+	}
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	return clean
 }
 
 func gitIgnoredPaths(repoRoot string, repoPaths []string) (map[string]bool, error) {
