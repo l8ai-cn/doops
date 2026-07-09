@@ -15,6 +15,12 @@ type CICDRunOptions struct {
 	Inputs      map[string]string
 	DryRun      bool
 	AllowMutate bool
+	// Session isolates the remote agent workspace at /root/ws/<session>.
+	Session string
+	// SourceSync pushes the local source tree into the remote session workspace
+	// before the first agent-native stage. Local git.clone alone is not visible
+	// on the target node.
+	SourceSync func(src string) error
 	// Executor dispatches agent-native stages (agent.task / doops.k8s /
 	// doops.exec) to the real DoOps gateway tools. When nil, those stages are
 	// only planned (kept for lint/plan/dry-run and offline use).
@@ -46,6 +52,7 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 		Name:      plan.Name,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	sourceSynced := false
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}
 		if !isCICDAgentDrivenStage(stage) {
@@ -126,11 +133,29 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 					result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 					return result, fmt.Errorf("stage %s requires --allow-mutate", stage.ID)
 				}
+				if !sourceSynced && opts.SourceSync != nil {
+					src := strings.TrimSpace(plan.Source.Path)
+					if src == "" {
+						step.Status = "failed"
+						step.Message = "source.path is required before agent-native stages"
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s: source.path is required before agent-native stages", stage.ID)
+					}
+					if err := opts.SourceSync(src); err != nil {
+						step.Status = "failed"
+						step.Message = "source sync to remote session failed: " + err.Error()
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s: sync source to remote session: %w", stage.ID, err)
+					}
+					sourceSynced = true
+				}
 				mode := "apply"
 				if opts.DryRun {
 					mode = "dry-run"
 				}
-				if err := runCICDAgentStage(opts.Executor, plan, stage, mode); err != nil {
+				if err := runCICDAgentStage(opts.Executor, plan, stage, mode, opts.Session); err != nil {
 					step.Status = "failed"
 					step.Message = err.Error()
 					result.Steps = append(result.Steps, step)

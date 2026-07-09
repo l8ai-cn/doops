@@ -355,7 +355,21 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			client.Token = ResolveToken(server.Name, server.Token)
 			return client, func() { client.Close() }, nil
 		}
-		if err := runCICDCommand(context.Background(), cmdArgs, newExecutor); err != nil {
+		newSourceSync := func(target, session string) (func(src string) error, error) {
+			requireConfig(configErr)
+			server := findServer(servers, target)
+			if server == nil {
+				return nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", target)
+			}
+			if strings.TrimSpace(session) == "" {
+				return nil, fmt.Errorf("-session is required to sync source into the remote agent workspace")
+			}
+			srv := *server
+			return func(src string) error {
+				return Push(srv, src, "", false, nil, session)
+			}, nil
+		}
+		if err := runCICDCommandWithSync(context.Background(), cmdArgs, newExecutor, newSourceSync, *sessionName); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -24,7 +24,7 @@ func TestCICDAgentInstructionCarriesIntent(t *testing.T) {
 			"namespace": "oilan-system",
 		},
 	}
-	got := cicdAgentInstruction(plan, stage, "apply")
+	got := cicdAgentInstruction(plan, stage, "apply", "sess-1")
 	for _, want := range []string{
 		"scu-deploy",
 		"stage.id: deploy-zhiyong",
@@ -35,7 +35,9 @@ func TestCICDAgentInstructionCarriesIntent(t *testing.T) {
 		"release: zhiyong",
 		"namespace: oilan-system",
 		"target: gw-scu",
-		"source.path: /tmp/src",
+		"source.path.local: /tmp/src",
+		"remote.workspace: /root/ws/sess-1",
+		"session: sess-1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("instruction missing %q in:\n%s", want, got)
@@ -46,7 +48,7 @@ func TestCICDAgentInstructionCarriesIntent(t *testing.T) {
 func TestCICDAgentInstructionDryRunDirective(t *testing.T) {
 	plan := CICDPlan{Name: "wf"}
 	stage := CICDPlanStage{ID: "s", Uses: "doops.k8s", With: map[string]string{"operation": "rollout"}}
-	got := cicdAgentInstruction(plan, stage, "dry-run")
+	got := cicdAgentInstruction(plan, stage, "dry-run", "")
 	if !strings.Contains(got, "mode: dry-run") {
 		t.Fatalf("expected dry-run mode in instruction:\n%s", got)
 	}
@@ -58,10 +60,61 @@ func TestCICDAgentInstructionDryRunDirective(t *testing.T) {
 func TestCICDAgentInstructionIsDeterministic(t *testing.T) {
 	plan := CICDPlan{Name: "wf", Inputs: map[string]string{"b": "2", "a": "1"}}
 	stage := CICDPlanStage{ID: "s", Uses: "agent.task", With: map[string]string{"task": "t", "z": "9", "m": "5"}}
-	first := cicdAgentInstruction(plan, stage, "apply")
-	second := cicdAgentInstruction(plan, stage, "apply")
+	first := cicdAgentInstruction(plan, stage, "apply", "sess")
+	second := cicdAgentInstruction(plan, stage, "apply", "sess")
 	if first != second {
 		t.Fatalf("instruction not deterministic:\n%s\n---\n%s", first, second)
+	}
+}
+
+func TestCICDRunnerSyncsSourceBeforeAgentStage(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: sync-smoke
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: deploy
+      uses: agent.task
+      mutates: true
+      confirm: true
+      with:
+        task: helm-upgrade
+        release: zhiyong
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	caller := &fakeK8SCaller{}
+	synced := ""
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor:    caller,
+		AllowMutate: true,
+		Session:     "sess-sync",
+		SourceSync: func(src string) error {
+			synced = src
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if synced == "" {
+		t.Fatalf("expected source sync before agent stage, got empty src; steps=%#v", result.Steps)
+	}
+	if len(caller.calls) != 1 {
+		t.Fatalf("expected one agent dispatch after sync, got %#v", caller.calls)
+	}
+	instruction, _ := caller.calls[0].args["instruction"].(string)
+	if !strings.Contains(instruction, "remote.workspace: /root/ws/sess-sync") {
+		t.Fatalf("instruction missing remote workspace:\n%s", instruction)
 	}
 }
 

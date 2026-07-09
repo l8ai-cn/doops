@@ -75,7 +75,15 @@ func buildCICDCommand(args []string) (CICDCommand, error) {
 // the real (gateway-backed) factory; tests may pass nil to stay offline.
 type cicdExecutorFactory func(target string) (cicdExecutor, func(), error)
 
+// cicdSourceSyncFactory builds a source syncer that pushes the local source
+// tree into the remote session workspace before agent-native stages run.
+type cicdSourceSyncFactory func(target, session string) (func(src string) error, error)
+
 func runCICDCommand(ctx context.Context, args []string, newExecutor cicdExecutorFactory) error {
+	return runCICDCommandWithSync(ctx, args, newExecutor, nil, "")
+}
+
+func runCICDCommandWithSync(ctx context.Context, args []string, newExecutor cicdExecutorFactory, newSourceSync cicdSourceSyncFactory, session string) error {
 	req, err := buildCICDCommand(args)
 	if err != nil {
 		return err
@@ -98,6 +106,7 @@ func runCICDCommand(ctx context.Context, args []string, newExecutor cicdExecutor
 			Inputs:      req.Inputs,
 			DryRun:      req.DryRun,
 			AllowMutate: req.AllowMutate,
+			Session:     strings.TrimSpace(session),
 		}
 		// CICD is agent-driven: hand agent-native stages to the doagent. Build a
 		// live executor whenever one is available; the agent decides how to
@@ -123,6 +132,16 @@ func runCICDCommand(ctx context.Context, args []string, newExecutor cicdExecutor
 					defer cleanup()
 				}
 				opts.Executor = executor
+				if newSourceSync != nil && strings.TrimSpace(session) != "" {
+					syncer, syncErr := newSourceSync(target, session)
+					if syncErr != nil {
+						if !req.DryRun {
+							return syncErr
+						}
+					} else {
+						opts.SourceSync = syncer
+					}
+				}
 			}
 		}
 		result, err := runCICDWorkflow(ctx, workflow, opts)
