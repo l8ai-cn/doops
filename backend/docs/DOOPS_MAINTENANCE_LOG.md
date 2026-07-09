@@ -65,6 +65,8 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
   reload, HTTPS `401` probe, and automatic config restoration on failure.
 - Required CI and operator target configs to use `https://doops.l8ai.cn`
   instead of the legacy public-IP HTTP endpoint.
+- Fixed Git-backed source snapshots to use Git's own ignore semantics, keeping
+  tracked release files and respecting root-anchored patterns such as `/ecp`.
 
 ## 2026-05-19 Gateway And Config Cleanup
 
