@@ -118,6 +118,40 @@ spec:
 	}
 }
 
+type countingCaller struct {
+	failTimes int
+	calls     int
+}
+
+func (c *countingCaller) Call(tool string, args map[string]interface{}) error {
+	c.calls++
+	if c.calls <= c.failTimes {
+		return fmt.Errorf("connection lost: WS connection lost")
+	}
+	return nil
+}
+
+func TestRunCICDAgentStageRetriesTransientWSLoss(t *testing.T) {
+	caller := &countingCaller{failTimes: 2}
+	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}
+	stage := CICDPlanStage{ID: "render", Uses: "agent.task", Name: "Render"}
+	if err := runCICDAgentStage(caller, plan, stage, "apply", "sess"); err != nil {
+		t.Fatalf("expected retry success, got %v", err)
+	}
+	if caller.calls != 3 {
+		t.Fatalf("expected 3 attempts, got %d", caller.calls)
+	}
+}
+
+func TestIsTransientCICDAgentError(t *testing.T) {
+	if !isTransientCICDAgentError(fmt.Errorf("connection lost: WS connection lost")) {
+		t.Fatal("expected WS loss to be transient")
+	}
+	if isTransientCICDAgentError(fmt.Errorf("helm render failed: missing chart")) {
+		t.Fatal("expected non-connection error to be permanent")
+	}
+}
+
 func TestIsCICDAgentDrivenStage(t *testing.T) {
 	cases := []struct {
 		uses string
