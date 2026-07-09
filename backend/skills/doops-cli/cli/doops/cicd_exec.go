@@ -34,7 +34,7 @@ func isCICDAgentDrivenStage(stage CICDPlanStage) bool {
 }
 
 // runCICDAgentStage hands one stage's intent to the doagent and lets it drive.
-func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage, mode string) error {
+func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage, mode, session string) error {
 	if executor == nil {
 		return fmt.Errorf("stage %s: nil executor", stage.ID)
 	}
@@ -42,14 +42,14 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 		return fmt.Errorf("stage %s: uses is required", stage.ID)
 	}
 	return executor.Call("doops_agent_prompt", map[string]interface{}{
-		"instruction": cicdAgentInstruction(plan, stage, mode),
+		"instruction": cicdAgentInstruction(plan, stage, mode, session),
 	})
 }
 
 // cicdAgentInstruction renders a stable, self-contained goal for the doagent.
 // The same stage + mode always produces the same instruction (sorted keys), so
 // runs stay reproducible even though execution is agent-driven.
-func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode string) string {
+func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session string) string {
 	var b strings.Builder
 	b.WriteString("You are the DoOps agent-native executor. Drive this CI/CD stage to completion on the target node.\n")
 	b.WriteString("You own the HOW end to end: choose the right tools (buildkit / kubectl / helm / shell), adapt to the environment (internal image mirrors, proxies, source-transfer quirks), self-heal and retry on transient failures, and verify the outcome before reporting success.\n")
@@ -63,8 +63,13 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode string) strin
 	b.WriteString("stage.uses: " + stage.Uses + "\n")
 	b.WriteString(fmt.Sprintf("mode: %s\n", mode))
 	b.WriteString(fmt.Sprintf("mutates: %t\n", stage.Mutates))
+	if strings.TrimSpace(session) != "" {
+		b.WriteString("session: " + strings.TrimSpace(session) + "\n")
+		b.WriteString("remote.workspace: /root/ws/" + strings.TrimSpace(session) + "\n")
+		b.WriteString("source.location: remote.workspace (operator already synced the release tree here; do NOT expect macOS /tmp paths to exist on this node)\n")
+	}
 	if strings.TrimSpace(plan.Source.Path) != "" {
-		b.WriteString("source.path: " + plan.Source.Path + "\n")
+		b.WriteString("source.path.local: " + plan.Source.Path + "\n")
 	}
 	if strings.TrimSpace(plan.Source.Repo) != "" {
 		b.WriteString("source.repo: " + plan.Source.Repo + "\n")
@@ -90,7 +95,9 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode string) strin
 	}
 
 	b.WriteString("\nThis stage is self-contained. Do the work idempotently, verify the outcome, then STOP.\n")
+	b.WriteString("Use remote.workspace as the repository root for charts, tests, and files. Ignore source.path.local if it is not present on this node.\n")
 	b.WriteString("Do NOT build up cross-stage artifacts: do not read, append to, or rewrite a cumulative deploy script, audit log, or per-stage result file carried over from previous stages. Those unbounded artifacts grow past tool limits and stall the run. If you must write a file, keep it small and stage-local.\n")
+	b.WriteString("Keep the streaming connection warm: emit progress/heartbeats during long tools so the SSE idle timer does not fire.\n")
 	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short.\n")
 	return b.String()
 }
