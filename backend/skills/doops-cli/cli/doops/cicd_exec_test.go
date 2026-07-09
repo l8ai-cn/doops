@@ -143,6 +143,53 @@ func TestRunCICDAgentStageRetriesTransientWSLoss(t *testing.T) {
 	}
 }
 
+type verifyingCaller struct {
+	countingCaller
+	verifyCommand string
+	verifyErr     error
+}
+
+func (c *verifyingCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool != "doops_shell" {
+		return "", fmt.Errorf("unexpected verification tool %s", tool)
+	}
+	c.verifyCommand, _ = args["command"].(string)
+	return "verified", c.verifyErr
+}
+
+func TestRunCICDAgentStageEnforcesApplyVerificationCommand(t *testing.T) {
+	caller := &verifyingCaller{verifyErr: fmt.Errorf("release marker missing")}
+	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}
+	stage := CICDPlanStage{
+		ID:   "build",
+		Uses: "agent.task",
+		With: map[string]string{"verificationCommand": "test -s output/release.json"},
+	}
+	err := runCICDAgentStage(caller, plan, stage, "apply", "sess")
+	if err == nil || !strings.Contains(err.Error(), "release marker missing") {
+		t.Fatalf("expected verification failure, got %v", err)
+	}
+	if caller.verifyCommand != "test -s output/release.json" {
+		t.Fatalf("unexpected verification command %q", caller.verifyCommand)
+	}
+}
+
+func TestRunCICDAgentStageSkipsApplyVerificationOnDryRun(t *testing.T) {
+	caller := &verifyingCaller{verifyErr: fmt.Errorf("must not run")}
+	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}
+	stage := CICDPlanStage{
+		ID:   "build",
+		Uses: "agent.task",
+		With: map[string]string{"verificationCommand": "test -s output/release.json"},
+	}
+	if err := runCICDAgentStage(caller, plan, stage, "dry-run", "sess"); err != nil {
+		t.Fatalf("expected dry-run success, got %v", err)
+	}
+	if caller.verifyCommand != "" {
+		t.Fatalf("dry-run must not execute apply verification, got %q", caller.verifyCommand)
+	}
+}
+
 func TestIsTransientCICDAgentError(t *testing.T) {
 	if !isTransientCICDAgentError(fmt.Errorf("connection lost: WS connection lost")) {
 		t.Fatal("expected WS loss to be transient")

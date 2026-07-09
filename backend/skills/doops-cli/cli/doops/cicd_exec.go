@@ -17,6 +17,10 @@ import (
 // verification — and reports back.
 type cicdExecutor = k8sCaller
 
+type cicdVerificationExecutor interface {
+	CallAndCapture(toolName string, arguments map[string]interface{}) (string, error)
+}
+
 // isCICDAgentDrivenStage reports whether a stage is a structured agent-native
 // stage (agent.task / doops.k8s / doops.exec with no inline run script). These
 // are driven by the doagent for HOW, but mutating apply runs still require
@@ -49,7 +53,7 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 			"instruction": instruction,
 		})
 		if lastErr == nil {
-			return nil
+			break
 		}
 		if !isTransientCICDAgentError(lastErr) || attempt == maxAttempts {
 			return lastErr
@@ -57,7 +61,24 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 		fmt.Printf("⚠️ stage %s: transient agent connection error (attempt %d/%d): %v; retrying...\n",
 			stage.ID, attempt, maxAttempts, lastErr)
 	}
-	return lastErr
+	if lastErr != nil {
+		return lastErr
+	}
+
+	verificationCommand := strings.TrimSpace(stage.With["verificationCommand"])
+	if mode != "apply" || verificationCommand == "" {
+		return nil
+	}
+	verifier, ok := executor.(cicdVerificationExecutor)
+	if !ok {
+		return fmt.Errorf("stage %s verification requires an executor with output capture", stage.ID)
+	}
+	if _, err := verifier.CallAndCapture("doops_shell", map[string]interface{}{
+		"command": verificationCommand,
+	}); err != nil {
+		return fmt.Errorf("stage %s verification failed: %w", stage.ID, err)
+	}
+	return nil
 }
 
 func isTransientCICDAgentError(err error) bool {
