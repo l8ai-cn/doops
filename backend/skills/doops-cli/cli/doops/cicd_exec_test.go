@@ -86,8 +86,51 @@ func TestIsCICDAgentDrivenStage(t *testing.T) {
 	}
 }
 
-// With an executor wired, a structured agent-native stage is dispatched to the
-// doagent via doops_agent_prompt (agent-driven), regardless of --allow-mutate.
+// Mutating agent-native apply runs are rejected without --allow-mutate even
+// when an executor is wired.
+func TestCICDRunnerRejectsAgentMutationWithoutAllowMutate(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: mutate-gate
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: deploy
+      uses: agent.task
+      mutates: true
+      confirm: true
+      with:
+        task: helm-upgrade
+        release: zhiyong
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	caller := &fakeK8SCaller{}
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{Executor: caller})
+	if err == nil {
+		t.Fatalf("expected --allow-mutate rejection, got success: %#v", result.Steps)
+	}
+	if !strings.Contains(err.Error(), "requires --allow-mutate") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(caller.calls) != 0 {
+		t.Fatalf("executor must not be called without --allow-mutate, got %#v", caller.calls)
+	}
+	if len(result.Steps) != 1 || result.Steps[0].Status != "failed" {
+		t.Fatalf("expected failed step, got %#v", result.Steps)
+	}
+}
+
+// With an executor and --allow-mutate, a structured agent-native stage is
+// dispatched to the doagent via doops_agent_prompt.
 func TestCICDRunnerDispatchesToAgent(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := writeCICDTestWorkflow(t, dir, `
@@ -114,8 +157,10 @@ spec:
 		t.Fatalf("load workflow: %v", err)
 	}
 	caller := &fakeK8SCaller{}
-	// Note: no AllowMutate -> agent-driven stages have no code gate.
-	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{Executor: caller})
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor:    caller,
+		AllowMutate: true,
+	})
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
@@ -236,7 +281,10 @@ spec:
 	if err != nil {
 		t.Fatalf("load workflow: %v", err)
 	}
-	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{Executor: errExecutor{}})
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor:    errExecutor{},
+		AllowMutate: true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "deploy") {
 		t.Fatalf("expected failure to propagate, got %v", err)
 	}
@@ -278,7 +326,10 @@ spec:
 		t.Fatalf("load workflow: %v", err)
 	}
 	caller := &fakeK8SCaller{}
-	if _, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{Executor: caller}); err != nil {
+	if _, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor:    caller,
+		AllowMutate: true,
+	}); err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
 	if len(caller.calls) != 1 {

@@ -19,7 +19,8 @@ type cicdExecutor = k8sCaller
 
 // isCICDAgentDrivenStage reports whether a stage is a structured agent-native
 // stage (agent.task / doops.k8s / doops.exec with no inline run script). These
-// are driven entirely by the doagent and bypass the code-driven safety gates.
+// are driven by the doagent for HOW, but mutating apply runs still require
+// --allow-mutate at the CLI gate before dispatch.
 func isCICDAgentDrivenStage(stage CICDPlanStage) bool {
 	if strings.TrimSpace(stage.Run) != "" {
 		return false

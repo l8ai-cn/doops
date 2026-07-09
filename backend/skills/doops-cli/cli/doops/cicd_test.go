@@ -497,7 +497,8 @@ spec:
 
 // Agent-driven contract: a structured agent-native mutating stage without a
 // wired executor is recorded as planned (not a hard failure). There is no
-// code-driven --allow-mutate gate on agent-native stages; the doagent judges.
+// Without an executor, mutating agent-native stages stay planned for offline
+// lint/plan. The --allow-mutate gate applies only when an executor is wired.
 func TestCICDRunnerPlansAgentNativeMutationWithoutExecutor(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := writeCICDTestWorkflow(t, dir, `

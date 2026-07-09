@@ -48,10 +48,6 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 	}
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}
-		// Structured agent-native stages (no run script) are fully agent-driven:
-		// the doagent judges dry-run/mutation itself, so the code-driven safety
-		// gates below do NOT apply to them. The gates only guard the legacy
-		// deterministic shell/git lane.
 		if !isCICDAgentDrivenStage(stage) {
 			if stage.Mutates && opts.DryRun {
 				step.Status = "skipped"
@@ -119,10 +115,17 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 				step.Status = "success"
 				break
 			}
-			// Agent-driven execution: hand the stage's intent to the doagent
-			// and let it drive. The doagent judges dry-run/mutation itself, so
-			// dry-run is dispatched too (with mode=dry-run) rather than skipped.
+			// Agent-driven execution: hand the stage's intent to the doagent.
+			// Dry-run is dispatched with mode=dry-run. Mutating apply runs must
+			// pass --allow-mutate before any executor.Call.
 			if opts.Executor != nil {
+				if stage.Mutates && !opts.DryRun && !opts.AllowMutate {
+					step.Status = "failed"
+					step.Message = "mutating stage requires --allow-mutate"
+					result.Steps = append(result.Steps, step)
+					result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+					return result, fmt.Errorf("stage %s requires --allow-mutate", stage.ID)
+				}
 				mode := "apply"
 				if opts.DryRun {
 					mode = "dry-run"
