@@ -57,6 +57,15 @@ For gateway control-plane releases, additionally verify:
 
 Do not publish new agent fixes under floating `v1`; use the explicit release version.
 
+## 2026-07-10 Gateway TLS Entry
+
+- Added the versioned `doops.l8ai.cn` Nginx reverse proxy for gateway HTTP,
+  WebSocket, and Git HTTP traffic on TLS.
+- Added an SSH-boundary deployment command with config backup, `nginx -t`,
+  reload, HTTPS `401` probe, and automatic config restoration on failure.
+- Required CI and operator target configs to use `https://doops.l8ai.cn`
+  instead of the legacy public-IP HTTP endpoint.
+
 ## 2026-05-19 Gateway And Config Cleanup
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.

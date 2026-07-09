@@ -32,6 +32,26 @@ Gateway 本体不登记为 doops target，也不通过 doops target 发布。tar
 root。也不要用 base64/tar/分片临时传输替代发布脚本；如果 `doops push` 卡住，应修复
 Git HTTP 反向隧道或目标 agent 版本。
 
+### TLS reverse proxy
+
+Production clients use `https://doops.l8ai.cn`. The versioned Nginx config is
+`gateway/nginx/doops-proxy.conf`; it terminates the `*.l8ai.cn` certificate and
+proxies HTTP, WebSocket, and Git HTTP traffic to `127.0.0.1:42222`.
+
+Deploy from the gateway host SSH boundary:
+
+```bash
+bash scripts/deploy-gateway-tls-proxy.sh \
+  --host <gateway-host> --user <ssh-user> --dry-run
+bash scripts/deploy-gateway-tls-proxy.sh \
+  --host <gateway-host> --user <ssh-user>
+```
+
+The script backs up `/opt/doops/nginx/default.conf`, validates the candidate
+inside `doops-web-proxy`, reloads Nginx, and restores the backup if validation
+or the HTTPS `401` probe fails. After deployment, verify authenticated target
+listing returns `200` and run an active `exec` smoke through the TLS URL.
+
 ## 代码同步
 
 `push/pull` 在 gateway 模式下也基于 Git HTTP：
