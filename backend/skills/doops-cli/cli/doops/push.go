@@ -52,13 +52,12 @@ var cicdSourceExcludes = []string{
 	".bin",
 	"agent-transcripts",
 	"tools",
-	"docs",
+	"/docs",
 	"skills",
 	"output",
 	"_work",
 	"Atmp",
 	"zhiyong-manager-api",
-	"zhiyong-flow",
 	"zhiyong-ai-assistant",
 	"zhiyong-tts-api",
 	"zhiyong-stt-api",
@@ -669,6 +668,7 @@ func matchIgnorePattern(relPath, pattern string) bool {
 		return false
 	}
 
+	anchored := strings.HasPrefix(pattern, "/")
 	dirOnly := strings.HasSuffix(pattern, "/")
 	pattern = strings.TrimSuffix(pattern, "/")
 	pattern = strings.TrimPrefix(pattern, "./")
@@ -685,6 +685,12 @@ func matchIgnorePattern(relPath, pattern string) bool {
 		if !hasMeta && (relPath == pattern || strings.HasPrefix(relPath, pattern+"/")) {
 			return true
 		}
+	}
+	if anchored {
+		if matched, _ := path.Match(pattern, relPath); matched {
+			return true
+		}
+		return !hasMeta && (relPath == pattern || strings.HasPrefix(relPath, pattern+"/"))
 	}
 
 	base := path.Base(relPath)
