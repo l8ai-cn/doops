@@ -194,6 +194,9 @@ func TestIsTransientCICDAgentError(t *testing.T) {
 	if !isTransientCICDAgentError(fmt.Errorf("connection lost: WS connection lost")) {
 		t.Fatal("expected WS loss to be transient")
 	}
+	if !isTransientCICDAgentError(fmt.Errorf("failed to connect to agent WS: EOF")) {
+		t.Fatal("expected connect EOF to be transient")
+	}
 	if isTransientCICDAgentError(fmt.Errorf("helm render failed: missing chart")) {
 		t.Fatal("expected non-connection error to be permanent")
 	}
