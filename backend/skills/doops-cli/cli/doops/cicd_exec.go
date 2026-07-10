@@ -88,8 +88,11 @@ func isTransientCICDAgentError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "connection lost") ||
 		strings.Contains(msg, "ws connection lost") ||
+		strings.Contains(msg, "failed to connect to agent ws") ||
 		strings.Contains(msg, "websocket: close") ||
-		strings.Contains(msg, "unexpected eof")
+		strings.Contains(msg, "unexpected eof") ||
+		strings.HasSuffix(msg, ": eof") ||
+		strings.Contains(msg, "eof")
 }
 
 // cicdAgentInstruction renders a stable, self-contained goal for the doagent.
