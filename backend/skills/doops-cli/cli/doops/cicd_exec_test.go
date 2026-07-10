@@ -174,6 +174,45 @@ func TestRunCICDAgentStageEnforcesApplyVerificationCommand(t *testing.T) {
 	}
 }
 
+type flakyVerifyingCaller struct {
+	countingCaller
+	verifyCommand string
+	failuresLeft  int
+	verifyCalls   int
+}
+
+func (c *flakyVerifyingCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool != "doops_shell" {
+		return "", fmt.Errorf("unexpected verification tool %s", tool)
+	}
+	c.verifyCalls++
+	c.verifyCommand, _ = args["command"].(string)
+	if c.failuresLeft > 0 {
+		c.failuresLeft--
+		return "", fmt.Errorf("connection lost: WS connection lost")
+	}
+	return "verified", nil
+}
+
+func TestRunCICDAgentStageRetriesTransientVerificationErrors(t *testing.T) {
+	caller := &flakyVerifyingCaller{failuresLeft: 2}
+	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}
+	stage := CICDPlanStage{
+		ID:   "build",
+		Uses: "agent.task",
+		With: map[string]string{"verificationCommand": "test -s output/release.json"},
+	}
+	if err := runCICDAgentStage(caller, plan, stage, "apply", "sess"); err != nil {
+		t.Fatalf("expected verification to succeed after transient retries, got %v", err)
+	}
+	if caller.verifyCalls != 3 {
+		t.Fatalf("expected 3 verification attempts, got %d", caller.verifyCalls)
+	}
+	if caller.verifyCommand != "test -s output/release.json" {
+		t.Fatalf("unexpected verification command %q", caller.verifyCommand)
+	}
+}
+
 func TestRunCICDAgentStageSkipsApplyVerificationOnDryRun(t *testing.T) {
 	caller := &verifyingCaller{verifyErr: fmt.Errorf("must not run")}
 	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}

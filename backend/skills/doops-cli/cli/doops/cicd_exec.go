@@ -73,12 +73,24 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 	if !ok {
 		return fmt.Errorf("stage %s verification requires an executor with output capture", stage.ID)
 	}
-	if _, err := verifier.CallAndCapture("doops_shell", map[string]interface{}{
-		"command": verificationCommand,
-	}); err != nil {
-		return fmt.Errorf("stage %s verification failed: %w", stage.ID, err)
+	// Verification runs on a separate doops_shell call after the agent turn.
+	// Long buildkit/helm stages often leave the WS idle; treat connection loss
+	// the same as agent-prompt dispatch and retry before failing the stage.
+	var verifyErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		_, verifyErr = verifier.CallAndCapture("doops_shell", map[string]interface{}{
+			"command": verificationCommand,
+		})
+		if verifyErr == nil {
+			return nil
+		}
+		if !isTransientCICDAgentError(verifyErr) || attempt == maxAttempts {
+			return fmt.Errorf("stage %s verification failed: %w", stage.ID, verifyErr)
+		}
+		fmt.Printf("⚠️ stage %s: transient verification connection error (attempt %d/%d): %v; retrying...\n",
+			stage.ID, attempt, maxAttempts, verifyErr)
 	}
-	return nil
+	return fmt.Errorf("stage %s verification failed: %w", stage.ID, verifyErr)
 }
 
 func isTransientCICDAgentError(err error) bool {
