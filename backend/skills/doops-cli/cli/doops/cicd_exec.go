@@ -101,6 +101,7 @@ func isTransientCICDAgentError(err error) bool {
 	return strings.Contains(msg, "connection lost") ||
 		strings.Contains(msg, "ws connection lost") ||
 		strings.Contains(msg, "failed to connect to agent ws") ||
+		strings.Contains(msg, "agent disconnected") ||
 		strings.Contains(msg, "websocket: close") ||
 		strings.Contains(msg, "unexpected eof") ||
 		strings.HasSuffix(msg, ": eof") ||
