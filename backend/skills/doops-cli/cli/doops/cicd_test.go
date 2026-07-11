@@ -219,6 +219,46 @@ spec:
 	}
 }
 
+func TestCICDWorkflowReadsDeploymentDocFromRepositoryRoot(t *testing.T) {
+	dir := t.TempDir()
+	runTestGitCommand(t, "", "init", dir)
+	workflowDir := filepath.Join(dir, "ops", "cicd")
+	workflowPath := filepath.Join(workflowDir, "zhiyong.deploy.yaml")
+	writeDeploymentDoc(t, dir, "ops/cicd/docs/deploy/test.md")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("mkdir workflow dir: %v", err)
+	}
+	if err := os.WriteFile(workflowPath, []byte(`
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: repository-root-doc
+spec:
+  policy:
+    requiredDocSections: [Inputs, Deployment, Rollback, Verification]
+  source:
+    repo: https://example.invalid/education.git
+    path: /tmp/work
+  environments:
+    - name: test
+      target: gw-test
+      namespace: test
+      release: app
+      deploymentDoc: ops/cicd/docs/deploy/test.md
+      services: [api]
+  stages:
+    - id: validate
+      uses: shell
+      run: echo ok
+`), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	if _, err := loadCICDWorkflow(workflowPath); err != nil {
+		t.Fatalf("load workflow with repository-root deploymentDoc: %v", err)
+	}
+}
+
 func TestCICDWorkflowRejectsDeploymentDocMissingRequiredSection(t *testing.T) {
 	dir := t.TempDir()
 	docPath := filepath.Join(dir, "docs/deploy/test.md")
