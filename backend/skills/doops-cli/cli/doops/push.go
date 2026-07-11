@@ -51,7 +51,7 @@ var cicdSourceExcludes = []string{
 	".agents",
 	".bin",
 	"agent-transcripts",
-	"tools",
+	"/tools",
 	"/docs",
 	"skills",
 	"output",

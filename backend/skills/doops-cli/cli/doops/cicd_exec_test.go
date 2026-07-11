@@ -169,7 +169,7 @@ func TestRunCICDAgentStageEnforcesApplyVerificationCommand(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "release marker missing") {
 		t.Fatalf("expected verification failure, got %v", err)
 	}
-	if caller.verifyCommand != "test -s output/release.json" {
+	if caller.verifyCommand != "cd -- '/root/ws/sess' && test -s output/release.json" {
 		t.Fatalf("unexpected verification command %q", caller.verifyCommand)
 	}
 }
@@ -208,7 +208,7 @@ func TestRunCICDAgentStageRetriesTransientVerificationErrors(t *testing.T) {
 	if caller.verifyCalls != 3 {
 		t.Fatalf("expected 3 verification attempts, got %d", caller.verifyCalls)
 	}
-	if caller.verifyCommand != "test -s output/release.json" {
+	if caller.verifyCommand != "cd -- '/root/ws/sess' && test -s output/release.json" {
 		t.Fatalf("unexpected verification command %q", caller.verifyCommand)
 	}
 }
@@ -226,6 +226,25 @@ func TestRunCICDAgentStageSkipsApplyVerificationOnDryRun(t *testing.T) {
 	}
 	if caller.verifyCommand != "" {
 		t.Fatalf("dry-run must not execute apply verification, got %q", caller.verifyCommand)
+	}
+}
+
+func TestRunCICDAgentStageRunsDryRunVerificationCommand(t *testing.T) {
+	caller := &verifyingCaller{}
+	plan := CICDPlan{Name: "wf", Source: CICDSource{Path: "/tmp/src"}}
+	stage := CICDPlanStage{
+		ID:   "contracts",
+		Uses: "agent.task",
+		With: map[string]string{
+			"dryRunVerificationCommand": "python3 -m unittest deploy.tests.test_new_deploy_contract",
+		},
+	}
+	if err := runCICDAgentStage(caller, plan, stage, "dry-run", "sess"); err != nil {
+		t.Fatalf("expected dry-run verification success, got %v", err)
+	}
+	want := "cd -- '/root/ws/sess' && python3 -m unittest deploy.tests.test_new_deploy_contract"
+	if caller.verifyCommand != want {
+		t.Fatalf("unexpected dry-run verification command %q, want %q", caller.verifyCommand, want)
 	}
 }
 
