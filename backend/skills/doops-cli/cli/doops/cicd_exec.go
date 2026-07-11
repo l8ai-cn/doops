@@ -147,6 +147,9 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session stri
 	b.WriteString("stage.uses: " + stage.Uses + "\n")
 	b.WriteString(fmt.Sprintf("mode: %s\n", mode))
 	b.WriteString(fmt.Sprintf("mutates: %t\n", stage.Mutates))
+	if target := strings.TrimSpace(plan.ExecutionTarget); target != "" {
+		b.WriteString("execution.target: " + target + "\n")
+	}
 	if strings.TrimSpace(session) != "" {
 		b.WriteString("session: " + strings.TrimSpace(session) + "\n")
 		b.WriteString("remote.workspace: /root/ws/" + strings.TrimSpace(session) + "\n")

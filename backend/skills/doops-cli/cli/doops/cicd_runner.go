@@ -15,6 +15,9 @@ type CICDRunOptions struct {
 	Inputs      map[string]string
 	DryRun      bool
 	AllowMutate bool
+	// ExecutionTarget is resolved by the CLI from the declared Workflow
+	// environments. It is never a required operator input for a routed workflow.
+	ExecutionTarget string
 	// Session isolates the remote agent workspace at /root/ws/<session>.
 	Session string
 	// SourceSync pushes the local source tree into the remote session workspace
@@ -52,6 +55,7 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 		Name:      plan.Name,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	plan.ExecutionTarget = strings.TrimSpace(opts.ExecutionTarget)
 	sourceSynced := false
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}

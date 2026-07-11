@@ -118,10 +118,11 @@ func runCICDCommandWithSync(ctx context.Context, args []string, newExecutor cicd
 			if err != nil {
 				return err
 			}
-			target := strings.TrimSpace(plan.Inputs["target"])
-			if target == "" {
-				return fmt.Errorf("input target is required to execute agent-native stages")
+			target, err := resolveCICDExecutionTarget(plan, workflow.Spec.Inputs)
+			if err != nil {
+				return err
 			}
+			opts.ExecutionTarget = target
 			executor, cleanup, execErr := newExecutor(target)
 			if execErr != nil {
 				if !req.DryRun {
@@ -153,6 +154,29 @@ func runCICDCommandWithSync(ctx context.Context, args []string, newExecutor cicd
 		return fmt.Errorf("unsupported cicd command %q", req.Command)
 	}
 	return nil
+}
+
+func resolveCICDExecutionTarget(plan CICDPlan, declaredInputs map[string]CICDInput) (string, error) {
+	if _, declaresTarget := declaredInputs["target"]; declaresTarget {
+		if target := strings.TrimSpace(plan.Inputs["target"]); target != "" {
+			return target, nil
+		}
+		return "", fmt.Errorf("input target is required to execute this workflow")
+	}
+
+	if environmentName := strings.TrimSpace(plan.Inputs["environment"]); environmentName != "" {
+		for _, environment := range plan.Environments {
+			if environment.Name == environmentName {
+				return environment.Target, nil
+			}
+		}
+		return "", fmt.Errorf("environment %q has no declared deployment target", environmentName)
+	}
+
+	if len(plan.Environments) == 1 {
+		return plan.Environments[0].Target, nil
+	}
+	return "", fmt.Errorf("workflow execution target is ambiguous; declare inputs.environment or exactly one environment")
 }
 
 func writeCICDJSON(value interface{}) error {
