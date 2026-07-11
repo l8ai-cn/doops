@@ -67,6 +67,30 @@ func TestCICDAgentInstructionIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestCICDAgentInstructionRequiresExactRequiredCommand(t *testing.T) {
+	plan := CICDPlan{Name: "wf"}
+	stage := CICDPlanStage{
+		ID:   "publish",
+		Uses: "agent.task",
+		With: map[string]string{
+			"task":            "publish-release-manifest",
+			"requiredCommand": "python3 ops/cicd/tools/release_manifest.py publish",
+		},
+	}
+
+	instruction := cicdAgentInstruction(plan, stage, "apply", "session-1")
+	for _, want := range []string{
+		"requiredCommand: python3 ops/cicd/tools/release_manifest.py publish",
+		"mandatory execution:",
+		"MUST execute requiredCommand exactly as declared",
+		"Do not replace it with a draft, approximation, or manual alternative.",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("required command instruction missing %q:\n%s", want, instruction)
+		}
+	}
+}
+
 func TestCICDRunnerSyncsSourceBeforeAgentStage(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := writeCICDTestWorkflow(t, dir, `

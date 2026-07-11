@@ -165,6 +165,10 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session stri
 			b.WriteString("  " + key + ": " + stage.With[key] + "\n")
 		}
 	}
+	if requiredCommand := strings.TrimSpace(stage.With["requiredCommand"]); requiredCommand != "" {
+		b.WriteString("\nmandatory execution:\n")
+		b.WriteString("You MUST execute requiredCommand exactly as declared. Do not replace it with a draft, approximation, or manual alternative. If it cannot complete, report the command failure and fail the stage.\n")
+	}
 	if len(plan.Inputs) > 0 {
 		b.WriteString("\ninputs:\n")
 		for _, key := range cicdSortedKeys(plan.Inputs) {
