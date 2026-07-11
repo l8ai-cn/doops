@@ -67,6 +67,54 @@ spec:
 	}
 }
 
+func TestResolveCICDExecutionTargetUsesDeclaredRoutes(t *testing.T) {
+	t.Run("single environment", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{Environments: []CICDEnvironment{{Name: "test", Target: "gw-test"}}},
+			map[string]CICDInput{},
+		)
+		if err != nil || target != "gw-test" {
+			t.Fatalf("expected gw-test, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("selected environment", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{
+				Inputs: map[string]string{"environment": "oilan"},
+				Environments: []CICDEnvironment{
+					{Name: "oilan", Target: "gw-oilan"},
+					{Name: "scu", Target: "gw-scu"},
+				},
+			},
+			map[string]CICDInput{"environment": {Required: true}},
+		)
+		if err != nil || target != "gw-oilan" {
+			t.Fatalf("expected gw-oilan, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("legacy target input", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{Inputs: map[string]string{"target": "legacy-target"}},
+			map[string]CICDInput{"target": {Required: true}},
+		)
+		if err != nil || target != "legacy-target" {
+			t.Fatalf("expected legacy target, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("ambiguous routes fail", func(t *testing.T) {
+		_, err := resolveCICDExecutionTarget(
+			CICDPlan{Environments: []CICDEnvironment{{Name: "oilan", Target: "gw-oilan"}, {Name: "scu", Target: "gw-scu"}}},
+			map[string]CICDInput{},
+		)
+		if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+			t.Fatalf("expected ambiguous target error, got %v", err)
+		}
+	})
+}
+
 func TestCICDWorkflowRejectsInvalidSchema(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {

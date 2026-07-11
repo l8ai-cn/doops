@@ -90,13 +90,14 @@ type CICDStage struct {
 }
 
 type CICDPlan struct {
-	Name         string            `json:"name"`
-	Inputs       map[string]string `json:"inputs"`
-	Policy       CICDPolicy        `json:"policy,omitempty"`
-	Source       CICDSource        `json:"source"`
-	Environments []CICDEnvironment `json:"environments,omitempty"`
-	Locks        []CICDLock        `json:"locks"`
-	Stages       []CICDPlanStage   `json:"stages"`
+	Name            string            `json:"name"`
+	Inputs          map[string]string `json:"inputs"`
+	ExecutionTarget string            `json:"executionTarget,omitempty"`
+	Policy          CICDPolicy        `json:"policy,omitempty"`
+	Source          CICDSource        `json:"source"`
+	Environments    []CICDEnvironment `json:"environments,omitempty"`
+	Locks           []CICDLock        `json:"locks"`
+	Stages          []CICDPlanStage   `json:"stages"`
 	// Context is the rendered, shared workflow context (buildEnv + context)
 	// injected into every agent-native stage instruction.
 	Context string `json:"context,omitempty"`
