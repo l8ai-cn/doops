@@ -398,8 +398,7 @@ spec:
 	}
 }
 
-// Dry-run is also agent-driven: dispatched with mode=dry-run (agent judges).
-func TestCICDRunnerDispatchesDryRunToAgent(t *testing.T) {
+func TestCICDRunnerSkipsMutatingAgentStageOnDryRun(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := writeCICDTestWorkflow(t, dir, `
 apiVersion: doops.sh/v1
@@ -429,15 +428,14 @@ spec:
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
-	if len(result.Steps) != 1 || result.Steps[0].Status != "success" {
-		t.Fatalf("expected success step, got %#v", result.Steps)
+	if len(result.Steps) != 1 || result.Steps[0].Status != "skipped" {
+		t.Fatalf("expected skipped step, got %#v", result.Steps)
 	}
-	if len(caller.calls) != 1 {
-		t.Fatalf("expected one dispatch on dry-run, got %#v", caller.calls)
+	if result.Steps[0].Message != "dry-run skipped mutating stage" {
+		t.Fatalf("unexpected skip message: %#v", result.Steps)
 	}
-	instruction, _ := caller.calls[0].args["instruction"].(string)
-	if !strings.Contains(instruction, "mode: dry-run") {
-		t.Fatalf("expected dry-run mode dispatched, got %q", instruction)
+	if len(caller.calls) != 0 {
+		t.Fatalf("dry-run must not dispatch mutating stage, got %#v", caller.calls)
 	}
 }
 
