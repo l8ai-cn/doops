@@ -55,20 +55,18 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 	sourceSynced := false
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}
-		if !isCICDAgentDrivenStage(stage) {
-			if stage.Mutates && opts.DryRun {
-				step.Status = "skipped"
-				step.Message = "dry-run skipped mutating stage"
-				result.Steps = append(result.Steps, step)
-				continue
-			}
-			if stage.Mutates && !opts.AllowMutate {
-				step.Status = "failed"
-				step.Message = "mutating stage requires --allow-mutate"
-				result.Steps = append(result.Steps, step)
-				result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-				return result, fmt.Errorf("stage %s requires --allow-mutate", stage.ID)
-			}
+		if stage.Mutates && opts.DryRun {
+			step.Status = "skipped"
+			step.Message = "dry-run skipped mutating stage"
+			result.Steps = append(result.Steps, step)
+			continue
+		}
+		if stage.Mutates && !isCICDAgentDrivenStage(stage) && !opts.AllowMutate {
+			step.Status = "failed"
+			step.Message = "mutating stage requires --allow-mutate"
+			result.Steps = append(result.Steps, step)
+			result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+			return result, fmt.Errorf("stage %s requires --allow-mutate", stage.ID)
 		}
 		switch stage.Uses {
 		case "git.clone":
