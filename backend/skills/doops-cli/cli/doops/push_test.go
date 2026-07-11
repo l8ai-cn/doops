@@ -73,8 +73,10 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 	src := filepath.Join(root, "src")
 	for _, rel := range []string{
 		"docs/readme.md",
+		"output/staged.json",
 		"zhiyong-flow/web/src/index.ts",
 		"zhiyong-lab-api/docs/docs.go",
+		"zhiyong-frontend/src/common/components/notebook/components/output/OutputArea.tsx",
 		"deploy/tools/environments/test/middleware/values.yaml",
 		"ops/cicd/tools/build_release_images.py",
 	} {
@@ -94,6 +96,7 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join("zhiyong-flow", "web", "src", "index.ts"),
 		filepath.Join("zhiyong-lab-api", "docs", "docs.go"),
+		filepath.Join("zhiyong-frontend", "src", "common", "components", "notebook", "components", "output", "OutputArea.tsx"),
 		filepath.Join("deploy", "tools", "environments", "test", "middleware", "values.yaml"),
 		filepath.Join("ops", "cicd", "tools", "build_release_images.py"),
 	} {
@@ -103,6 +106,9 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 	}
 	if containsString(files, filepath.Join("docs", "readme.md")) {
 		t.Fatalf("expected repository documentation tree excluded, got %#v", files)
+	}
+	if containsString(files, filepath.Join("output", "staged.json")) {
+		t.Fatalf("expected root output tree excluded, got %#v", files)
 	}
 }
 

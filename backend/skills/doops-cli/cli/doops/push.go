@@ -54,7 +54,7 @@ var cicdSourceExcludes = []string{
 	"/tools",
 	"/docs",
 	"skills",
-	"output",
+	"/output",
 	"_work",
 	"Atmp",
 	"zhiyong-manager-api",
