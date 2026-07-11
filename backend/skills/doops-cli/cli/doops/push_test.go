@@ -75,6 +75,8 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 		"docs/readme.md",
 		"zhiyong-flow/web/src/index.ts",
 		"zhiyong-lab-api/docs/docs.go",
+		"deploy/tools/environments/test/middleware/values.yaml",
+		"ops/cicd/tools/build_release_images.py",
 	} {
 		path := filepath.Join(src, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -92,6 +94,8 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 	for _, want := range []string{
 		filepath.Join("zhiyong-flow", "web", "src", "index.ts"),
 		filepath.Join("zhiyong-lab-api", "docs", "docs.go"),
+		filepath.Join("deploy", "tools", "environments", "test", "middleware", "values.yaml"),
+		filepath.Join("ops", "cicd", "tools", "build_release_images.py"),
 	} {
 		if !containsString(files, want) {
 			t.Fatalf("expected required build input %s kept, got %#v", want, files)

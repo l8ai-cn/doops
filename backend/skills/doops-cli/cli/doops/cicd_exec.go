@@ -65,8 +65,8 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 		return lastErr
 	}
 
-	verificationCommand := strings.TrimSpace(stage.With["verificationCommand"])
-	if mode != "apply" || verificationCommand == "" {
+	verificationCommand := cicdVerificationCommand(stage, mode, session)
+	if verificationCommand == "" {
 		return nil
 	}
 	verifier, ok := executor.(cicdVerificationExecutor)
@@ -91,6 +91,28 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 			stage.ID, attempt, maxAttempts, verifyErr)
 	}
 	return fmt.Errorf("stage %s verification failed: %w", stage.ID, verifyErr)
+}
+
+func cicdVerificationCommand(stage CICDPlanStage, mode, session string) string {
+	var command string
+	switch mode {
+	case "apply":
+		command = stage.With["verificationCommand"]
+	case "dry-run":
+		command = stage.With["dryRunVerificationCommand"]
+	default:
+		return ""
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return command
+	}
+	workspace := "/root/ws/" + session
+	return "cd -- '" + strings.ReplaceAll(workspace, "'", "'\"'\"'") + "' && " + command
 }
 
 func isTransientCICDAgentError(err error) bool {
