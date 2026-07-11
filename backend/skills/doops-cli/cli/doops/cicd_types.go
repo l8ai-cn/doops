@@ -366,18 +366,19 @@ func resolveCICDDeploymentDocPath(workflow CICDWorkflow, env CICDEnvironment) (s
 	if filepath.IsAbs(doc) {
 		return doc, nil
 	}
-	workflowDir := filepath.Dir(workflow.path)
-	workflowDoc := filepath.Join(workflowDir, doc)
-	if _, err := os.Stat(workflowDoc); err == nil {
-		return workflowDoc, nil
+	root := filepath.Dir(workflow.path)
+	for dir := root; ; {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			root = dir
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
-	base := strings.TrimSpace(workflow.Spec.Source.Repo)
-	if base == "" || strings.Contains(base, "${inputs.") || strings.Contains(base, "://") {
-		base = workflowDir
-	} else if !filepath.IsAbs(base) {
-		base = filepath.Join(workflowDir, base)
-	}
-	return filepath.Join(base, doc), nil
+	return filepath.Join(root, doc), nil
 }
 
 func cicdDocHasSection(body string, section string) bool {
