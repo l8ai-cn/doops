@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -143,9 +146,142 @@ spec:
 	}
 }
 
+func TestCICDRunnerSyncsAttestedExactRelease(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	clone := filepath.Join(dir, "clone")
+	runTestGitCommand(t, "", "init", origin)
+	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("release-one\n"), 0o644); err != nil {
+		t.Fatalf("write release one: %v", err)
+	}
+	runTestGitCommand(t, origin, "add", "README.md")
+	runTestGitCommand(t, origin, "-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "-m", "release one")
+	runTestGitCommand(t, origin, "branch", "-M", "main")
+	releaseID, _, err := runCICDCommandOutput(context.Background(), origin, nil, "git", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("resolve release commit: %v", err)
+	}
+	releaseID = strings.TrimSpace(releaseID)
+	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("release-two\n"), 0o644); err != nil {
+		t.Fatalf("write release two: %v", err)
+	}
+	runTestGitCommand(t, origin, "add", "README.md")
+	runTestGitCommand(t, origin, "-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "-m", "release two")
+
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: attested-release
+spec:
+  policy:
+    agentNative: true
+  source:
+    repo: `+quoteYAML(origin)+`
+    branch: main
+    path: `+quoteYAML(clone)+`
+    requireCleanCommit: true
+  stages:
+    - id: clone
+      uses: git.clone
+    - id: checkout
+      uses: agent.task
+      with:
+        task: verify-release-source
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+
+	synced := false
+	_, err = runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Inputs:   map[string]string{"releaseId": releaseID},
+		Executor: &fakeK8SCaller{},
+		Session:  "attested-release",
+		SourceSync: func(src string) error {
+			data, err := os.ReadFile(filepath.Join(src, ".doops-source-release.json"))
+			if err != nil {
+				return err
+			}
+			var attestation struct {
+				ReleaseID string `json:"releaseId"`
+			}
+			if err := json.Unmarshal(data, &attestation); err != nil {
+				return err
+			}
+			if attestation.ReleaseID != releaseID {
+				return fmt.Errorf("attested release=%s want=%s", attestation.ReleaseID, releaseID)
+			}
+			head, _, err := runCICDCommandOutput(context.Background(), src, nil, "git", "rev-parse", "HEAD")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(head) != releaseID {
+				return fmt.Errorf("checked out release=%s want=%s", strings.TrimSpace(head), releaseID)
+			}
+			synced = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if !synced {
+		t.Fatal("expected attested source sync")
+	}
+}
+
 type countingCaller struct {
 	failTimes int
 	calls     int
+}
+
+type failedAgentResultCaller struct{}
+
+func (failedAgentResultCaller) Call(tool string, args map[string]interface{}) error {
+	return nil
+}
+
+func (failedAgentResultCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool != "doops_agent_prompt" {
+		return "", fmt.Errorf("unexpected tool %s", tool)
+	}
+	return "verification failed\nDOOPS_STAGE_STATUS=FAIL\n", nil
+}
+
+func TestCICDRunnerRejectsExplicitFailedAgentResult(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: agent-verdict
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: validate
+      uses: agent.task
+      with:
+        task: verify-rollout
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor: failedAgentResultCaller{},
+		Session:  "agent-verdict",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reported failure") {
+		t.Fatalf("expected agent failure to stop workflow, got result=%#v err=%v", result, err)
+	}
+	if len(result.Steps) != 1 || result.Steps[0].Status != "failed" {
+		t.Fatalf("expected failed step, got %#v", result.Steps)
+	}
 }
 
 func (c *countingCaller) Call(tool string, args map[string]interface{}) error {

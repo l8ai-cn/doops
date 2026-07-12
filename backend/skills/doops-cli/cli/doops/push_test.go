@@ -56,13 +56,14 @@ func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
 		filepath.Join("deploy", "test", "values.yaml"),
 		filepath.Join("ops", "cicd", "zhiyong.deploy.yaml"),
 		filepath.Join("zhiyong-frontend", "package.json"),
+		filepath.Join("docs", "readme.md"),
 	} {
 		if !containsString(files, want) {
 			t.Fatalf("expected %s kept, got %#v", want, files)
 		}
 	}
 	for _, f := range files {
-		if strings.Contains(f, ".codex-work") || strings.HasPrefix(f, "tools"+string(os.PathSeparator)) || strings.HasPrefix(f, "docs"+string(os.PathSeparator)) {
+		if strings.Contains(f, ".codex-work") || strings.HasPrefix(f, "tools"+string(os.PathSeparator)) {
 			t.Fatalf("expected bulky tree excluded, got %#v", files)
 		}
 	}
@@ -94,6 +95,7 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 		t.Fatalf("stage snapshot: %v", err)
 	}
 	for _, want := range []string{
+		filepath.Join("docs", "readme.md"),
 		filepath.Join("zhiyong-flow", "web", "src", "index.ts"),
 		filepath.Join("zhiyong-lab-api", "docs", "docs.go"),
 		filepath.Join("zhiyong-frontend", "src", "common", "components", "notebook", "components", "output", "OutputArea.tsx"),
@@ -103,9 +105,6 @@ func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 		if !containsString(files, want) {
 			t.Fatalf("expected required build input %s kept, got %#v", want, files)
 		}
-	}
-	if containsString(files, filepath.Join("docs", "readme.md")) {
-		t.Fatalf("expected repository documentation tree excluded, got %#v", files)
 	}
 	if containsString(files, filepath.Join("output", "staged.json")) {
 		t.Fatalf("expected root output tree excluded, got %#v", files)

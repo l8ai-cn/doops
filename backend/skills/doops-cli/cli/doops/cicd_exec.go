@@ -105,9 +105,19 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		lastErr = executor.Call("doops_agent_prompt", map[string]interface{}{
-			"instruction": instruction,
-		})
+		if verifier, ok := executor.(cicdVerificationExecutor); ok && !cicdStageHasVerification(stage) {
+			var output string
+			output, lastErr = verifier.CallAndCapture("doops_agent_prompt", map[string]interface{}{
+				"instruction": instruction,
+			})
+			if lastErr == nil && cicdAgentReportedFailure(output) {
+				return fmt.Errorf("stage %s reported failure: %s", stage.ID, strings.TrimSpace(output))
+			}
+		} else {
+			lastErr = executor.Call("doops_agent_prompt", map[string]interface{}{
+				"instruction": instruction,
+			})
+		}
 		if lastErr == nil {
 			break
 		}
@@ -169,6 +179,11 @@ func cicdVerificationCommand(stage CICDPlanStage, mode, session string) string {
 	}
 	workspace := "/root/ws/" + session
 	return "cd -- '" + strings.ReplaceAll(workspace, "'", "'\"'\"'") + "' && " + command
+}
+
+func cicdStageHasVerification(stage CICDPlanStage) bool {
+	return strings.TrimSpace(stage.With["verificationCommand"]) != "" ||
+		strings.TrimSpace(stage.With["dryRunVerificationCommand"]) != ""
 }
 
 func isTransientCICDAgentError(err error) bool {
@@ -245,8 +260,18 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session stri
 	b.WriteString("Use remote.workspace as the repository root for charts, tests, and files. Ignore source.path.local if it is not present on this node.\n")
 	b.WriteString("Do NOT build up cross-stage artifacts: do not read, append to, or rewrite a cumulative deploy script, audit log, or per-stage result file carried over from previous stages. Those unbounded artifacts grow past tool limits and stall the run. If you must write a file, keep it small and stage-local.\n")
 	b.WriteString("Keep the streaming connection warm: emit progress/heartbeats during long tools so the SSE idle timer does not fire.\n")
-	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short.\n")
+	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short. End with DOOPS_STAGE_STATUS=PASS or DOOPS_STAGE_STATUS=FAIL.\n")
 	return b.String()
+}
+
+func cicdAgentReportedFailure(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		normalized := strings.ToUpper(strings.TrimSpace(line))
+		if normalized == "DOOPS_STAGE_STATUS=FAIL" || strings.Contains(normalized, "STATUS: FAILED") {
+			return true
+		}
+	}
+	return false
 }
 
 func cicdSortedKeys(m map[string]string) []string {
