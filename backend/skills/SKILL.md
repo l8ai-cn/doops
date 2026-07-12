@@ -26,6 +26,7 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
+- 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
   - agent 注册 gateway 不需要 agent token；只需要 gateway URL、cluster 和 instance。

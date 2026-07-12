@@ -603,13 +603,12 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 					return "", fmt.Errorf("remote error: %v", rpcErr["message"])
 				}
 
-				break
+				return "", fmt.Errorf("no result received")
 			}
 		case <-timeout.C:
 			return "", fmt.Errorf("tool call timed out after %s", c.callTimeout())
 		}
 	}
-	return "", fmt.Errorf("no result received")
 }
 
 func captureToolNotificationText(chunk string) string {

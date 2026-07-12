@@ -1581,7 +1581,7 @@ func numericID(v interface{}) (int64, bool) {
 
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	switch tool {
-	case "doops_shell":
+	case "doops_shell", "doops_bg", "doops_task_status":
 		return ActionExec
 	case "doops_agent_prompt":
 		return ActionAsk
@@ -1666,7 +1666,7 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		return tool
 	}
 	switch tool {
-	case "doops_shell":
+	case "doops_shell", "doops_bg":
 		if cmd, _ := m["command"].(string); cmd != "" {
 			return trimTail(cmd, 512)
 		}

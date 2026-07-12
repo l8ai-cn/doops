@@ -264,6 +264,39 @@ websocat \
 
 适用于 CI/CD、固定部署脚本、健康检查、BuildKit 构建和 Kubernetes 命令。
 
+### `doops_bg`
+
+提交由 agent 管理的后台任务。调用会立即返回任务 ID；使用 `doops_task_status` 查询日志和最终退出码。
+
+参数：
+
+```json
+{
+  "session_id": "deploy_20260514",
+  "command": "cd /root/ws/deploy_20260514 && buildctl build ..."
+}
+```
+
+需要权限：`exec`。
+
+不要把 `doops_shell` 里的命令用 `&`、`nohup` 或 `setsid` 转为后台任务。普通 shell 调用结束时，agent 会终止其子进程；长构建必须使用 `doops_bg`。
+
+### `doops_task_status`
+
+查询 `doops_bg` 提交任务的状态和日志尾部。
+
+参数：
+
+```json
+{
+  "session_id": "deploy_20260514",
+  "task_id": "task_abc123",
+  "lines": "100"
+}
+```
+
+需要权限：`exec`。
+
 ### `doops_agent_prompt`
 
 向目标 AI agent 下发自然语言任务。

@@ -927,6 +927,72 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	}
 }
 
+func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer agentConn.Close()
+	go serveFakeAgent(t, agentConn)
+
+	clientConn := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientConn.Close()
+
+	for id, call := range []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{name: "doops_bg", args: map[string]interface{}{"command": "sleep 1", "session_id": "release"}},
+		{name: "doops_task_status", args: map[string]interface{}{"task_id": "task-1", "session_id": "release"}},
+	} {
+		args, _ := json.Marshal(call.args)
+		writeGatewayJSON(t, clientConn, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id + 2,
+			"method":  "tools/call",
+			"params": map[string]interface{}{
+				"name":      call.name,
+				"arguments": json.RawMessage(args),
+			},
+		})
+		final := readUntilID(t, clientConn, float64(id+2))
+		if _, ok := final["result"]; !ok {
+			t.Fatalf("expected %s to be forwarded, got %#v", call.name, final)
+		}
+	}
+
+	events, err := store.ListAuditFiltered(AuditFilter{Session: "release", Limit: 10})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected two background-task audit events, got %#v", events)
+	}
+	for _, event := range events {
+		if event.Action != ActionExec || event.Status != "success" {
+			t.Fatalf("background tool must be authorized and recorded as exec, got %#v", event)
+		}
+	}
+	if events[1].CommandSummary != "sleep 1" {
+		t.Fatalf("background task audit must retain the submitted command, got %#v", events[1])
+	}
+}
+
 func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

@@ -286,3 +286,45 @@ func TestCallAndCaptureTimesOutWithoutFinalResult(t *testing.T) {
 		t.Fatalf("expected call timeout, got %v", err)
 	}
 }
+
+func TestCallAndCaptureRejectsEmptyFinalResult(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				})
+			case "tools/call":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			}
+		}
+	}))
+	defer ts.Close()
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "s", false)
+	client.CallTimeout = time.Second
+	_, err = client.CallAndCapture("doops_bg", map[string]interface{}{"command": "sleep 1"})
+	if err == nil || !strings.Contains(err.Error(), "no result received") {
+		t.Fatalf("expected empty final result to fail immediately, got %v", err)
+	}
+}

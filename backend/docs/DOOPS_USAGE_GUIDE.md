@@ -9,6 +9,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
+| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
 | Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
@@ -165,4 +166,11 @@ doops -session build exec --target jm --cmd \
    --output type=image,name=repo.example.com/team/app:latest,push=true'
 ```
 
-For long builds, redirect output to a file and poll with short `exec` calls. Do not leave a foreground websocket call waiting indefinitely when the command is expected to run for many minutes.
+For long builds, use the native task service:
+
+```bash
+doops -session build exec --bg --target jm --cmd \
+  'cd /root/ws/build && buildctl --addr unix:///run/buildkit/buildkitd.sock build ...'
+```
+
+Do not create a shell background process with `&`, `nohup`, or `setsid` through a normal `exec` call: the agent terminates child processes when that call ends. `--bg` submits `doops_bg` and polls `doops_task_status`, so the agent owns the process, logs, and exit status.

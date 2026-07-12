@@ -377,6 +377,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
 		var subSession string
+		var background bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -384,6 +385,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		switch command {
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
+			subFlag.BoolVar(&background, "bg", false, "Run through the agent-managed background task service and wait for completion")
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
@@ -479,6 +481,15 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		fmt.Printf("\033[93m[TARGETING]\033[0m Server: %s (%s), Use: %s\n",
 			server.Name, endpoint, server.Use)
+
+		if command == "exec" && background {
+			if err := client.ExecBg(cmdStr); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			RecordHistory(server.Name, *sessionName, "bg "+cmdStr)
+			break
+		}
 
 		var toolName string
 		arguments := make(map[string]interface{})
