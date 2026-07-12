@@ -53,6 +53,8 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 ### 1. 触发受控发布 (在控制端执行)
 发布者必须先将待发布提交推送到 `main`，再将已登记仓库、完整 commit SHA 和仓库内 workflow 作为 `ReleaseRequest` 提交给远端 CI/CD 控制面。控制面负责校验源码、生成不可变 release manifest，并由已注册的 DoOps Agent 构建、部署和验证。Oilan 的入口为 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `backend/deploy/environments.yaml`、Helm Chart 和环境 values 定义。
 
+前置条件是 Gateway 已注册在线的 release control-plane target，并已配置 release compiler。缺少任一项时，`cicd submit` 必须失败关闭；不得改回客户端编译、使用本地签名密钥或手工发布。
+
 ```bash
 doops -session oilan-agent-bootstrap cicd submit \
   --target <release-control-plane-target> \
