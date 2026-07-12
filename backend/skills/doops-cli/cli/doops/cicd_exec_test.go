@@ -187,6 +187,8 @@ spec:
       uses: agent.task
       with:
         task: verify-release-source
+        releaseId: ${inputs.releaseId}
+        branch: main
 `)
 	workflow, err := loadCICDWorkflow(workflowPath)
 	if err != nil {
@@ -194,9 +196,10 @@ spec:
 	}
 
 	synced := false
+	verifier := &sourceReleaseVerifier{}
 	_, err = runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
 		Inputs:   map[string]string{"releaseId": releaseID},
-		Executor: &fakeK8SCaller{},
+		Executor: verifier,
 		Session:  "attested-release",
 		SourceSync: func(src string) error {
 			data, err := os.ReadFile(filepath.Join(src, ".doops-source-release.json"))
@@ -219,6 +222,7 @@ spec:
 			if strings.TrimSpace(head) != releaseID {
 				return fmt.Errorf("checked out release=%s want=%s", strings.TrimSpace(head), releaseID)
 			}
+			verifier.attestation = string(data)
 			synced = true
 			return nil
 		},
@@ -283,12 +287,126 @@ spec:
 	}
 }
 
+type noStatusAgentResultCaller struct{}
+
+func (noStatusAgentResultCaller) Call(tool string, args map[string]interface{}) error {
+	return nil
+}
+
+func (noStatusAgentResultCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool != "doops_agent_prompt" {
+		return "", fmt.Errorf("unexpected tool %s", tool)
+	}
+	return "work completed without a verdict\n", nil
+}
+
+func TestCICDRunnerRejectsAgentResultWithoutStatus(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: agent-status-required
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: validate
+      uses: agent.task
+      with:
+        task: verify-rollout
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	_, err = runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor: noStatusAgentResultCaller{},
+		Session:  "agent-status-required",
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not report") {
+		t.Fatalf("expected missing agent status failure, got %v", err)
+	}
+}
+
+type sourceReleaseVerifier struct {
+	calls       []string
+	attestation string
+}
+
+func (v *sourceReleaseVerifier) Call(tool string, args map[string]interface{}) error {
+	v.calls = append(v.calls, tool)
+	return nil
+}
+
+func (v *sourceReleaseVerifier) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	v.calls = append(v.calls, tool)
+	if tool != "doops_shell" {
+		return "", fmt.Errorf("verify-release-source must not dispatch %s", tool)
+	}
+	return v.attestation, nil
+}
+
+func TestCICDRunnerVerifiesSyncedReleaseWithoutAgent(t *testing.T) {
+	dir := t.TempDir()
+	releaseID := "0123456789abcdef0123456789abcdef01234567"
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: remote-release-attestation
+spec:
+  policy:
+    agentNative: true
+  source:
+    repo: https://example.test/repo.git
+    branch: main
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: checkout
+      uses: agent.task
+      with:
+        task: verify-release-source
+        releaseId: `+releaseID+`
+        branch: main
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	verifier := &sourceReleaseVerifier{
+		attestation: `{"releaseId":"` + releaseID + `","repository":"https://example.test/repo.git","branch":"main"}`,
+	}
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor: verifier,
+		Session:  "remote-release-attestation",
+	})
+	if err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if len(result.Steps) != 1 || result.Steps[0].Status != "success" {
+		t.Fatalf("expected successful source verification, got %#v", result.Steps)
+	}
+	if len(verifier.calls) != 1 || verifier.calls[0] != "doops_shell" {
+		t.Fatalf("expected only deterministic remote attestation read, got %#v", verifier.calls)
+	}
+}
+
 func (c *countingCaller) Call(tool string, args map[string]interface{}) error {
 	c.calls++
 	if c.calls <= c.failTimes {
 		return fmt.Errorf("connection lost: WS connection lost")
 	}
 	return nil
+}
+
+func (c *countingCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if err := c.Call(tool, args); err != nil {
+		return "", err
+	}
+	return cicdAgentStatusPass + "\n", nil
 }
 
 func TestRunCICDAgentStageRetriesTransientWSLoss(t *testing.T) {
@@ -310,6 +428,12 @@ type verifyingCaller struct {
 }
 
 func (c *verifyingCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool == "doops_agent_prompt" {
+		if err := c.countingCaller.Call(tool, args); err != nil {
+			return "", err
+		}
+		return cicdAgentStatusPass + "\n", nil
+	}
 	if tool != "doops_shell" {
 		return "", fmt.Errorf("unexpected verification tool %s", tool)
 	}
@@ -342,6 +466,12 @@ type flakyVerifyingCaller struct {
 }
 
 func (c *flakyVerifyingCaller) CallAndCapture(tool string, args map[string]interface{}) (string, error) {
+	if tool == "doops_agent_prompt" {
+		if err := c.countingCaller.Call(tool, args); err != nil {
+			return "", err
+		}
+		return cicdAgentStatusPass + "\n", nil
+	}
 	if tool != "doops_shell" {
 		return "", fmt.Errorf("unexpected verification tool %s", tool)
 	}
