@@ -320,29 +320,31 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
 	case "cicd":
-		if *sessionName == "" {
-			fmt.Println("Error: -session is required for `cicd submit`.")
-			os.Exit(1)
+		newRunner := func(plan DeploymentPlan, sourceDirectory string) (deploymentAgenticExecutor, func(), error) {
+			requireConfig(configErr)
+			server := findServer(servers, plan.Spec.Target.ExecutionTarget)
+			if server == nil {
+				return nil, nil, fmt.Errorf("target %q not found; configure it with `doops add`", plan.Spec.Target.ExecutionTarget)
+			}
+			if err := validateCICDServerBinding(*server, plan); err != nil {
+				return nil, nil, err
+			}
+			if *sessionName == "" {
+				return nil, nil, fmt.Errorf("-session is required for `cicd run`")
+			}
+			if strings.TrimSpace(server.Gateway) == "" {
+				return nil, nil, fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
+			}
+			client := NewMCPClient(*server, ss, *sessionName, *verbose)
+			client.Token = ResolveToken(server.Name, server.Token)
+			runner, err := newAgenticDeploymentRunner(*server, sourceDirectory, *sessionName, client)
+			if err != nil {
+				client.Close()
+				return nil, nil, err
+			}
+			return runner, func() { client.Close() }, nil
 		}
-		submit, err := buildCICDSubmitCommand(cmdArgs)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		requireConfig(configErr)
-		server := findServer(servers, submit.Target)
-		if server == nil {
-			fmt.Printf("Error: remote CI/CD control-plane target '%s' not found.\n", submit.Target)
-			os.Exit(1)
-		}
-		if strings.TrimSpace(server.Gateway) == "" {
-			fmt.Printf("Error: remote CI/CD control-plane target '%s' must use a DoOps gateway.\n", server.Name)
-			os.Exit(1)
-		}
-		client := NewMCPClient(*server, ss, *sessionName, *verbose)
-		client.Token = ResolveToken(server.Name, server.Token)
-		defer client.Close()
-		if err := executeCICDSubmitCommand(context.Background(), submit, client.SubmitRelease); err != nil {
+		if err := runCICDCommand(context.Background(), cmdArgs, newRunner); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
