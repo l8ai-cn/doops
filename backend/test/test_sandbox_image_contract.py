@@ -13,12 +13,14 @@ def read_repo(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
-def require_ordered(text: str, *needles: str) -> None:
-    previous = -1
-    for needle in needles:
-        current = text.index(needle)
-        assert current > previous
-        previous = current
+def top_level_block(text: str, key: str) -> str:
+    start = text.index(f"{key}:\n")
+    end = len(text)
+    for marker in ("\nmain:\n", "\nmaster:\n", "\n$:\n"):
+        pos = text.find(marker, start + len(key) + 2)
+        if pos != -1:
+            end = min(end, pos + 1)
+    return text[start:end]
 
 
 def test_sandbox_dockerfile_is_light_update_layer_with_runtime_gates():
@@ -89,9 +91,19 @@ def test_agent_entrypoints_require_mounted_registry_auth_config():
 def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     dockerfile = read("Dockerfile.base.light")
 
-    assert "docker.cnb.cool/l8ai/ai/doops.sh:v1.0.4" in dockerfile
+    assert "docker.cnb.cool/l8ai/ai/doops.sh:v1.1-metadata-20260704" in dockerfile
     assert "kubectl version --client=true" in dockerfile
     assert "buildctl --version" in dockerfile
+    assert "python3 python3-yaml" in dockerfile
+    assert "python3 py3-yaml" in dockerfile
+    assert "python3 -c 'import yaml'" in dockerfile
+    assert "ARG HELM_VERSION=v3.14.4" in dockerfile
+    assert "FROM ${DO_AGENT_IMAGE}\n\nARG KUBECTL_VERSION\nARG HELM_VERSION\n\nUSER root" in dockerfile
+    assert "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" in dockerfile
+    assert "helm version --short" in dockerfile
+    assert "&& { apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo || true; }" in dockerfile
+    assert "&& { apk del openssh-server openssh-client rsync sudo 2>/dev/null || true; }" in dockerfile
+    assert "rm -f /usr/local/bin/start-webide.sh /entrypoint.sh /usr/bin/entrypoint.sh /init.sh 2>/dev/null || true" not in dockerfile
     assert "apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo" in dockerfile
     assert "rm -f /usr/local/bin/start-webide.sh /entrypoint.sh /usr/bin/entrypoint.sh /init.sh" in dockerfile
 
@@ -110,20 +122,35 @@ def test_agent_update_dockerfiles_default_to_base_light_runtime():
         assert "buildctl --version" in dockerfile
 
 
-def test_cnb_configuration_does_not_define_ci_or_release_pipeline():
+def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
     cnb = read_repo(".cnb.yml")
+    contract_cmd = "python3 -m pytest backend/test -q"
 
-    assert "doops agent" in cnb.lower()
-    for forbidden in ("pull_request:", "push:", "tag_push:", "docker build", "docker push", "type: git:release"):
-        assert forbidden not in cnb
+    for branch in ("main", "master"):
+        block = top_level_block(cnb, branch)
+        pr_block, push_block = block.split("  push:", 1)
+
+        assert contract_cmd in pr_block
+        assert contract_cmd in push_block
+        assert "py3-pytest" in pr_block
+        assert "py3-pytest" in push_block
+        assert "py3-yaml" in pr_block
+        assert "py3-yaml" in push_block
+        assert " helm" in pr_block
+        assert " helm" in push_block
 
 
-def test_deploy_script_rolls_out_the_image_it_builds():
-    script = read("deploy.sh")
+def test_doops_cicd_is_the_only_agent_release_definition():
+    cnb = read_repo(".cnb.yml")
+    workflow = read_repo("backend/deploy/workflows/oilan-agent-bootstrap.yaml")
 
-    require_ordered(
-        script,
-        "step 3 \"远端 BuildKit 构建并推送镜像\"",
-        "kubectl -n ${NAMESPACE} set image ${DEPLOY_NAME} doops-agent=${IMAGE}",
-        "kubectl rollout status ${DEPLOY_NAME} -n ${NAMESPACE}",
-    )
+    assert "tag_push:" not in cnb
+    assert "release-image" not in cnb
+    assert "apiVersion: doops.sh/v2" in workflow
+    assert "kind: DeploymentTemplate" in workflow
+    assert "stages:" not in workflow
+    assert "requiredCommand:" not in workflow
+
+
+def test_legacy_manual_agent_deploy_script_is_removed():
+    assert not (ROOT / "deploy.sh").exists()

@@ -37,7 +37,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 运维入口 (get/logs/rollout/scale/deploy-image/plan/apply-plan)
-  cicd        声明式 CI/CD workflow 入口 (lint/plan/run)
+  cicd        远程多 Ops CI/CD 发布入口 (submit)
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -56,17 +56,14 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
   -help       显示此帮助信息
 
-声明式 CI/CD 闭环示例:
-  # 标准入口只有 Gateway 模式：doops add --name prod --gateway https://gw.example.com --cluster prod --instance master-1 --token <gateway-user-token>
-  # 查看 gateway 在线目标：doops targets --target prod
-
-  # 1. 模板是版本化的期望状态；模板输入形成不可变 DeploymentPlan。
-  doops cicd lint -f deploy/workflows/test.yaml
-  doops cicd plan -f deploy/workflows/test.yaml --set releaseId=<immutable-release> --set reason=smoke
-
-  # 2. dry-run 只计算协调目标；真实变更必须显式授权。
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set releaseId=<immutable-release> --set reason=smoke
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set releaseId=<immutable-release> --set reason=release
+远程多 Ops CI/CD 示例:
+  # 本机只提交不可变源码、仓库内 workflow 和显式变更授权。
+  # 远程控制面负责源码校验、BuildKit 构建、制品签名、部署、健康观测和回滚。
+  doops -session release_20260712 cicd submit --target release-control-plane \
+    --repository-id repo_zhiyong \
+    --revision <40-char-git-commit> \
+    --workflow deploy/workflows/test.yaml \
+    --allow-mutate
 `)
 	}
 	flag.Parse()
@@ -323,29 +320,29 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
 	case "cicd":
-		// CICD submits one immutable DeploymentPlan to the target controller.
-		// The controller reconciles the declared state; this CLI does not
-		// execute workflow steps or build command strings.
-		newReconciler := func(plan DeploymentPlan) (deploymentReconciler, func(), error) {
-			requireConfig(configErr)
-			server := findServer(servers, plan.Spec.Target.ExecutionTarget)
-			if server == nil {
-				return nil, nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", plan.Spec.Target.ExecutionTarget)
-			}
-			if err := validateCICDServerBinding(*server, plan); err != nil {
-				return nil, nil, err
-			}
-			if *sessionName == "" {
-				return nil, nil, fmt.Errorf("-session is required for `cicd run` (isolates the reconciliation session)")
-			}
-			if strings.TrimSpace(server.Gateway) == "" {
-				return nil, nil, fmt.Errorf("target '%s' must use a configured DoOps gateway for target-bound reconciliation", server.Name)
-			}
-			client := NewMCPClient(*server, ss, *sessionName, *verbose)
-			client.Token = ResolveToken(server.Name, server.Token)
-			return client, func() { client.Close() }, nil
+		if *sessionName == "" {
+			fmt.Println("Error: -session is required for `cicd submit`.")
+			os.Exit(1)
 		}
-		if err := runCICDCommand(context.Background(), cmdArgs, newReconciler); err != nil {
+		submit, err := buildCICDSubmitCommand(cmdArgs)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		requireConfig(configErr)
+		server := findServer(servers, submit.Target)
+		if server == nil {
+			fmt.Printf("Error: remote CI/CD control-plane target '%s' not found.\n", submit.Target)
+			os.Exit(1)
+		}
+		if strings.TrimSpace(server.Gateway) == "" {
+			fmt.Printf("Error: remote CI/CD control-plane target '%s' must use a DoOps gateway.\n", server.Name)
+			os.Exit(1)
+		}
+		client := NewMCPClient(*server, ss, *sessionName, *verbose)
+		client.Token = ResolveToken(server.Name, server.Token)
+		defer client.Close()
+		if err := executeCICDSubmitCommand(context.Background(), submit, client.SubmitRelease); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

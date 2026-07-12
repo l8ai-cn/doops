@@ -75,6 +75,13 @@ type CICDReconcileParams struct {
 	DryRun    bool            `json:"dry_run"`
 }
 
+// CICDReleaseSubmitParams 用于向远程多 Ops 控制面提交发布请求。
+// 请求只包含不可变源码和仓库内 workflow 引用，不携带本地路径、环境目标或签名。
+type CICDReleaseSubmitParams struct {
+	SessionID string          `json:"session_id"`
+	Request   json.RawMessage `json:"request"`
+}
+
 // GitCloneParams clones a configured repository into a session workspace.
 type GitCloneParams struct {
 	SessionID string `json:"session_id"`

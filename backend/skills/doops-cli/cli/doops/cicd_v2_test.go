@@ -138,11 +138,11 @@ func TestBuildDeploymentPlanReadsEnvironmentRegistryFromRepositoryRoot(t *testin
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create git marker: %v", err)
 	}
-	templateDir := filepath.Join(root, "deploy", "workflows")
+	templateDir := filepath.Join(root, "backend", "deploy", "workflows")
 	if err := os.MkdirAll(templateDir, 0o755); err != nil {
 		t.Fatalf("create template directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "deploy", "environments.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(root, "backend", "deploy", "environments.yaml"), []byte(`
 artifactContract:
   sourceRepository: https://example.test/zhiyong.git
   sourceBranch: main
@@ -199,7 +199,7 @@ spec:
     desiredState:
       application: zhiyong
       delivery: promote-immutable-release
-      configurationSource: deploy/environments.yaml
+      configurationSource: backend/deploy/environments.yaml
       authorization: reconcile
     acceptance:
       requiredEvidence: [release-manifest, runtime-state]
@@ -212,7 +212,17 @@ spec:
 		t.Fatalf("write template: %v", err)
 	}
 
-	template, err := loadDeploymentTemplate(templatePath)
+	cliDir := filepath.Join(root, "backend", "skills", "doops-cli")
+	if err := os.MkdirAll(cliDir, 0o755); err != nil {
+		t.Fatalf("create CLI directory: %v", err)
+	}
+	relativeTemplatePath, err := filepath.Rel(cliDir, templatePath)
+	if err != nil {
+		t.Fatalf("make template path relative: %v", err)
+	}
+	t.Chdir(cliDir)
+
+	template, err := loadDeploymentTemplate(relativeTemplatePath)
 	if err != nil {
 		t.Fatalf("load template: %v", err)
 	}

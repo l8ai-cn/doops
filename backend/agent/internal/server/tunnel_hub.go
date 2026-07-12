@@ -46,6 +46,9 @@ type GatewayHub struct {
 	activeOps   map[string]*gatewayActiveOperation
 	activeSeq   uint64
 
+	cicdSubmitMu  sync.RWMutex
+	cicdSubmitter CICDReleaseSubmitter
+
 	scheduler *Scheduler
 }
 
@@ -634,6 +637,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionReconcile) &&
+		!h.store.UserCan(auth.UserID, cluster, instance, ActionCICDSubmit) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
@@ -698,8 +702,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 						"version": "1.0",
 					},
 					"capabilities": map[string]interface{}{
-						"tools":              map[string]interface{}{},
-						"semanticDeployment": semanticDeploymentCapability(),
+						"tools": map[string]interface{}{},
 					},
 				},
 			})
@@ -719,22 +722,11 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	if params.Name == "doops_cicd_reconcile" {
-		var reconcile api.CICDReconcileParams
-		if err := json.Unmarshal(params.Arguments, &reconcile); err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, "invalid doops_cicd_reconcile params"))
-			return nil
-		}
-		plan, err := validateCICDReconcilePlan(reconcile)
+	var releaseSubmission cicdReleaseSubmission
+	if params.Name == "doops_cicd_submit" {
+		var err error
+		releaseSubmission, err = parseCICDReleaseSubmitParams(params.Arguments)
 		if err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-			return nil
-		}
-		if err := verifyCICDPlanAttestation(plan); err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-			return nil
-		}
-		if err := validateCICDReconcileRouteBinding(plan, cluster, instance); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
@@ -768,6 +760,43 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+		return nil
+	}
+	if params.Name == "doops_cicd_submit" {
+		releaseLimit, err := h.acquireOperationSlot(auth.UserID)
+		if err != nil {
+			finishAudit("rate_limited", err.Error(), "", 0)
+			writeJSON(buildToolErrorResponse(req.ID, err.Error()))
+			return nil
+		}
+		defer releaseLimit()
+
+		opCtx, cancelOp := context.WithCancel(context.Background())
+		defer cancelOp()
+		opID := h.registerActiveOperation(GatewayActiveOperation{
+			UserID:         auth.UserID,
+			TokenID:        auth.TokenID,
+			Cluster:        cluster,
+			Instance:       instance,
+			Action:         action,
+			Session:        releaseSubmission.SessionID,
+			CommandSummary: summarizeToolCall(params.Name, params.Arguments),
+			Kind:           "cicd-release",
+		}, cancelOp)
+		defer h.finishActiveOperation(opID)
+
+		result, err := h.submitCICDRelease(opCtx, releaseSubmission)
+		if err != nil {
+			finishAudit("blocked", err.Error(), "", 0)
+			writeJSON(buildToolErrorResponse(req.ID, err.Error()))
+			return nil
+		}
+		structuredContent := map[string]interface{}{
+			"releaseId": result.ReleaseID,
+			"status":    result.Status,
+		}
+		finishAudit("success", "", "", 0)
+		writeJSON(buildStructuredSuccessResponse(req.ID, "remote multi-Ops release accepted.", structuredContent))
 		return nil
 	}
 	agent := h.getAgent(cluster, instance)
@@ -1657,8 +1686,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionExec
 	case "doops_agent_prompt":
 		return ActionAsk
-	case "doops_cicd_reconcile":
-		return ActionReconcile
+	case "doops_cicd_submit":
+		return ActionCICDSubmit
 	case "doops_git_clone":
 		return ActionPull
 	case "doops_file_read":
@@ -1684,7 +1713,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionExec, ActionAsk, ActionReconcile:
+	case ActionExec, ActionAsk, ActionCICDSubmit:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}

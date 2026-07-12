@@ -1084,8 +1084,8 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
 	}
-	if got := actionForTool("doops_cicd_reconcile", json.RawMessage(`{"session_id":"release"}`)); got != ActionReconcile {
-		t.Fatalf("doops_cicd_reconcile must map to the agent reconciliation action, got %q", got)
+	if got := actionForTool("doops_cicd_reconcile", json.RawMessage(`{"session_id":"release"}`)); got != "" {
+		t.Fatalf("dedicated reconciliation must not bypass Ask, got %q", got)
 	}
 	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
 		t.Fatalf("doops_check_deployment must map to check, got %q", got)
@@ -1468,9 +1468,6 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", json.RawMessage(`{"session_id":"ask-a"}`), "dev", "node"); got != "session:ask-a" {
 		t.Fatalf("ask resource key mismatch: %q", got)
-	}
-	if got := resourceKeyForTool(ActionReconcile, "doops_cicd_reconcile", json.RawMessage(`{"session_id":"reconcile-a"}`), "dev", "node"); got != "session:reconcile-a" {
-		t.Fatalf("reconcile resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "workspace:push-a" {
 		t.Fatalf("push resource key mismatch: %q", got)

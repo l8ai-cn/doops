@@ -62,14 +62,14 @@ flowchart LR
 当前维护版 agent 默认采用轻量双镜像发布：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：doagent / buildkit / git / tini / bash
+docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # 轻更新镜像：doops-agent / skills / docs / entrypoint
 ```
 
-本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；release 流水线会用 `DOOPS_AGENT_BASE_IMAGE` 固定到本次 tag 对应的 `base-light:<release>`。
+本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；正式发布工作流会用固定的 `DOOPS_AGENT_BASE_IMAGE` 构建本次不可变 release。
 
 ```text
-Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / git / tini / bash
+Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
@@ -83,8 +83,8 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，默认使用保留的 doops-agent 基线镜像
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
-- 构建闸门：两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`；更新镜像还会执行 `buildctl --version`
-- 发布原则：受控 doops agent 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
+- 构建闸门：基础镜像必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`；两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`
+- 发布原则：仅允许 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 由已注册的 DoOps Agent 构建和发布 Agent。模板先构建并校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help`、`buildctl --version`、Python/PyYAML 与 Helm。CNB 只运行 PR/push 测试，不构建、推送或部署发布镜像。
 
 协议与端点：
 
@@ -129,7 +129,7 @@ bash scripts/build-gateway.sh
 
 ## Agent 双镜像发布
 
-正式发布由受控 doops agent 触发，同一版本会产出两类镜像：
+正式发布由版本化 DoOps CICD Workflow 触发，同一版本会产出两类镜像：
 
 ```text
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
@@ -143,7 +143,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 禁止把基础 rootfs 压平成每次 release 都变化的大层。线上升级默认只替换 `doops.sh:<release>`，这样节点已缓存的基础层可以复用，避免 doops-agent 在拉镜像阶段长时间离线。
 
-非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被受控发布流程复用。
+CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
 
 ## 固定路径
 
@@ -391,13 +391,9 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-`deploy.sh` 是维护者发布入口，用于把本仓库里的 agent 镜像构建、推送并滚动更新到集群：
+唯一发布入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。DoOps Agent 会校验 source commit，并以该 SHA 构建不可变候选镜像；一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
 
-```bash
-bash deploy.sh gpu-ampere01
-```
-
-它会优先通过已有 doops 连接执行发布。只有目标 agent 不可用时，才读取配置里的 `ssh_user`、`ssh_port`、`ssh_password` 做一次性 SSH 自恢复；agent 连接凭证始终使用 `token`。
+`doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
 
 ## 常用命令
 
@@ -433,6 +429,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 ```bash
 doops -session upgrade_20260511 upgrade \
   --target jm \
+  --cluster doops-jm \
   --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   --mode k8s \
   --namespace oilan-system \
@@ -441,11 +438,7 @@ doops -session upgrade_20260511 upgrade \
   --dry-run
 ```
 
-省略 `--cluster/--instance` 时，只升级 `--target` 绑定的一个
-`cluster/instance`。跨目标或批量操作必须显式传入完整的
-`--cluster/--instance`；全量广播必须明确写为 `--cluster '*' --instance '*'`。
-去掉 `--dry-run` 后才会下发升级。K8s/DaemonSet 模式会执行 `kubectl set image`
-和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。
+去掉 `--dry-run` 后会对匹配的在线 `cluster/instance` 下发升级。K8s/DaemonSet 模式会执行 `kubectl set image` 和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。
 
 ## 维护者说明
 

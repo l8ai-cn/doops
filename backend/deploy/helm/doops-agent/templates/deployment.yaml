@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doops-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: doops-agent
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: doops-agent
+  template:
+    metadata:
+      labels:
+        app: doops-agent
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      containers:
+        - name: doops-agent
+          image: {{ printf "%s:%s" .Values.image.repository (required "image.tag is required" .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -lc
+            - >-
+              exec /app/sandbox-entrypoint.sh
+              -gateway-url "$DOOPS_GATEWAY_URL"
+              -cluster "$DOOPS_GATEWAY_CLUSTER"
+              -instance "$DOOPS_GATEWAY_INSTANCE"
+          env:
+            - name: DOOPS_GATEWAY_URL
+              value: {{ .Values.gateway.url | quote }}
+            - name: DOOPS_GATEWAY_CLUSTER
+              value: {{ .Values.gateway.cluster | quote }}
+            - name: DOOPS_GATEWAY_INSTANCE
+              value: {{ .Values.gateway.instance | quote }}
+            - name: DOOPS_GATEWAY_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.agentTokenSecret.name }}
+                  key: {{ .Values.gateway.agentTokenSecret.key }}
+            - name: KUBECONFIG
+              value: /root/.kube/config
+            - name: DO_AGENT_PORT
+              value: "9000"
+            - name: DO_AGENT_URL
+              value: http://127.0.0.1:9000
+          ports:
+            - name: api
+              containerPort: 42222
+              hostPort: 42222
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /etc/rancher/k3s/k3s.yaml
+              readOnly: true
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+            - name: agent-home
+              mountPath: /root
+            - name: registry-auth
+              mountPath: /root/.docker
+              readOnly: true
+            - name: doagent-config
+              mountPath: /opt/doagent_config
+              readOnly: true
+            - name: containerd-socket
+              mountPath: /run/containerd/containerd.sock
+            - name: nerdctl-bin
+              mountPath: /usr/local/bin/nerdctl
+              readOnly: true
+            - name: nerdctl-real-bin
+              mountPath: /usr/local/bin/nerdctl.real
+              readOnly: true
+      volumes:
+        - name: k3s-kubeconfig
+          hostPath:
+            path: {{ .Values.paths.kubeconfig }}
+            type: File
+        - name: agent-home
+          hostPath:
+            path: {{ .Values.paths.agentHome }}
+            type: DirectoryOrCreate
+        - name: registry-auth
+          secret:
+            secretName: {{ .Values.registryAuth.secretName }}
+            items:
+              - key: {{ .Values.registryAuth.key }}
+                path: config.json
+        - name: doagent-config
+          secret:
+            secretName: {{ .Values.agentSettings.secretName }}
+            items:
+              - key: {{ .Values.agentSettings.key }}
+                path: settings.json
+        - name: containerd-socket
+          hostPath:
+            path: {{ .Values.paths.containerdSocket }}
+            type: Socket
+        - name: nerdctl-bin
+          hostPath:
+            path: {{ .Values.paths.nerdctl }}
+            type: File
+        - name: nerdctl-real-bin
+          hostPath:
+            path: {{ .Values.paths.nerdctlReal }}
+            type: File

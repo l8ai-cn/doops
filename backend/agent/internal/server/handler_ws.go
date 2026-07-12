@@ -219,8 +219,7 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 						"version": "2.0",
 					},
 					"capabilities": map[string]interface{}{
-						"tools":              map[string]interface{}{},
-						"semanticDeployment": semanticDeploymentCapability(),
+						"tools": map[string]interface{}{},
 					},
 				},
 			})
@@ -382,17 +381,6 @@ func toolNotification(toolName, status string) notificationEvent {
 
 func errorNotification(text string) notificationEvent {
 	return notificationEvent{Kind: "error", Data: text}
-}
-
-func semanticDeploymentCapability() map[string]interface{} {
-	return map[string]interface{}{
-		"reconcile": map[string]string{
-			"tool":            "doops_cicd_reconcile",
-			"input":           "DeploymentPlan",
-			"output":          "CICDReconcileResult",
-			"contractVersion": "doops.sh/v2",
-		},
-	}
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
@@ -711,19 +699,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON, nil)
-
-	case "doops_cicd_reconcile":
-		var args api.CICDReconcileParams
-		if err := json.Unmarshal(argBytes, &args); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32602, "invalid doops_cicd_reconcile params"))
-			return
-		}
-		plan, err := validateCICDReconcilePlan(args)
-		if err != nil {
-			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-			return
-		}
-		gw.handleCICDReconcileWS(ctx, reqID, args, plan, pushProgress, writeJSON)
 
 	case "doops_git_clone":
 		result, err := handleGitClone(argBytes)

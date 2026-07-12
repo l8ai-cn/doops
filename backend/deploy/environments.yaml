@@ -1,0 +1,35 @@
+artifactContract:
+  sourceRepository: https://github.com/l8ai-cn/doops.git
+  sourceBranch: main
+  services:
+    - doops-agent
+  imageTagPattern: "^[0-9a-f]{40}$"
+  imageReferenceFormat: repository@digest
+  helmImageBindings:
+    doops-agent: image
+  manifestRepository: https://github.com/l8ai-cn/doops.git
+  authz:
+    policyScope:
+      - cluster
+      - instance
+      - service
+environments:
+  oilan:
+    target: gw-oilan-node
+    cluster: doops-oilan
+    instance: oilan-node
+    namespace: doops-system
+    release: doops-agent
+    registry: docker.cnb.cool/l8ai/ai
+    chart: backend/deploy/helm/doops-agent
+    values: backend/deploy/environments/oilan-values.yaml
+    deploymentMode: control-plane
+    healthChecks:
+      public:
+        - id: gateway-health
+          url: https://doops.l8ai.cn/health
+          expectedStatus: 200
+      workloads: []
+    authz:
+      appCode: DOOPS
+      environmentCode: OILAN

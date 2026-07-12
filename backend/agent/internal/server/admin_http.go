@@ -441,6 +441,7 @@ var knownActions = map[string]GatewayAction{
 	"exec":          ActionExec,
 	"ask":           ActionAsk,
 	"reconcile":     ActionReconcile,
+	"cicd:submit":   ActionCICDSubmit,
 	"read":          ActionRead,
 	"write":         ActionWrite,
 	"push":          ActionPush,

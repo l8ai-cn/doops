@@ -293,7 +293,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	}
 }
 
-func TestAgentInitializeAdvertisesSemanticCICDReconciliation(t *testing.T) {
+func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
 	defer ts.Close()
@@ -314,13 +314,8 @@ func TestAgentInitializeAdvertisesSemanticCICDReconciliation(t *testing.T) {
 	}
 	result, _ := response["result"].(map[string]interface{})
 	capabilities, _ := result["capabilities"].(map[string]interface{})
-	deployment, _ := capabilities["semanticDeployment"].(map[string]interface{})
-	reconcile, _ := deployment["reconcile"].(map[string]interface{})
-	if reconcile["tool"] != "doops_cicd_reconcile" ||
-		reconcile["input"] != "DeploymentPlan" ||
-		reconcile["output"] != "CICDReconcileResult" ||
-		reconcile["contractVersion"] != "doops.sh/v2" {
-		t.Fatalf("semantic deployment capability mismatch: %#v", capabilities)
+	if _, exposed := capabilities["semanticDeployment"]; exposed {
+		t.Fatalf("CI/CD must enter doagent through Ask, not a dedicated tool: %#v", capabilities)
 	}
 }
 
@@ -333,7 +328,7 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 	if strings.Contains(text, "deploy.sh") || strings.Contains(text, "build.sh") {
 		t.Fatalf("system prompt must not require generated deployment scripts: %s", text)
 	}
-	if !strings.Contains(text, "DeploymentPlan") || !strings.Contains(text, "CICDReconcileResult") {
+	if !strings.Contains(text, "DeploymentPlan") || !strings.Contains(text, "Ask") {
 		t.Fatalf("system prompt must describe the semantic CI/CD contract: %s", text)
 	}
 	for _, marker := range []string{
@@ -392,214 +387,6 @@ func TestValidateCICDReportRejectsInvalidStructuredFields(t *testing.T) {
 	}
 }
 
-func TestCICDReconcileReturnsAgentReportAsStructuredContent(t *testing.T) {
-	plan := attestedCICDPlanFixture(t)
-	report := map[string]interface{}{
-		"planDigest": plan["digest"],
-		"status":     "Converged",
-		"evidence":   []interface{}{map[string]interface{}{"kind": "source-identity", "reference": "git:0123456789abcdef0123456789abcdef01234567"}},
-		"violations": []interface{}{},
-	}
-	prompted := make(chan struct{})
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/rpc":
-			var req map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode rpc: %v", err)
-			}
-			switch req["method"] {
-			case "initialize":
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result": map[string]interface{}{
-						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
-					},
-				})
-			case "session/new":
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result":  map[string]interface{}{"sessionId": "doagent-cicd"},
-				})
-			case "session/prompt":
-				close(prompted)
-				w.WriteHeader(http.StatusAccepted)
-			default:
-				t.Fatalf("unexpected rpc method: %v", req["method"])
-			}
-		case "/events":
-			w.Header().Set("Content-Type", "text/event-stream")
-			<-prompted
-			data, err := json.Marshal(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"method":  "session/update",
-				"params": map[string]interface{}{
-					"update": map[string]interface{}{
-						"sessionUpdate": "agent_report",
-						"report":        report,
-					},
-				},
-			})
-			if err != nil {
-				t.Fatalf("marshal agent report: %v", err)
-			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
-		"session_id": "cicd-report",
-		"plan":       plan,
-		"dry_run":    true,
-	})
-	if result["error"] != nil {
-		t.Fatalf("doops_cicd_reconcile returned RPC error: %#v", result)
-	}
-	toolResult, _ := result["result"].(map[string]interface{})
-	content, _ := toolResult["content"].([]interface{})
-	if len(content) == 0 {
-		t.Fatalf("expected human-readable content, got %#v", toolResult)
-	}
-	structured, _ := toolResult["structuredContent"].(map[string]interface{})
-	if structured["planDigest"] != report["planDigest"] || structured["status"] != report["status"] {
-		t.Fatalf("unexpected structured report: %#v", structured)
-	}
-	if _, ok := structured["evidence"].([]interface{}); !ok {
-		t.Fatalf("report evidence was not preserved as an array: %#v", structured)
-	}
-	if _, ok := structured["violations"].([]interface{}); !ok {
-		t.Fatalf("report violations were not preserved as an array: %#v", structured)
-	}
-}
-
-func TestCICDReconcileFailsWhenAgentReportIsMissing(t *testing.T) {
-	reportText := `{"planDigest":"sha256:plan","status":"Converged","evidence":[],"violations":[]}`
-	prompted := make(chan struct{})
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/rpc":
-			var req map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode rpc: %v", err)
-			}
-			switch req["method"] {
-			case "initialize":
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result": map[string]interface{}{
-						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
-					},
-				})
-			case "session/new":
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result":  map[string]interface{}{"sessionId": "doagent-no-report"},
-				})
-			case "session/prompt":
-				close(prompted)
-				w.WriteHeader(http.StatusAccepted)
-			default:
-				t.Fatalf("unexpected rpc method: %v", req["method"])
-			}
-		case "/events":
-			w.Header().Set("Content-Type", "text/event-stream")
-			<-prompted
-			fmt.Fprintf(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":%q}}}}`+"\n\n", reportText)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
-		"session_id": "cicd-no-report",
-		"plan":       attestedCICDPlanFixture(t),
-		"dry_run":    false,
-	})
-	toolResult, _ := result["result"].(map[string]interface{})
-	if toolResult["isError"] != true {
-		t.Fatalf("expected missing agent report to be a tool error, got %#v", result)
-	}
-	content, _ := toolResult["content"].([]interface{})
-	if len(content) == 0 {
-		t.Fatalf("expected missing report error text, got %#v", toolResult)
-	}
-	item, _ := content[0].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(item["text"]), "agent_report") {
-		t.Fatalf("expected agent_report error, got %#v", toolResult)
-	}
-}
-
-func TestCICDReconcileRejectsDoagentWithoutStructuredReportCapability(t *testing.T) {
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc" {
-			http.NotFound(w, r)
-			return
-		}
-		var req map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode rpc: %v", err)
-		}
-		if req["method"] != "initialize" {
-			t.Fatalf("reconciliation must not create a session without the report capability: %v", req["method"])
-		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      req["id"],
-			"result":  map[string]interface{}{"capabilities": map[string]interface{}{}},
-		})
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
-		"session_id": "cicd-capability",
-		"plan":       attestedCICDPlanFixture(t),
-	})
-	toolResult, _ := result["result"].(map[string]interface{})
-	if toolResult["isError"] != true {
-		t.Fatalf("expected capability failure to be a tool error, got %#v", result)
-	}
-	content, _ := toolResult["content"].([]interface{})
-	if len(content) == 0 {
-		t.Fatalf("expected capability error text, got %#v", toolResult)
-	}
-	item, _ := content[0].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(item["text"]), "cicdStructuredReport") {
-		t.Fatalf("expected capability error, got %#v", toolResult)
-	}
-}
-
 func TestCICDReconcileRejectsPlanWithoutResolvedEnvironmentProfile(t *testing.T) {
 	plan := cicdPlanFixture()
 	spec := plan["spec"].(map[string]interface{})
@@ -634,7 +421,7 @@ func TestCICDReconcileRejectsForgedPlanDigest(t *testing.T) {
 	}
 }
 
-func TestCICDReconcileRejectsUnsignedPlanBeforeCallingDoagent(t *testing.T) {
+func TestDedicatedCICDReconcileIsNotAnAgentEntryPoint(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
 	defer ts.Close()
@@ -642,18 +429,9 @@ func TestCICDReconcileRejectsUnsignedPlanBeforeCallingDoagent(t *testing.T) {
 	defer conn.Close()
 	initializeAgentTestWS(t, conn)
 
-	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
-		"session_id": "unsigned-plan",
-		"plan":       cicdPlanFixture(),
-	})
-	toolResult, _ := result["result"].(map[string]interface{})
-	if toolResult["isError"] != true {
-		t.Fatalf("expected unsigned plan rejection, got %#v", result)
-	}
-	content, _ := toolResult["content"].([]interface{})
-	item, _ := content[0].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(item["text"]), "signed") {
-		t.Fatalf("expected signed-plan error, got %#v", toolResult)
+	response := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{})
+	if !strings.Contains(fmt.Sprint(response["error"]), "Unknown tool") {
+		t.Fatalf("dedicated reconcile tool must not remain after CI/CD moves to Ask: %#v", response)
 	}
 }
 

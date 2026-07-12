@@ -107,6 +107,28 @@ func TestGatewayStoreUserDefaultsToNoTargetAccess(t *testing.T) {
 	}
 }
 
+func TestGatewayStoreImplicitGrantExcludesAgentUpgrade(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	user, err := store.CreateUser("operator")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "prod", Instance: "node-1"}); err != nil {
+		t.Fatalf("grant user: %v", err)
+	}
+	if !store.UserCan(user.ID, "prod", "node-1", ActionExec) {
+		t.Fatal("implicit grant should retain ordinary operator actions")
+	}
+	if store.UserCan(user.ID, "prod", "node-1", ActionAgentUpgrade) {
+		t.Fatal("agent upgrade must require an explicit privileged grant")
+	}
+}
+
 func TestGatewayStoreTokenIDFastPathAndExpiredCleanup(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
