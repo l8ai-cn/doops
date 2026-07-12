@@ -377,7 +377,7 @@ spec:
 		t.Fatalf("load workflow: %v", err)
 	}
 	verifier := &sourceReleaseVerifier{
-		attestation: `{"releaseId":"` + releaseID + `","repository":"https://example.test/repo.git","branch":"main"}`,
+		attestation: `{"releaseId":"` + releaseID + `","repository":"https://example.test/repo.git","branch":"main"}` + "\nOperation complete.",
 	}
 	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
 		Executor: verifier,

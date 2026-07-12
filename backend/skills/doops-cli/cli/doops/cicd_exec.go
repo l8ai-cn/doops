@@ -74,9 +74,9 @@ func runCICDRemoteSourceReleaseVerification(executor cicdExecutor, plan CICDPlan
 	if err != nil {
 		return err
 	}
-	var attestation cicdSourceReleaseAttestation
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &attestation); err != nil {
-		return fmt.Errorf("parse synced source release attestation: %w", err)
+	attestation, err := parseCICDSourceReleaseAttestation(output)
+	if err != nil {
+		return err
 	}
 	if attestation.ReleaseID != strings.TrimSpace(stage.With["releaseId"]) {
 		return fmt.Errorf("synced releaseId mismatch: want=%s got=%s", strings.TrimSpace(stage.With["releaseId"]), attestation.ReleaseID)
@@ -88,6 +88,18 @@ func runCICDRemoteSourceReleaseVerification(executor cicdExecutor, plan CICDPlan
 		return fmt.Errorf("synced source branch mismatch: want=%s got=%s", strings.TrimSpace(stage.With["branch"]), attestation.Branch)
 	}
 	return nil
+}
+
+func parseCICDSourceReleaseAttestation(output string) (cicdSourceReleaseAttestation, error) {
+	start := strings.Index(output, "{")
+	if start < 0 {
+		return cicdSourceReleaseAttestation{}, fmt.Errorf("parse synced source release attestation: JSON object not found")
+	}
+	var attestation cicdSourceReleaseAttestation
+	if err := json.NewDecoder(strings.NewReader(output[start:])).Decode(&attestation); err != nil {
+		return cicdSourceReleaseAttestation{}, fmt.Errorf("parse synced source release attestation: %w", err)
+	}
+	return attestation, nil
 }
 
 func runCICDVersionedCommandTask(executor cicdExecutor, stage CICDPlanStage, mode, session string) (bool, error) {

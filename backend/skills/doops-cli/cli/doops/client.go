@@ -578,18 +578,7 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 			if method, ok := msg["method"].(string); ok && method == "notifications/message" {
 				if params, ok := msg["params"].(map[string]interface{}); ok {
 					if chunk, ok := params["data"].(string); ok {
-						lines := strings.Split(chunk, "\n")
-						for _, l := range lines {
-							trimmed := strings.TrimSpace(l)
-							var contentToPrint string = l // 保留原始格式（不 trimmed）以防止破坏格式
-							if idx := strings.Index(trimmed, "{"); idx != -1 {
-								contentToPrint = l[:strings.Index(l, "{")]
-							}
-							// 过滤 ANSI 转义序列和空字符（简单处理）
-							if contentToPrint != "" {
-								capturedOutput.WriteString(contentToPrint + "\n")
-							}
-						}
+						capturedOutput.WriteString(captureToolNotificationText(chunk))
 					}
 				}
 				continue
@@ -621,6 +610,28 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 		}
 	}
 	return "", fmt.Errorf("no result received")
+}
+
+func captureToolNotificationText(chunk string) string {
+	var captured strings.Builder
+	for _, line := range strings.Split(chunk, "\n") {
+		content := line
+		trimmed := strings.TrimSpace(line)
+		if idx := strings.Index(trimmed, "{"); idx != -1 {
+			jsonPart := trimmed[idx:]
+			var event map[string]interface{}
+			if json.Unmarshal([]byte(jsonPart), &event) == nil {
+				if _, ok := event["type"].(string); ok {
+					content = line[:strings.Index(line, "{")]
+				}
+			}
+		}
+		if content != "" {
+			captured.WriteString(content)
+			captured.WriteByte('\n')
+		}
+	}
+	return captured.String()
 }
 
 func (c *MCPClient) callTimeout() time.Duration {
