@@ -41,18 +41,6 @@ spec:
               value: /root/.kube/config
             - name: NODE_TLS_REJECT_UNAUTHORIZED
               value: "0"
-            - name: REGISTRY_URL
-              value: registry.example.com
-            - name: REGISTRY_USER
-              valueFrom:
-                secretKeyRef:
-                  name: registry-credentials
-                  key: username
-            - name: REGISTRY_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: registry-credentials
-                  key: password
             - name: DO_AGENT_PORT
               value: "9000"
             - name: DO_AGENT_URL
@@ -85,6 +73,9 @@ spec:
               readOnly: true
             - name: agent-home
               mountPath: /root
+            - name: registry-auth
+              mountPath: /root/.docker
+              readOnly: true
             - name: containerd-run
               mountPath: /run/containerd
             - name: containerd-lib
@@ -110,6 +101,12 @@ spec:
           hostPath:
             path: /home/iict/data/doops-agent-home
             type: DirectoryOrCreate
+        - name: registry-auth
+          secret:
+            secretName: doops-registry-auth
+            items:
+              - key: config.json
+                path: config.json
         - name: containerd-run
           hostPath:
             path: /run/containerd

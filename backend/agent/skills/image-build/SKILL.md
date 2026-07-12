@@ -34,7 +34,7 @@ conflicts: []
 ### 私有仓库配置
 - **Registry 地址**：`registry.example.com`
 - **命名规范**：`registry.example.com/example-system/{service-name}:{tag}`
-- **认证方式**：Agent 启动时会写入 `/root/.docker/config.json`，供 BuildKit 推送时读取
+- **认证方式**：Kubernetes Secret 将多仓库 Docker `config.json` 只读挂载到 `/root/.docker/config.json`
 - **推送方式**：使用 `--output type=image,name=...,push=true,registry.insecure=true`
 
 ### Go 项目特殊处理
