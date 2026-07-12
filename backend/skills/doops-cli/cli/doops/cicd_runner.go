@@ -16,8 +16,8 @@ type CICDRunOptions struct {
 	Inputs      map[string]string
 	DryRun      bool
 	AllowMutate bool
-	// ExecutionTarget is resolved by the CLI from the declared Workflow
-	// environments. It is never a required operator input for a routed workflow.
+	// ExecutionTarget is resolved from declared workflow routes. Routed workflows
+	// never require an operator-supplied target input.
 	ExecutionTarget string
 	// Session isolates the remote agent workspace at /root/ws/<session>.
 	Session string
@@ -169,6 +169,36 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 				if opts.DryRun {
 					mode = "dry-run"
 				}
+				if isCICDReleaseSourceVerificationTask(stage) {
+					if err := runCICDRemoteSourceReleaseVerification(opts.Executor, plan, stage, opts.Session); err != nil {
+						step.Status = "failed"
+						step.Message = err.Error()
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s failed: %w", stage.ID, err)
+					}
+					step.Status = "success"
+					step.Message = "verified exact synced source release"
+					break
+				}
+				if isCICDVersionedCommandTask(stage) {
+					executed, err := runCICDVersionedCommandTask(opts.Executor, stage, mode, opts.Session)
+					if err != nil {
+						step.Status = "failed"
+						step.Message = err.Error()
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s failed: %w", stage.ID, err)
+					}
+					if executed {
+						step.Status = "success"
+						step.Message = "executed deterministic versioned command task (mode=" + mode + ")"
+					} else {
+						step.Status = "planned"
+						step.Message = "dry-run planned deterministic versioned command task"
+					}
+					break
+				}
 				if err := runCICDAgentStage(opts.Executor, plan, stage, mode, opts.Session); err != nil {
 					step.Status = "failed"
 					step.Message = err.Error()
@@ -219,7 +249,9 @@ func runCICDGitClone(ctx context.Context, source CICDSource) (string, string, er
 }
 
 type cicdSourceReleaseAttestation struct {
-	ReleaseID string `json:"releaseId"`
+	ReleaseID  string `json:"releaseId"`
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
 }
 
 func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID string) (string, string, error) {
@@ -275,7 +307,11 @@ func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID 
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("checked out release %s is not clean: %s", releaseID, strings.TrimSpace(status))
 	}
 
-	attestation, err := json.Marshal(cicdSourceReleaseAttestation{ReleaseID: releaseID})
+	attestation, err := json.Marshal(cicdSourceReleaseAttestation{
+		ReleaseID:  releaseID,
+		Repository: strings.TrimSpace(source.Repo),
+		Branch:     strings.TrimSpace(source.Branch),
+	})
 	if err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 	}

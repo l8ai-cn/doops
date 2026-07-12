@@ -604,11 +604,11 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 					if toolResultIsError(result) {
 						return "", fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
 					}
+					if text := toolResultText(result, ""); text != "" {
+						capturedOutput.WriteString(text)
+					}
 					if capturedOutput.Len() > 0 {
 						return capturedOutput.String(), nil
-					}
-					if text := toolResultText(result, ""); text != "" {
-						return text, nil
 					}
 				} else if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
 					return "", fmt.Errorf("remote error: %v", rpcErr["message"])
