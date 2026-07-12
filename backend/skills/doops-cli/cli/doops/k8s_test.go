@@ -283,3 +283,13 @@ func (f *fakeK8SCaller) Call(toolName string, arguments map[string]interface{}) 
 	f.calls = append(f.calls, fakeK8SCall{tool: toolName, args: copied})
 	return nil
 }
+
+func (f *fakeK8SCaller) CallAndCapture(toolName string, arguments map[string]interface{}) (string, error) {
+	if err := f.Call(toolName, arguments); err != nil {
+		return "", err
+	}
+	if toolName == "doops_agent_prompt" {
+		return cicdAgentStatusPass + "\n", nil
+	}
+	return "verified", nil
+}

@@ -169,6 +169,18 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 				if opts.DryRun {
 					mode = "dry-run"
 				}
+				if isCICDReleaseSourceVerificationTask(stage) {
+					if err := runCICDRemoteSourceReleaseVerification(opts.Executor, plan, stage, opts.Session); err != nil {
+						step.Status = "failed"
+						step.Message = err.Error()
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s failed: %w", stage.ID, err)
+					}
+					step.Status = "success"
+					step.Message = "verified exact synced source release"
+					break
+				}
 				if isCICDVersionedCommandTask(stage) {
 					executed, err := runCICDVersionedCommandTask(opts.Executor, stage, mode, opts.Session)
 					if err != nil {
@@ -237,7 +249,9 @@ func runCICDGitClone(ctx context.Context, source CICDSource) (string, string, er
 }
 
 type cicdSourceReleaseAttestation struct {
-	ReleaseID string `json:"releaseId"`
+	ReleaseID  string `json:"releaseId"`
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
 }
 
 func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID string) (string, string, error) {
@@ -293,7 +307,11 @@ func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID 
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("checked out release %s is not clean: %s", releaseID, strings.TrimSpace(status))
 	}
 
-	attestation, err := json.Marshal(cicdSourceReleaseAttestation{ReleaseID: releaseID})
+	attestation, err := json.Marshal(cicdSourceReleaseAttestation{
+		ReleaseID:  releaseID,
+		Repository: strings.TrimSpace(source.Repo),
+		Branch:     strings.TrimSpace(source.Branch),
+	})
 	if err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 	}

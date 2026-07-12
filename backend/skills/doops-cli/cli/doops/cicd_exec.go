@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,11 @@ type cicdExecutor = k8sCaller
 type cicdVerificationExecutor interface {
 	CallAndCapture(toolName string, arguments map[string]interface{}) (string, error)
 }
+
+const (
+	cicdAgentStatusPass = "DOOPS_STAGE_STATUS=PASS"
+	cicdAgentStatusFail = "DOOPS_STAGE_STATUS=FAIL"
+)
 
 // isCICDAgentDrivenStage reports whether a stage is a structured agent-native
 // stage (agent.task / doops.k8s / doops.exec with no inline run script). These
@@ -45,6 +51,43 @@ func isCICDVersionedCommandTask(stage CICDPlanStage) bool {
 	default:
 		return false
 	}
+}
+
+func isCICDReleaseSourceVerificationTask(stage CICDPlanStage) bool {
+	return strings.TrimSpace(stage.Uses) == "agent.task" &&
+		strings.TrimSpace(stage.Run) == "" &&
+		strings.TrimSpace(stage.With["task"]) == "verify-release-source"
+}
+
+func runCICDRemoteSourceReleaseVerification(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage, session string) error {
+	verifier, ok := executor.(cicdVerificationExecutor)
+	if !ok {
+		return fmt.Errorf("stage %s requires an executor with output capture", stage.ID)
+	}
+	workspace, err := cicdRemoteWorkspace(session)
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", stage.ID, err)
+	}
+	output, err := verifier.CallAndCapture("doops_shell", map[string]interface{}{
+		"command": "cat " + shellQuote(workspace+"/.doops-source-release.json"),
+	})
+	if err != nil {
+		return err
+	}
+	var attestation cicdSourceReleaseAttestation
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &attestation); err != nil {
+		return fmt.Errorf("parse synced source release attestation: %w", err)
+	}
+	if attestation.ReleaseID != strings.TrimSpace(stage.With["releaseId"]) {
+		return fmt.Errorf("synced releaseId mismatch: want=%s got=%s", strings.TrimSpace(stage.With["releaseId"]), attestation.ReleaseID)
+	}
+	if attestation.Repository != strings.TrimSpace(plan.Source.Repo) {
+		return fmt.Errorf("synced source repository mismatch: want=%s got=%s", strings.TrimSpace(plan.Source.Repo), attestation.Repository)
+	}
+	if attestation.Branch != strings.TrimSpace(stage.With["branch"]) {
+		return fmt.Errorf("synced source branch mismatch: want=%s got=%s", strings.TrimSpace(stage.With["branch"]), attestation.Branch)
+	}
+	return nil
 }
 
 func runCICDVersionedCommandTask(executor cicdExecutor, stage CICDPlanStage, mode, session string) (bool, error) {
@@ -101,26 +144,25 @@ func runCICDAgentStage(executor cicdExecutor, plan CICDPlan, stage CICDPlanStage
 	if strings.TrimSpace(stage.Uses) == "" {
 		return fmt.Errorf("stage %s: uses is required", stage.ID)
 	}
+	resultExecutor, ok := executor.(cicdVerificationExecutor)
+	if !ok {
+		return fmt.Errorf("stage %s requires an executor with output capture", stage.ID)
+	}
 	instruction := cicdAgentInstruction(plan, stage, mode, session)
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if verifier, ok := executor.(cicdVerificationExecutor); ok && !cicdStageHasVerification(stage) {
-			var output string
-			output, lastErr = verifier.CallAndCapture("doops_agent_prompt", map[string]interface{}{
-				"instruction": instruction,
-			})
-			if lastErr == nil && cicdAgentReportedFailure(output) {
-				return fmt.Errorf("stage %s reported failure: %s", stage.ID, strings.TrimSpace(output))
+		output, err := resultExecutor.CallAndCapture("doops_agent_prompt", map[string]interface{}{
+			"instruction": instruction,
+		})
+		if err == nil {
+			if verdictErr := validateCICDAgentResult(output); verdictErr != nil {
+				return fmt.Errorf("stage %s %w", stage.ID, verdictErr)
 			}
-		} else {
-			lastErr = executor.Call("doops_agent_prompt", map[string]interface{}{
-				"instruction": instruction,
-			})
-		}
-		if lastErr == nil {
+			lastErr = nil
 			break
 		}
+		lastErr = err
 		if !isTransientCICDAgentError(lastErr) || attempt == maxAttempts {
 			return lastErr
 		}
@@ -179,11 +221,6 @@ func cicdVerificationCommand(stage CICDPlanStage, mode, session string) string {
 	}
 	workspace := "/root/ws/" + session
 	return "cd -- '" + strings.ReplaceAll(workspace, "'", "'\"'\"'") + "' && " + command
-}
-
-func cicdStageHasVerification(stage CICDPlanStage) bool {
-	return strings.TrimSpace(stage.With["verificationCommand"]) != "" ||
-		strings.TrimSpace(stage.With["dryRunVerificationCommand"]) != ""
 }
 
 func isTransientCICDAgentError(err error) bool {
@@ -260,18 +297,29 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session stri
 	b.WriteString("Use remote.workspace as the repository root for charts, tests, and files. Ignore source.path.local if it is not present on this node.\n")
 	b.WriteString("Do NOT build up cross-stage artifacts: do not read, append to, or rewrite a cumulative deploy script, audit log, or per-stage result file carried over from previous stages. Those unbounded artifacts grow past tool limits and stall the run. If you must write a file, keep it small and stage-local.\n")
 	b.WriteString("Keep the streaming connection warm: emit progress/heartbeats during long tools so the SSE idle timer does not fire.\n")
-	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short. End with DOOPS_STAGE_STATUS=PASS or DOOPS_STAGE_STATUS=FAIL.\n")
+	b.WriteString("Report a concise structured result: what you did, evidence of success, or the specific blocker if it failed. Keep the report short.\n")
+	b.WriteString("End your final report with exactly one standalone status line: " + cicdAgentStatusPass + " only after verified success, or " + cicdAgentStatusFail + " for any blocker or failed verification. Never report PASS after a failure.\n")
 	return b.String()
 }
 
-func cicdAgentReportedFailure(output string) bool {
+func validateCICDAgentResult(output string) error {
+	status := ""
 	for _, line := range strings.Split(output, "\n") {
-		normalized := strings.ToUpper(strings.TrimSpace(line))
-		if normalized == "DOOPS_STAGE_STATUS=FAIL" || strings.Contains(normalized, "STATUS: FAILED") {
-			return true
+		switch strings.TrimSpace(line) {
+		case cicdAgentStatusPass:
+			status = cicdAgentStatusPass
+		case cicdAgentStatusFail:
+			status = cicdAgentStatusFail
 		}
 	}
-	return false
+	switch status {
+	case cicdAgentStatusPass:
+		return nil
+	case cicdAgentStatusFail:
+		return fmt.Errorf("reported failure")
+	default:
+		return fmt.Errorf("did not report %s or %s", cicdAgentStatusPass, cicdAgentStatusFail)
+	}
 }
 
 func cicdSortedKeys(m map[string]string) []string {
