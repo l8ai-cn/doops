@@ -1,0 +1,99 @@
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: oilan-doops-agent-bootstrap
+spec:
+  inputs:
+    releaseId:
+      required: true
+  policy:
+    agentNative: true
+    maxToolScripts: 0
+    requiredDocSections:
+      - Inputs
+      - Deployment
+      - Rollback
+      - Verification
+  source:
+    path: .
+    repo: https://github.com/l8ai-cn/doops.git
+    branch: main
+    requireCleanCommit: true
+  environments:
+    - name: oilan
+      target: gw-oilan-node
+      namespace: doops-system
+      release: doops-agent
+      deploymentDoc: backend/deploy/docs/oilan-doops-agent.md
+      services:
+        - doops-agent
+  locks:
+    - key: oilan-doops-agent-bootstrap
+      wait: true
+      cancelWaiting: true
+      cancelRunning: false
+  buildEnv:
+    registryAuthPath: /root/.docker/config.json
+    buildkitAddress: unix:///run/buildkit/buildkitd.sock
+    baseImage: docker.cnb.cool/l8ai/ai/doops.sh/base-light:agent-runtime-20260712-01
+    appImage: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+  stages:
+    - id: verify-release-source
+      uses: agent.task
+      with:
+        task: verify-release-source
+        releaseId: ${inputs.releaseId}
+        branch: main
+    - id: build-candidate-image
+      uses: agent.task
+      mutates: true
+      confirm: true
+      with:
+        task: run-versioned-build-tool
+        dryRunVerificationCommand: >-
+          test -f backend/Dockerfile.base.light &&
+          test -f backend/Dockerfile &&
+          test -s /root/.docker/config.json &&
+          buildctl --version
+        requiredCommand: |
+          set -e
+          BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:agent-runtime-20260712-01
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          buildctl build \
+            --frontend dockerfile.v0 \
+            --local context=backend \
+            --local dockerfile=backend \
+            --opt filename=Dockerfile.base.light \
+            --output type=image,name="${BASE_IMAGE}",push=true
+          buildctl build \
+            --frontend dockerfile.v0 \
+            --local context=backend \
+            --local dockerfile=backend \
+            --opt filename=Dockerfile \
+            --opt build-arg:DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
+            --output type=image,name="${APP_IMAGE}",push=true
+        verificationCommand: |
+          set -e
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          nerdctl pull "${APP_IMAGE}"
+          nerdctl run --rm --entrypoint /bin/sh "${APP_IMAGE}" -lc '
+            python3 -c "import yaml"
+            helm version --short
+            /app/doops-agent -help >/dev/null
+            /usr/local/bin/do-agent --help >/dev/null
+            test -f /app/deploy/helm/doops-agent/Chart.yaml
+          '
+    - id: bootstrap-helm-release
+      uses: doops.k8s
+      mutates: true
+      confirm: true
+      with:
+        operation: apply-manifest
+        manifest: backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml
+        namespace: doops-system
+        resource: job/doops-agent-helm-bootstrap
+        verificationCommand: >-
+          kubectl -n doops-system wait --for=condition=complete
+          job/doops-agent-helm-bootstrap --timeout=10m &&
+          helm -n doops-system status doops-agent &&
+          kubectl -n doops-system rollout status deployment/doops-agent --timeout=10m

@@ -48,20 +48,24 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要触发更新大模型管控组件 `doops-agent`，请严格按照以下步骤完成部署。这套流程抛弃了传统脆弱的 SSH/rsync 脚本，完全基于 doops 自身的 WebSocket 原生协议 (`deploy.sh`)：
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，只能执行版本化 DoOps CICD Workflow。CNB 仅承担 PR/push 测试，`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
-### 1. 触发构建同步 (在控制端/本地执行)
-所有的构建统一使用脚手架入口 `deploy.sh`。它会自动将本地最新的代码（增量）推送到宿主机，并在**服务器端沙盒内**拉起容器引擎构建，最后滚动更新。
+### 1. 触发受控发布 (在控制端执行)
+发布者必须先将待发布提交推送到 `main`，再以该完整 commit SHA 作为 `releaseId` 执行环境 Workflow。Oilan 的一次性迁移入口为 `ops/cicd/oilan-doops-agent-bootstrap.yaml`，运行期目标清单由 `deploy/` 中的 Helm Chart 和环境 values 定义。
 
 ```bash
-cd platform-tools/doops
-bash deploy.sh master-node
+doops -session oilan-agent-bootstrap cicd run \
+  -f backend/ops/cicd/oilan-doops-agent-bootstrap.yaml \
+  --allow-mutate \
+  --set releaseId=<main-commit-sha>
 ```
 
-**底层执行原理 (`deploy.sh` 逻辑)：**
-1. **代码推送**: 解析目标节点，并执行 `doops push --target master-node --src .` 极速同步至沙盒 (`/root/ws/deploy_master-node`)。
-2. **应用配置**: 执行远端 `kubectl apply` 更新 ConfigMap 和 DaemonSet。
-3. **远端构建**: Agent 容器内统一使用内置 `buildkitd + buildctl` 构建 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`。基础镜像先在受控远端环境发布，CNB release 只拉取并复用该基础镜像构建轻更新镜像，避免 CNB runner 访问私有基线镜像时出现 401。日常升级只滚动轻更新镜像 `doops.sh:<release>`；基础镜像只在 doagent/buildkit/kubectl/系统工具变化时升级。
+**Workflow 执行顺序：**
+1. 校验工作区与 `main` 上的精确 source commit 一致。
+2. 在目标 Agent 的 BuildKit 中构建并推送 `doops.sh/base-light:<release>` 与 `doops.sh:<release>`。
+3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
+4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
+5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
 
 ### 双镜像构建原则
 
@@ -90,20 +94,9 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ---
 
-## 三、 Agent 部署与热更新机制 (Hot Rollout)
+## 三、 Agent 部署与热更新机制
 
-### K8s 自动化滚动升级 (DaemonSet)
-`doops-agent` 在集群内部由 `DaemonSet` 全权托管（确保每个节点都有 Agent 接管），描述文件位于 `agent/agent.yaml`。
-`deploy.sh` 脚手架在构建推送完毕后，会自动执行以下 K8s Rollout 命令进行零宕机重启：
-
-```bash
-# 触发拉取最新镜像的更新机制
-kubectl -n ai set image daemonset/doops-agent doops-agent=docker.cnb.cool/l8ai/ai/doops.sh:<release>
-kubectl rollout restart daemonset/doops-agent -n ai
-
-# 监控滚动升级进度（设定超时时间避免无尽死锁）
-kubectl rollout status daemonset/doops-agent -n ai --timeout=120s
-```
+`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`；每个环境通过独立 values 文件声明镜像、目标节点、挂载、Secret 与 gateway TLS 地址。禁止直接 `kubectl set image`、`kubectl rollout restart` 或从节点 SSH 更新运行中的 Agent。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。

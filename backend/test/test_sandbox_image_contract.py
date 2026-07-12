@@ -23,14 +23,6 @@ def top_level_block(text: str, key: str) -> str:
     return text[start:end]
 
 
-def require_ordered(text: str, *needles: str) -> None:
-    previous = -1
-    for needle in needles:
-        current = text.index(needle)
-        assert current > previous
-        previous = current
-
-
 def test_sandbox_dockerfile_is_light_update_layer_with_runtime_gates():
     dockerfile = read("agent/Dockerfile.sandbox")
 
@@ -144,29 +136,15 @@ def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
         assert "py3-pytest" in push_block
 
 
-def test_cnb_release_validates_app_image_base_and_runtime_before_push():
+def test_doops_cicd_is_the_only_agent_release_definition():
     cnb = read_repo(".cnb.yml")
+    workflow = read_repo("backend/ops/cicd/oilan-doops-agent-bootstrap.yaml")
 
-    require_ordered(
-        cnb,
-        "name: build app image",
-        "name: validate release app image",
-        "name: push app image",
-    )
-    assert ': "${DOOPS_AGENT_BASE_IMAGE:?release base image was not exported}"' in cnb
-    assert "org.opencontainers.image.base.name" in cnb
-    assert 'test "${ACTUAL_BASE}" = "${DOOPS_AGENT_BASE_IMAGE}"' in cnb
-    assert 'docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null' in cnb
-    assert 'docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --help >/dev/null' in cnb
-    assert 'docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" -lc "buildctl --version"' in cnb
+    assert "tag_push:" not in cnb
+    assert "release-image" not in cnb
+    assert "run-versioned-build-tool" in workflow
+    assert "bootstrap-helm-release" in workflow
 
 
-def test_deploy_script_rolls_out_the_image_it_builds():
-    script = read("deploy.sh")
-
-    require_ordered(
-        script,
-        "step 3 \"远端 BuildKit 构建并推送镜像\"",
-        "kubectl -n ${NAMESPACE} set image ${DEPLOY_NAME} doops-agent=${IMAGE}",
-        "kubectl rollout status ${DEPLOY_NAME} -n ${NAMESPACE}",
-    )
+def test_legacy_manual_agent_deploy_script_is_removed():
+    assert not (ROOT / "deploy.sh").exists()

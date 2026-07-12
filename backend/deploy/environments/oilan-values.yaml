@@ -1,0 +1,37 @@
+image:
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  tag: agent-runtime-20260712-01
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: harbor-pull
+
+gateway:
+  url: https://doops.l8ai.cn
+  cluster: doops-oilan
+  instance: oilan-node
+  agentTokenSecret:
+    name: doops-agent-runtime
+    key: agent-token
+
+nodeSelector:
+  kubernetes.io/hostname: gpu-ampere01
+
+agentSettings:
+  secretName: doops-agent-settings
+  key: settings.json
+
+doagentConfig:
+  configMapName: doagent-config
+
+registryAuth:
+  secretName: doops-registry-auth
+  key: config.json
+
+paths:
+  kubeconfig: /etc/rancher/k3s/k3s.yaml
+  agentHome: /home/iict/data/doops-agent-home-k3s
+  containerdSocket: /run/k3s/containerd/containerd.sock
+  nerdctl: /usr/local/bin/nerdctl
+  nerdctlReal: /usr/local/bin/nerdctl.real
+  crictl: /usr/bin/crictl

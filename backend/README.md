@@ -66,7 +66,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：do
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # 轻更新镜像：doops-agent / skills / docs / entrypoint
 ```
 
-本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；release 流水线会用 `DOOPS_AGENT_BASE_IMAGE` 固定到本次 tag 对应的 `base-light:<release>`。
+本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；正式发布工作流会用固定的 `DOOPS_AGENT_BASE_IMAGE` 构建本次不可变 release。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
@@ -84,7 +84,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：基础镜像必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`；两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`
-- 发布原则：CNB release 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
+- 发布原则：仅允许 `backend/ops/cicd/` 下的 DoOps Workflow 构建和发布 Agent。工作流先构建并校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help`、`buildctl --version`、Python/PyYAML 与 Helm。
 
 协议与端点：
 
@@ -129,7 +129,7 @@ bash scripts/build-gateway.sh
 
 ## Agent 双镜像发布
 
-正式发布由 CNB release tag 触发，同一版本会产出两类镜像：
+正式发布由版本化 DoOps CICD Workflow 触发，同一版本会产出两类镜像：
 
 ```text
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
@@ -391,13 +391,7 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-`deploy.sh` 是维护者发布入口，用于把本仓库里的 agent 镜像构建、推送并滚动更新到集群：
-
-```bash
-bash deploy.sh gpu-ampere01
-```
-
-它会优先通过已有 doops 连接执行发布。只有目标 agent 不可用时，才读取配置里的 `ssh_user`、`ssh_port`、`ssh_password` 做一次性 SSH 自恢复；agent 连接凭证始终使用 `token`。
+唯一发布入口是版本化 DoOps Workflow。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/ops/cicd/oilan-doops-agent-bootstrap.yaml`。Workflow 会校验 source commit、构建并验证候选镜像、通过一次性 Helm bootstrap Job 接管 Deployment，并等待 Helm 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
 
 ## 常用命令
 

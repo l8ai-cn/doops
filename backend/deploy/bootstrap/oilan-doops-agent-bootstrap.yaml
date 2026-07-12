@@ -1,0 +1,107 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doops-agent-helm-bootstrap
+  namespace: doops-system
+  labels:
+    app: doops-agent-bootstrap
+    app.kubernetes.io/managed-by: Helm
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: doops-agent-bootstrap
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: gpu-ampere01
+      imagePullSecrets:
+        - name: harbor-pull
+      restartPolicy: Never
+      initContainers:
+        - name: adopt-helm-label
+          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/kubectl"]
+          args:
+            - -n
+            - doops-system
+            - label
+            - deployment/doops-agent
+            - app.kubernetes.io/managed-by=Helm
+            - --overwrite
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+        - name: adopt-helm-release-name
+          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/kubectl"]
+          args:
+            - -n
+            - doops-system
+            - annotate
+            - deployment/doops-agent
+            - meta.helm.sh/release-name=doops-agent
+            - --overwrite
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+        - name: adopt-helm-release-namespace
+          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/kubectl"]
+          args:
+            - -n
+            - doops-system
+            - annotate
+            - deployment/doops-agent
+            - meta.helm.sh/release-namespace=doops-system
+            - --overwrite
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+      containers:
+        - name: helm-bootstrap
+          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/helm"]
+          args:
+            - upgrade
+            - --install
+            - doops-agent
+            - /app/deploy/helm/doops-agent
+            - --namespace
+            - doops-system
+            - --values
+            - /app/deploy/environments/oilan-values.yaml
+            - --wait
+            - --timeout
+            - 10m
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+      volumes:
+        - name: k3s-kubeconfig
+          hostPath:
+            path: /etc/rancher/k3s/k3s.yaml
+            type: File
