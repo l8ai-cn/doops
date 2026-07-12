@@ -52,6 +52,23 @@ func TestCICDSubmitDoesNotReadLocalDeploymentState(t *testing.T) {
 	}
 }
 
+func TestCICDSubmitAcceptsBackendDeploymentWorkflow(t *testing.T) {
+	command, err := buildCICDSubmitCommand([]string{
+		"submit",
+		"--target", "release-control-plane",
+		"--repository-id", "repo_doops",
+		"--revision", "0123456789abcdef0123456789abcdef01234567",
+		"--workflow", "backend/deploy/workflows/oilan-agent-bootstrap.yaml",
+		"--allow-mutate",
+	})
+	if err != nil {
+		t.Fatalf("build release request for backend deployment workflow: %v", err)
+	}
+	if command.Request.WorkflowPath != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" {
+		t.Fatalf("workflow path = %q", command.Request.WorkflowPath)
+	}
+}
+
 func TestCICDSubmitRejectsLocalWorkflowFile(t *testing.T) {
 	err := runCICDSubmitCommand(context.Background(), []string{
 		"submit",

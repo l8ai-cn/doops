@@ -62,6 +62,24 @@ func TestParseCICDReleaseSubmitRequiresImmutableSourceAndRemoteWorkflow(t *testi
 	}
 }
 
+func TestParseCICDReleaseSubmitAcceptsBackendDeploymentWorkflow(t *testing.T) {
+	raw := mustJSON(t, api.CICDReleaseSubmitParams{
+		SessionID: "release",
+		Request: json.RawMessage(`{
+			"apiVersion":"doops.sh/v3",
+			"kind":"ReleaseRequest",
+			"repositoryId":"repo_doops",
+			"revision":"0123456789abcdef0123456789abcdef01234567",
+			"workflowPath":"backend/deploy/workflows/oilan-agent-bootstrap.yaml",
+			"dryRun":true
+		}`),
+	})
+
+	if _, err := parseCICDReleaseSubmitParams(raw); err != nil {
+		t.Fatalf("parse backend deployment workflow: %v", err)
+	}
+}
+
 func TestGatewayCICDSubmitFailsClosedBeforeContactingDeploymentTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

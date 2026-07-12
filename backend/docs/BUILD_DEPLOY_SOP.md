@@ -51,13 +51,15 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，只能由已注册的 DoOps Agent 执行版本化 DoOps `DeploymentTemplate`。CNB 仅承担 PR/push 测试，不能构建、推送或部署 Agent 镜像；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，再以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，再将已登记仓库、完整 commit SHA 和仓库内 workflow 作为 `ReleaseRequest` 提交给远端 CI/CD 控制面。控制面负责校验源码、生成不可变 release manifest，并由已注册的 DoOps Agent 构建、部署和验证。Oilan 的入口为 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `backend/deploy/environments.yaml`、Helm Chart 和环境 values 定义。
 
 ```bash
-doops -session oilan-agent-bootstrap cicd run \
-  -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
+doops -session oilan-agent-bootstrap cicd submit \
+  --target <release-control-plane-target> \
+  --repository-id <registered-doops-repository-id> \
+  --revision <main-commit-sha> \
+  --workflow backend/deploy/workflows/oilan-agent-bootstrap.yaml \
   --allow-mutate \
-  --set releaseId=<main-commit-sha> \
   --set reason=agent-bootstrap
 ```
 

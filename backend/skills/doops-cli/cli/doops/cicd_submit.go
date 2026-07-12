@@ -121,13 +121,18 @@ func validateReleaseRequest(request ReleaseRequest) error {
 	if path.IsAbs(workflow) || workflow != path.Clean(workflow) || workflow == "." || strings.HasPrefix(workflow, "../") {
 		return fmt.Errorf("--workflow must be a repository-relative path")
 	}
-	if !strings.HasPrefix(workflow, "deploy/workflows/") {
-		return fmt.Errorf("--workflow must be under deploy/workflows/")
+	if !isDeploymentWorkflowPath(workflow) {
+		return fmt.Errorf("--workflow must be under deploy/workflows/ or backend/deploy/workflows/")
 	}
 	if !request.DryRun && !request.AllowMutate {
 		return fmt.Errorf("mutating release submission requires --allow-mutate")
 	}
 	return nil
+}
+
+func isDeploymentWorkflowPath(workflow string) bool {
+	return strings.HasPrefix(workflow, "deploy/workflows/") ||
+		strings.HasPrefix(workflow, "backend/deploy/workflows/")
 }
 
 func runCICDSubmitCommand(ctx context.Context, args []string, submit releaseSubmitter) error {
