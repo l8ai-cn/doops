@@ -11,17 +11,15 @@ import (
 )
 
 type CICDAgenticRunRequest struct {
-	SessionID     string
-	DryRun        bool
-	AllowMutate   bool
-	MaxIterations int
-	MaxNoProgress int
+	SessionID   string
+	DryRun      bool
+	AllowMutate bool
 }
 type CICDAgenticRun struct {
-	PlanDigest string `json:"planDigest"`
-	Target     string `json:"target"`
-	Workspace  string `json:"workspace"`
-	Outcome    string `json:"outcome"`
+	PlanDigest string               `json:"planDigest"`
+	Target     string               `json:"target"`
+	Workspace  string               `json:"workspace"`
+	Result     ReconciliationResult `json:"result"`
 }
 type deploymentAgenticExecutor interface {
 	Run(context.Context, DeploymentPlan, CICDAgenticRunRequest) (CICDAgenticRun, error)
@@ -34,7 +32,7 @@ type agenticDeploymentRunner struct {
 	sourceDirectory string
 	sessionID       string
 	pushWorkspace   func(Server, string, string) error
-	ask             func(string) (string, error)
+	ask             func(string) (ReconciliationResult, error)
 }
 
 type cicdSetFlags map[string]string
@@ -60,13 +58,11 @@ func (f cicdSetFlags) Set(value string) error {
 }
 
 type CICDCommand struct {
-	Command           string
-	File              string
-	Inputs            map[string]string
-	DryRun            bool
-	AllowMutate       bool
-	MaxIterations     int
-	MaxNoProgressRuns int
+	Command     string
+	File        string
+	Inputs      map[string]string
+	DryRun      bool
+	AllowMutate bool
 }
 
 func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRunnerFactory) error {
@@ -86,8 +82,6 @@ func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRun
 	flags.Var(sets, "set", "Template parameter override in key=value form")
 	flags.BoolVar(&request.DryRun, "dry-run", false, "Observe and validate without mutation")
 	flags.BoolVar(&request.AllowMutate, "allow-mutate", false, "Approve a mutating deployment")
-	flags.IntVar(&request.MaxIterations, "max-iterations", 12, "Maximum agent attempts")
-	flags.IntVar(&request.MaxNoProgressRuns, "max-no-progress", 3, "Maximum unchanged agent attempts")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -127,10 +121,8 @@ func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRun
 		defer cleanup()
 	}
 	run, runErr := runner.Run(ctx, plan, CICDAgenticRunRequest{
-		DryRun:        request.DryRun,
-		AllowMutate:   request.AllowMutate,
-		MaxIterations: request.MaxIterations,
-		MaxNoProgress: request.MaxNoProgressRuns,
+		DryRun:      request.DryRun,
+		AllowMutate: request.AllowMutate,
 	})
 	if writeErr := writeCICDJSON(run); writeErr != nil {
 		return writeErr
@@ -152,8 +144,13 @@ func newAgenticDeploymentRunner(server Server, sourceDirectory, sessionID string
 		pushWorkspace: func(target Server, source, session string) error {
 			return Push(target, source, "", false, nil, session)
 		},
-		ask: func(instruction string) (string, error) {
-			return client.CallAndCapture("doops_agent_prompt", map[string]interface{}{"instruction": instruction})
+		ask: func(instruction string) (ReconciliationResult, error) {
+			var result ReconciliationResult
+			err := client.CallStructured("doops_agent_prompt", map[string]interface{}{
+				"instruction":     instruction,
+				"response_format": "json",
+			}, &result)
+			return result, err
 		},
 	}, nil
 }
@@ -173,15 +170,23 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	if err != nil {
 		return CICDAgenticRun{}, err
 	}
-	outcome, err := r.ask(instruction)
+	result, err := r.ask(instruction)
 	if err != nil {
 		return CICDAgenticRun{}, fmt.Errorf("ask deployment agent: %w", err)
 	}
-	outcome = strings.TrimSpace(outcome)
-	if outcome == "" {
-		return CICDAgenticRun{}, fmt.Errorf("deployment agent returned no outcome")
+	run := CICDAgenticRun{
+		PlanDigest: plan.Digest,
+		Target:     plan.Spec.Target.ExecutionTarget,
+		Workspace:  "/root/ws/" + r.sessionID,
+		Result:     result,
 	}
-	return CICDAgenticRun{PlanDigest: plan.Digest, Target: plan.Spec.Target.ExecutionTarget, Workspace: "/root/ws/" + r.sessionID, Outcome: outcome}, nil
+	if err := validateReconciliationResult(plan, result); err != nil {
+		return run, err
+	}
+	if result.Status != ReconciliationConverged {
+		return run, fmt.Errorf("deployment did not converge: %s", result.Status)
+	}
+	return run, nil
 }
 
 func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticRunRequest) (string, error) {
@@ -190,12 +195,14 @@ func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticR
 		return "", fmt.Errorf("encode DeploymentPlan for Ask: %w", err)
 	}
 	return fmt.Sprintf(
-		"Act as the deployment owner for this DeploymentPlan. The synchronized workspace is /root/ws/%s. "+
-			"Treat the resolved target profile and artifact contract as authoritative. Inspect the workspace and actual target, then use your available tools to reach the declared desired state. "+
-			"Validate every requiredEvidence item before reporting success. If the goal cannot be reached, preserve the failure evidence, restore the last known good revision, and explain the blocking fact. "+
-			"Do not generate deployment scripts, replay a stage list, or infer another target. Dry run: %t. Mutation is authorized: %t. "+
-			"Bounded reconciliation guidance: stop after %d unchanged attempts or %d total attempts. Return the final status and concrete evidence observed.\nDeploymentPlan:\n%s",
-		request.SessionID, request.DryRun, request.AllowMutate, request.MaxNoProgress, request.MaxIterations, string(encodedPlan),
+		"You own reconciliation for this DeploymentPlan. The synchronized workspace is /root/ws/%s. "+
+			"Treat the resolved environment profile, desired state, acceptance criteria, and policy in the declaration as authoritative. "+
+			"Use your available tools to inspect the workspace and actual target, then reconcile the declared desired state until it converges or the declared policy requires Blocked or Failed. "+
+			"Never infer a different target or replace the declaration with a script, stage list, command list, or textual success claim. "+
+			"Dry run: %t. Mutation is authorized: %t. "+
+			"Return exactly one JSON object with apiVersion, kind=ReconciliationResult, planDigest, status, attempts, noProgressAttempts, evidence, and failureEvidence. "+
+			"For converged, include every requiredEvidence item. For blocked or failed, include every requiredFailureEvidence item.\nDeploymentPlan:\n%s",
+		request.SessionID, request.DryRun, request.AllowMutate, string(encodedPlan),
 	), nil
 }
 

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -24,7 +22,6 @@ const (
 	deploymentConvergence   = "until-verified"
 	deploymentFailureMode   = "restore-last-known-good"
 	deploymentConfiguration = "deploy/environments.yaml"
-	deploymentPlanIssuer    = "doops-cicd-compiler"
 )
 
 var (
@@ -83,20 +80,12 @@ type DeploymentParameter struct {
 }
 
 type DeploymentPlan struct {
-	APIVersion  string               `json:"apiVersion"`
-	Kind        string               `json:"kind"`
-	Metadata    DeploymentMetadata   `json:"metadata"`
-	Inputs      map[string]string    `json:"inputs"`
-	Spec        DeploymentPlanSpec   `json:"spec"`
-	Digest      string               `json:"digest"`
-	Attestation *CICDPlanAttestation `json:"attestation,omitempty"`
-}
-
-type CICDPlanAttestation struct {
-	Algorithm  string `json:"algorithm"`
-	Issuer     string `json:"issuer"`
-	PlanDigest string `json:"planDigest"`
-	Signature  string `json:"signature"`
+	APIVersion string             `json:"apiVersion"`
+	Kind       string             `json:"kind"`
+	Metadata   DeploymentMetadata `json:"metadata"`
+	Inputs     map[string]string  `json:"inputs"`
+	Spec       DeploymentPlanSpec `json:"spec"`
+	Digest     string             `json:"digest"`
 }
 
 type DeploymentPlanSpec struct {
@@ -146,9 +135,11 @@ type CICDAcceptance struct {
 }
 
 type CICDDeploymentPolicy struct {
-	Mutation    string `json:"mutation" yaml:"mutation"`
-	Convergence string `json:"convergence" yaml:"convergence"`
-	FailureMode string `json:"failureMode" yaml:"failureMode"`
+	Mutation      string `json:"mutation" yaml:"mutation"`
+	Convergence   string `json:"convergence" yaml:"convergence"`
+	FailureMode   string `json:"failureMode" yaml:"failureMode"`
+	MaxAttempts   int    `json:"maxAttempts" yaml:"maxAttempts"`
+	MaxNoProgress int    `json:"maxNoProgress" yaml:"maxNoProgress"`
 }
 
 type CICDEnvironmentRegistry struct {
@@ -404,6 +395,12 @@ func validateDeploymentPlanSpec(spec DeploymentPlanSpec, allowTemplates bool) er
 	if spec.Policy.FailureMode != deploymentFailureMode {
 		return fmt.Errorf("spec.plan.policy.failureMode must be %q", deploymentFailureMode)
 	}
+	if spec.Policy.MaxAttempts <= 0 {
+		return fmt.Errorf("spec.plan.policy.maxAttempts must be positive")
+	}
+	if spec.Policy.MaxNoProgress <= 0 {
+		return fmt.Errorf("spec.plan.policy.maxNoProgress must be positive")
+	}
 	return nil
 }
 
@@ -601,7 +598,6 @@ func digestDeploymentValue(value interface{}) (string, error) {
 
 func digestDeploymentPlan(plan DeploymentPlan) (string, error) {
 	plan.Digest = ""
-	plan.Attestation = nil
 	return digestDeploymentValue(plan)
 }
 
@@ -682,48 +678,6 @@ func validateCICDServerBinding(server Server, plan DeploymentPlan) error {
 		return fmt.Errorf("configured target %q resolves to %s/%s, but deployment plan requires %s/%s", server.Name, cluster, instance, profile.Cluster, profile.Instance)
 	}
 	return nil
-}
-
-func attestDeploymentPlanFromEnvironment(plan *DeploymentPlan) error {
-	raw := strings.TrimSpace(os.Getenv("DOOPS_CICD_PLAN_SIGNING_KEY"))
-	if raw == "" {
-		return fmt.Errorf("DOOPS_CICD_PLAN_SIGNING_KEY is required for cicd run")
-	}
-	privateKey, err := decodeCICDEd25519PrivateKey(raw)
-	if err != nil {
-		return err
-	}
-	return attestDeploymentPlan(plan, privateKey)
-}
-
-func attestDeploymentPlan(plan *DeploymentPlan, privateKey ed25519.PrivateKey) error {
-	if plan == nil {
-		return fmt.Errorf("deployment plan is required")
-	}
-	if err := validateDeploymentPlan(*plan); err != nil {
-		return err
-	}
-	if len(privateKey) != ed25519.PrivateKeySize {
-		return fmt.Errorf("CI/CD plan signing key must be an Ed25519 private key")
-	}
-	plan.Attestation = &CICDPlanAttestation{
-		Algorithm:  "ed25519",
-		Issuer:     deploymentPlanIssuer,
-		PlanDigest: plan.Digest,
-		Signature:  base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(plan.Digest))),
-	}
-	return nil
-}
-
-func decodeCICDEd25519PrivateKey(raw string) (ed25519.PrivateKey, error) {
-	value, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		return nil, fmt.Errorf("decode DOOPS_CICD_PLAN_SIGNING_KEY: %w", err)
-	}
-	if len(value) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("DOOPS_CICD_PLAN_SIGNING_KEY must decode to an Ed25519 private key")
-	}
-	return ed25519.PrivateKey(value), nil
 }
 
 func findForbiddenCICDDeclarationField(node *yaml.Node) (string, bool) {

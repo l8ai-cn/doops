@@ -677,8 +677,16 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_agent_prompt":
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
+		if args.ResponseFormat != "" && args.ResponseFormat != "json" {
+			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
+			return
+		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
+			if args.ResponseFormat != "" {
+				writeJSON(buildErrorResponse(reqID, -32602, "response_format is only supported for agent prompts"))
+				return
+			}
 			result, err := gw.handleAgentMetadataWS(ctx, sessionID)
 			if err != nil {
 				writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
@@ -687,6 +695,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			return
 		case "history":
+			if args.ResponseFormat != "" {
+				writeJSON(buildErrorResponse(reqID, -32602, "response_format is only supported for agent prompts"))
+				return
+			}
 			result, err := gw.handleAgentHistoryWS(ctx, sessionID)
 			if err != nil {
 				writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
@@ -695,7 +707,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			return
 		}
-		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON)
+		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, args.ResponseFormat, pushProgress, writeJSON)
 
 	case "doops_git_clone":
 		result, err := handleGitClone(argBytes)
@@ -767,7 +779,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
-func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, pushProgress notificationSender, writeJSON func(v interface{})) {
+func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: %s [Model: %s]", instr, model)
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
@@ -877,9 +889,25 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseCtx, sseCancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer sseCancel()
 
+	var terminalMessage string
+	var collector doagentSSECollector
+	if responseFormat == "json" {
+		collector = func(update map[string]interface{}) (bool, bool, error) {
+			if updateType, _ := update["sessionUpdate"].(string); updateType != "agent_message" {
+				return false, false, nil
+			}
+			text, err := doagentAgentMessageText(update["content"])
+			if err != nil {
+				return false, false, err
+			}
+			terminalMessage = text
+			return false, false, nil
+		}
+	}
+
 	sseDone := make(chan error, 1)
 	go func() {
-		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, nil)
+		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, collector)
 	}()
 
 	// 等待 SSE 连接建立（本地连接 <10ms，200ms 留足余量）
@@ -910,6 +938,15 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	if ctx.Err() != nil {
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		return
+	}
+	if responseFormat == "json" {
+		structuredContent, err := decodeDoagentJSONObject(terminalMessage)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("doagent terminal response must be one JSON object: %v", err)))
+			return
+		}
+		writeJSON(buildStructuredSuccessResponse(reqID, terminalMessage, structuredContent))
 		return
 	}
 
@@ -1356,6 +1393,58 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 }
 
 type doagentSSECollector func(update map[string]interface{}) (handled bool, completed bool, err error)
+
+func doagentAgentMessageText(content interface{}) (string, error) {
+	switch value := content.(type) {
+	case map[string]interface{}:
+		text, _ := value["text"].(string)
+		if text == "" {
+			return "", fmt.Errorf("agent_message has no text content")
+		}
+		return text, nil
+	case []interface{}:
+		var text strings.Builder
+		for _, item := range value {
+			message, _ := item.(map[string]interface{})
+			inner, _ := message["content"].(map[string]interface{})
+			part, _ := inner["text"].(string)
+			if part == "" {
+				return "", fmt.Errorf("agent_message has non-text content")
+			}
+			text.WriteString(part)
+		}
+		if text.Len() == 0 {
+			return "", fmt.Errorf("agent_message has no text content")
+		}
+		return text.String(), nil
+	case string:
+		if value == "" {
+			return "", fmt.Errorf("agent_message has no text content")
+		}
+		return value, nil
+	default:
+		return "", fmt.Errorf("agent_message has unsupported content")
+	}
+}
+
+func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	var object map[string]interface{}
+	if err := decoder.Decode(&object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("expected JSON object")
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("expected exactly one JSON object")
+		}
+		return nil, err
+	}
+	return object, nil
+}
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
 // 当收到 agent_message（完成）或 error（失败）事件时返回。

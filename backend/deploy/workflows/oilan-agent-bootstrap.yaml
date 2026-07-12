@@ -51,3 +51,5 @@ spec:
       mutation: require-explicit-approval
       convergence: until-verified
       failureMode: restore-last-known-good
+      maxAttempts: 3
+      maxNoProgress: 1
