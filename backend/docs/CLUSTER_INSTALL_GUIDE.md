@@ -19,6 +19,9 @@
   否则会出现“`pull` 成功但 `run` 失败”的 overlay/FIFO/name-store 问题。
 - **升级原则**: 镜像升级应替换容器内 `/app/doops-agent`，不要再把宿主二进制
   bind mount 到 `/app/doops-agent`。宿主二进制覆盖镜像会让换镜像失去意义。
+- **镜像仓库认证**: 必须在 Agent 所在 namespace 创建 `doops-registry-auth` Secret，
+  其 `config.json` 是标准 Docker 配置，可同时包含所有需构建和提升的 registry。
+  不得在 Deployment 中设置 `REGISTRY_URL`、`REGISTRY_USER` 或 `REGISTRY_PASS`。
 
 > [!NOTE]
 > `doops-agent` 启动时会自动检测容器引擎 (nerdctl > docker > podman) 供运行时巡检使用；镜像构建则统一走内置 BuildKit，不依赖宿主机 `nerdctl build`。
@@ -42,6 +45,8 @@ kubectl -n ai apply -f /path/to/doagent-config.yaml
 ```bash
 # 推荐创建命名空间并部署
 kubectl create namespace doops-system
+kubectl -n doops-system create secret generic doops-registry-auth \
+  --from-file=config.json="$DOCKER_CONFIG_JSON"
 kubectl apply -f agent/agent.yaml -n doops-system
 ```
 
