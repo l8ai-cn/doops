@@ -157,20 +157,21 @@ type CICDEnvironmentRegistry struct {
 }
 
 type CICDEnvironmentProfile struct {
-	DisplayName    string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Target         string            `json:"target" yaml:"target"`
-	Cluster        string            `json:"cluster" yaml:"cluster"`
-	Instance       string            `json:"instance" yaml:"instance"`
-	Namespace      string            `json:"namespace" yaml:"namespace"`
-	Release        string            `json:"release" yaml:"release"`
-	Registry       string            `json:"registry" yaml:"registry"`
-	Chart          string            `json:"chart" yaml:"chart"`
-	Values         string            `json:"values" yaml:"values"`
-	RuntimeFiles   string            `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
-	DeploymentMode string            `json:"deploymentMode" yaml:"deploymentMode"`
-	PublicHosts    []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
-	HealthChecks   CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
-	Authz          map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
+	DisplayName        string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Target             string            `json:"target" yaml:"target"`
+	Cluster            string            `json:"cluster" yaml:"cluster"`
+	Instance           string            `json:"instance" yaml:"instance"`
+	Namespace          string            `json:"namespace" yaml:"namespace"`
+	Release            string            `json:"release" yaml:"release"`
+	Registry           string            `json:"registry" yaml:"registry"`
+	Chart              string            `json:"chart" yaml:"chart"`
+	Values             string            `json:"values" yaml:"values"`
+	RuntimeFiles       string            `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
+	DeploymentMode     string            `json:"deploymentMode" yaml:"deploymentMode"`
+	WorkloadNamespaces map[string]string `json:"workloadNamespaces,omitempty" yaml:"workloadNamespaces,omitempty"`
+	PublicHosts        []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
+	HealthChecks       CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
+	Authz              map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
 }
 
 type CICDArtifactContract struct {
@@ -637,6 +638,11 @@ func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile)
 		}
 	}
 	if profile.DeploymentMode == "application" {
+		for service, namespace := range profile.WorkloadNamespaces {
+			if strings.TrimSpace(service) == "" || strings.TrimSpace(namespace) == "" {
+				return fmt.Errorf("application environment %q workload namespaces must use non-empty service and namespace names", name)
+			}
+		}
 		if len(profile.HealthChecks.Workloads) == 0 {
 			return fmt.Errorf("application environment %q workload health checks are required", name)
 		}

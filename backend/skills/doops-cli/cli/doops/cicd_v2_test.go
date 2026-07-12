@@ -164,6 +164,8 @@ environments:
     values: deploy/environments/oilan/chart/values.yaml
     runtimeFiles: deploy/environments/oilan/chart/files
     deploymentMode: application
+    workloadNamespaces:
+      zhiyong-exam-api: oilan
     healthChecks:
       public:
         - id: frontend-health
@@ -235,6 +237,18 @@ spec:
 	}
 	if plan.Spec.Target.ExecutionTarget != "gw-edu-coder" {
 		t.Fatalf("environment target mismatch: %#v", plan.Spec.Target)
+	}
+	encoded, err := json.Marshal(plan.Spec.Target.Profile)
+	if err != nil {
+		t.Fatalf("encode resolved environment profile: %v", err)
+	}
+	var profile map[string]interface{}
+	if err := json.Unmarshal(encoded, &profile); err != nil {
+		t.Fatalf("decode resolved environment profile: %v", err)
+	}
+	workloadNamespaces, _ := profile["workloadNamespaces"].(map[string]interface{})
+	if workloadNamespaces["zhiyong-exam-api"] != "oilan" {
+		t.Fatalf("plan must retain workload namespaces from the registry, got %#v", profile)
 	}
 }
 
