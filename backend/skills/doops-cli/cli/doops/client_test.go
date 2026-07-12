@@ -125,6 +125,14 @@ func TestToolResultErrorTextIsDetectedBeforeCapture(t *testing.T) {
 	}
 }
 
+func TestCaptureToolNotificationTextPreservesJSONPayload(t *testing.T) {
+	payload := `{"releaseId":"beb92de1f8c7c6517dd87b4b34f2dffa061661c0","branch":"main"}`
+	got := strings.TrimSpace(captureToolNotificationText(payload + "\n"))
+	if got != payload {
+		t.Fatalf("captured JSON payload changed:\nwant=%s\n got=%s", payload, got)
+	}
+}
+
 func TestNotificationDispatchRoutesBySessionID(t *testing.T) {
 	client := NewMCPClient(Server{Name: "local"}, NewSessionStore(), "session-a", false)
 	chA := client.registerPending(1)
