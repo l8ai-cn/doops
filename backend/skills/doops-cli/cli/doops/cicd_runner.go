@@ -58,12 +58,20 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 	}
 	plan.ExecutionTarget = strings.TrimSpace(opts.ExecutionTarget)
 	sourceSynced := false
+	dryRunBlockedByMutation := false
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}
+		if opts.DryRun && dryRunBlockedByMutation {
+			step.Status = "planned"
+			step.Message = "dry-run planned stage after skipped mutating stage"
+			result.Steps = append(result.Steps, step)
+			continue
+		}
 		if stage.Mutates && opts.DryRun {
 			step.Status = "skipped"
 			step.Message = "dry-run skipped mutating stage"
 			result.Steps = append(result.Steps, step)
+			dryRunBlockedByMutation = true
 			continue
 		}
 		if stage.Mutates && !isCICDAgentDrivenStage(stage) && !opts.AllowMutate {

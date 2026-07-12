@@ -705,6 +705,58 @@ spec:
 	}
 }
 
+func TestCICDRunnerPlansStagesAfterSkippedMutationOnDryRun(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: dry-run-dependency
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: validate
+      uses: agent.task
+      with:
+        task: helm-render
+    - id: deploy
+      uses: agent.task
+      mutates: true
+      confirm: true
+      with:
+        task: helm-upgrade
+    - id: verify-runtime
+      uses: agent.task
+      with:
+        task: verify-runtime-digests
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	caller := &fakeK8SCaller{}
+	result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		DryRun:   true,
+		Executor: caller,
+		Session:  "dry-run-dependency",
+	})
+	if err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if len(result.Steps) != 3 {
+		t.Fatalf("expected three steps, got %#v", result.Steps)
+	}
+	if result.Steps[0].Status != "success" || result.Steps[1].Status != "skipped" || result.Steps[2].Status != "planned" {
+		t.Fatalf("unexpected dry-run step statuses: %#v", result.Steps)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != "doops_agent_prompt" {
+		t.Fatalf("post-mutation stage must not dispatch during dry-run, got %#v", caller.calls)
+	}
+}
+
 // Without an executor, agent-native stages are recorded as planned (no gate,
 // no failure) — offline lint/plan behavior.
 func TestCICDRunnerPlansAgentStageWithoutExecutor(t *testing.T) {
