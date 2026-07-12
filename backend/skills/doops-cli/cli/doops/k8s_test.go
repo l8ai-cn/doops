@@ -288,8 +288,5 @@ func (f *fakeK8SCaller) CallAndCapture(toolName string, arguments map[string]int
 	if err := f.Call(toolName, arguments); err != nil {
 		return "", err
 	}
-	if toolName == "doops_agent_prompt" {
-		return cicdAgentStatusPass + "\n", nil
-	}
 	return "verified", nil
 }

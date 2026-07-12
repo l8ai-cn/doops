@@ -20,7 +20,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
-专为 AI Agent 设计的声明式运维工具。遵循 DevOps 原则：无缝推流工作区、意图智能探索部署，并将成果固化在本地。
+专为 AI Agent 设计的声明式运维工具。遵循 GitOps 原则：声明目标状态，由执行器持续协调至可验证结果。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
 
@@ -32,7 +32,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   list        列出所有已知服务器 (查看名称、IP、用途)
   targets     查看 gateway 当前在线的 cluster/instance
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
-  ask         发送自然语言指令 (由边缘端智能体自行分析底层环境、重试排障，并要求留下固化脚本)
+  ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
@@ -56,30 +56,17 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
   -help       显示此帮助信息
 
-标准 DevOps 闭环示例 (探索式部署与固化):
+声明式 CI/CD 闭环示例:
   # 标准入口只有 Gateway 模式：doops add --name prod --gateway https://gw.example.com --cluster prod --instance master-1 --token <gateway-user-token>
   # 查看 gateway 在线目标：doops targets --target prod
 
-  # 1. 增量输送代码与物料入远端沙盒
-  doops -session test_ops push --target api-node --src .
-  
-  # 2. 意图驱动：让远端 Agent 摸索适配环境，并要求留下固化版 deploy.sh
-  doops -session test_ops ask --target api-node --msg "帮我把这里的代码用 BuildKit 打包推送，重启 deployment/app-gw。遇到报错自己解决。成功后留下 deploy.sh 供日后使用。"
-  
-  # 3. 小文本查看：将远端验证跑通的部署脚本查看/回传本地库并 Commit 固化 (Single Source of Truth)
-  doops -session test_ops read --target api-node --path /root/ws/test_ops/deploy.sh > ./deploy.sh
-  
-  # 4. 闭环验证：未来的日常部署，只需无脑触发确定流水线
-  doops -session test_ops exec --target api-node --cmd "cd /root/ws/test_ops && ./deploy.sh"
+  # 1. 模板是版本化的期望状态；模板输入形成不可变 DeploymentPlan。
+  doops cicd lint -f deploy/workflows/test.yaml
+  doops cicd plan -f deploy/workflows/test.yaml --set releaseId=<immutable-release> --set reason=smoke
 
-  # K8S 受限运维：先生成版本化步骤文件，再显式确认执行
-  doops k8s plan deploy-image deploy/app --target prod --namespace oilan-system --container app --image registry/app:v2 --out ops/k8s/changes/app-v2.yaml
-  doops -session prod_rollout k8s apply-plan ops/k8s/changes/app-v2.yaml --target prod --confirm
-
-  # CI/CD workflow：先 lint/plan/dry-run，真实变更必须显式 --allow-mutate
-  doops cicd lint -f ops/cicd/zhiyong.deploy.yaml
-  doops cicd plan -f ops/cicd/zhiyong.deploy.yaml --set workspace=/tmp/doops-cicd-zhiyong --set target=test --set reason=smoke
-  doops cicd run -f ops/cicd/zhiyong.deploy.yaml --dry-run --set workspace=/tmp/doops-cicd-zhiyong --set target=test --set reason=smoke
+  # 2. dry-run 只计算协调目标；真实变更必须显式授权。
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set releaseId=<immutable-release> --set reason=smoke
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set releaseId=<immutable-release> --set reason=release
 `)
 	}
 	flag.Parse()
@@ -336,40 +323,29 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
 	case "cicd":
-		// Factory that builds a live gateway executor for real (mutating) runs.
-		// It mirrors the wiring used by the `k8s` and `exec` commands so
-		// agent-native stages dispatch over the same authenticated WebSocket.
-		newExecutor := func(target string) (cicdExecutor, func(), error) {
+		// CICD submits one immutable DeploymentPlan to the target controller.
+		// The controller reconciles the declared state; this CLI does not
+		// execute workflow steps or build command strings.
+		newReconciler := func(plan DeploymentPlan) (deploymentReconciler, func(), error) {
 			requireConfig(configErr)
-			server := findServer(servers, target)
+			server := findServer(servers, plan.Spec.Target.ExecutionTarget)
 			if server == nil {
-				return nil, nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", target)
+				return nil, nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", plan.Spec.Target.ExecutionTarget)
+			}
+			if err := validateCICDServerBinding(*server, plan); err != nil {
+				return nil, nil, err
 			}
 			if *sessionName == "" {
-				return nil, nil, fmt.Errorf("-session is required for `cicd run` (isolates the agent-native executor workspace)")
+				return nil, nil, fmt.Errorf("-session is required for `cicd run` (isolates the reconciliation session)")
 			}
-			if strings.TrimSpace(server.Gateway) == "" && strings.TrimSpace(server.IP) == "" {
-				return nil, nil, fmt.Errorf("target '%s' has neither a gateway nor an SSH IP configured", target)
+			if strings.TrimSpace(server.Gateway) == "" {
+				return nil, nil, fmt.Errorf("target '%s' must use a configured DoOps gateway for target-bound reconciliation", server.Name)
 			}
 			client := NewMCPClient(*server, ss, *sessionName, *verbose)
 			client.Token = ResolveToken(server.Name, server.Token)
 			return client, func() { client.Close() }, nil
 		}
-		newSourceSync := func(target, session string) (func(src string) error, error) {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil {
-				return nil, fmt.Errorf("target '%s' not found; configure it with `doops add`", target)
-			}
-			if strings.TrimSpace(session) == "" {
-				return nil, fmt.Errorf("-session is required to sync source into the remote agent workspace")
-			}
-			srv := *server
-			return func(src string) error {
-				return Push(srv, src, "", false, cicdSourceExcludes, session)
-			}, nil
-		}
-		if err := runCICDCommandWithSync(context.Background(), cmdArgs, newExecutor, newSourceSync, *sessionName); err != nil {
+		if err := runCICDCommand(context.Background(), cmdArgs, newReconciler); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -535,25 +511,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			cmdLog = fmt.Sprintf("%s %s", toolName, path)
 		}
 		RecordHistory(server.Name, *sessionName, cmdLog)
-
-		// [P2 自动固化 Post-Hook] exec/ask 成功后, 自动检查远端是否生成了 deploy.sh 并回传本地
-		if (command == "exec" || command == "ask") && *sessionName != "" {
-			remoteDeploy := fmt.Sprintf("/root/ws/%s/deploy.sh", *sessionName)
-			pullClient := NewMCPClient(*server, ss, *sessionName, false)
-			pullClient.Token = token
-
-			readArgs := map[string]interface{}{"path": remoteDeploy}
-			// 使用静默读取：如果文件不存在则跳过
-			content, readErr := pullClient.CallAndCapture("doops_file_read", readArgs)
-			pullClient.Close()
-
-			if readErr == nil && len(content) > 10 && strings.Contains(content, "#!/bin/bash") {
-				localPath := "./deploy.sh"
-				if writeErr := os.WriteFile(localPath, []byte(content), 0755); writeErr == nil {
-					fmt.Printf("\n\033[92m✅ [自动固化] deploy.sh 已从远端回传至 %s\033[0m\n", localPath)
-				}
-			}
-		}
 
 	case "bash":
 		var target string

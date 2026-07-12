@@ -10,11 +10,13 @@ import (
 )
 
 type CICDCommand struct {
-	Command     string
-	File        string
-	Inputs      map[string]string
-	DryRun      bool
-	AllowMutate bool
+	Command           string
+	File              string
+	Inputs            map[string]string
+	DryRun            bool
+	AllowMutate       bool
+	MaxIterations     int
+	MaxNoProgressRuns int
 }
 
 type cicdSetFlags map[string]string
@@ -43,144 +45,92 @@ func buildCICDCommand(args []string) (CICDCommand, error) {
 	if len(args) == 0 {
 		return CICDCommand{}, fmt.Errorf("cicd subcommand is required")
 	}
-	cmd := strings.TrimSpace(args[0])
-	switch cmd {
+	command := strings.TrimSpace(args[0])
+	switch command {
 	case "lint", "plan", "run":
 	default:
-		return CICDCommand{}, fmt.Errorf("unsupported cicd command %q", cmd)
+		return CICDCommand{}, fmt.Errorf("unsupported cicd command %q", command)
 	}
-	req := CICDCommand{
-		Command: cmd,
+
+	request := CICDCommand{
+		Command: command,
 		Inputs:  map[string]string{},
 	}
-	sets := cicdSetFlags(req.Inputs)
-	fs := flag.NewFlagSet("cicd "+cmd, flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.StringVar(&req.File, "f", "", "Workflow YAML file")
-	fs.StringVar(&req.File, "file", "", "Workflow YAML file")
-	fs.Var(sets, "set", "Workflow input override in key=value form")
-	fs.BoolVar(&req.DryRun, "dry-run", false, "Skip mutating stages")
-	fs.BoolVar(&req.AllowMutate, "allow-mutate", false, "Allow confirmed mutating stages")
-	if err := fs.Parse(args[1:]); err != nil {
+	sets := cicdSetFlags(request.Inputs)
+	flags := flag.NewFlagSet("cicd "+command, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	flags.StringVar(&request.File, "f", "", "DeploymentTemplate YAML file")
+	flags.StringVar(&request.File, "file", "", "DeploymentTemplate YAML file")
+	flags.Var(sets, "set", "Template parameter override in key=value form")
+	flags.BoolVar(&request.DryRun, "dry-run", false, "Observe and reconcile without mutation")
+	flags.BoolVar(&request.AllowMutate, "allow-mutate", false, "Approve a mutating reconciliation")
+	flags.IntVar(&request.MaxIterations, "max-iterations", 12, "Maximum reconciliation iterations")
+	flags.IntVar(&request.MaxNoProgressRuns, "max-no-progress", 3, "Stop after this many unchanged reconciliation iterations")
+	if err := flags.Parse(args[1:]); err != nil {
 		return CICDCommand{}, err
 	}
-	if strings.TrimSpace(req.File) == "" {
-		return CICDCommand{}, fmt.Errorf("-f workflow file is required")
+	if strings.TrimSpace(request.File) == "" {
+		return CICDCommand{}, fmt.Errorf("-f deployment template file is required")
 	}
-	return req, nil
+	return request, nil
 }
 
-// cicdExecutorFactory builds a live gateway executor for the resolved target.
-// It returns the executor, a cleanup function, and an error. main.go supplies
-// the real (gateway-backed) factory; tests may pass nil to stay offline.
-type cicdExecutorFactory func(target string) (cicdExecutor, func(), error)
+type cicdReconcilerFactory func(plan DeploymentPlan) (deploymentReconciler, func(), error)
 
-// cicdSourceSyncFactory builds a source syncer that pushes the local source
-// tree into the remote session workspace before agent-native stages run.
-type cicdSourceSyncFactory func(target, session string) (func(src string) error, error)
-
-func runCICDCommand(ctx context.Context, args []string, newExecutor cicdExecutorFactory) error {
-	return runCICDCommandWithSync(ctx, args, newExecutor, nil, "")
-}
-
-func runCICDCommandWithSync(ctx context.Context, args []string, newExecutor cicdExecutorFactory, newSourceSync cicdSourceSyncFactory, session string) error {
-	req, err := buildCICDCommand(args)
+func runCICDCommand(ctx context.Context, args []string, newReconciler cicdReconcilerFactory) error {
+	request, err := buildCICDCommand(args)
 	if err != nil {
 		return err
 	}
-	workflow, err := loadCICDWorkflow(req.File)
+	template, err := loadDeploymentTemplate(request.File)
 	if err != nil {
 		return err
 	}
-	switch req.Command {
+
+	switch request.Command {
 	case "lint":
-		fmt.Printf("workflow ok: %s\n", workflow.Metadata.Name)
+		fmt.Printf("deployment template ok: %s\n", template.Metadata.Name)
+		return nil
 	case "plan":
-		plan, err := buildCICDPlan(workflow, req.Inputs)
+		plan, err := buildDeploymentPlan(template, request.Inputs)
 		if err != nil {
 			return err
 		}
 		return writeCICDJSON(plan)
 	case "run":
-		opts := CICDRunOptions{
-			Inputs:      req.Inputs,
-			DryRun:      req.DryRun,
-			AllowMutate: req.AllowMutate,
-			Session:     strings.TrimSpace(session),
+		if !request.DryRun && !request.AllowMutate {
+			return fmt.Errorf("mutating reconciliation requires --allow-mutate")
 		}
-		// CICD is agent-driven: hand agent-native stages to the doagent. Build a
-		// live executor whenever one is available; the agent decides how to
-		// honor dry-run/mutation. If no executor can be built (e.g. no -session)
-		// a dry-run still works offline (stages are recorded as planned), while
-		// an apply run surfaces the executor error instead of silently no-op'ing.
-		if newExecutor != nil {
-			plan, err := buildCICDPlan(workflow, req.Inputs)
-			if err != nil {
-				return err
-			}
-			target, err := resolveCICDExecutionTarget(plan, workflow.Spec.Inputs)
-			if err != nil {
-				return err
-			}
-			opts.ExecutionTarget = target
-			executor, cleanup, execErr := newExecutor(target)
-			if execErr != nil {
-				if !req.DryRun {
-					return execErr
-				}
-			} else {
-				if cleanup != nil {
-					defer cleanup()
-				}
-				opts.Executor = executor
-				if newSourceSync != nil && strings.TrimSpace(session) != "" {
-					syncer, syncErr := newSourceSync(target, session)
-					if syncErr != nil {
-						if !req.DryRun {
-							return syncErr
-						}
-					} else {
-						opts.SourceSync = syncer
-					}
-				}
-			}
+		if newReconciler == nil {
+			return fmt.Errorf("deployment reconciler factory is required")
 		}
-		result, err := runCICDWorkflow(ctx, workflow, opts)
-		if writeErr := writeCICDJSON(result); writeErr != nil {
+		plan, err := buildDeploymentPlan(template, request.Inputs)
+		if err != nil {
+			return err
+		}
+		reconciler, cleanup, err := newReconciler(plan)
+		if err != nil {
+			return err
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
+		run, reconcileErr := reconcileDeploymentPlan(ctx, plan, reconciler, DeploymentReconcileOptions{
+			DryRun:            request.DryRun,
+			MaxIterations:     request.MaxIterations,
+			MaxNoProgressRuns: request.MaxNoProgressRuns,
+		})
+		if writeErr := writeCICDJSON(run); writeErr != nil {
 			return writeErr
 		}
-		return err
+		return reconcileErr
 	default:
-		return fmt.Errorf("unsupported cicd command %q", req.Command)
+		return fmt.Errorf("unsupported cicd command %q", request.Command)
 	}
-	return nil
-}
-
-func resolveCICDExecutionTarget(plan CICDPlan, declaredInputs map[string]CICDInput) (string, error) {
-	if _, declaresTarget := declaredInputs["target"]; declaresTarget {
-		if target := strings.TrimSpace(plan.Inputs["target"]); target != "" {
-			return target, nil
-		}
-		return "", fmt.Errorf("input target is required to execute this workflow")
-	}
-
-	if environmentName := strings.TrimSpace(plan.Inputs["environment"]); environmentName != "" {
-		for _, environment := range plan.Environments {
-			if environment.Name == environmentName {
-				return environment.Target, nil
-			}
-		}
-		return "", fmt.Errorf("environment %q has no declared deployment target", environmentName)
-	}
-
-	if len(plan.Environments) == 1 {
-		return plan.Environments[0].Target, nil
-	}
-	return "", fmt.Errorf("workflow execution target is ambiguous; declare inputs.environment or exactly one environment")
 }
 
 func writeCICDJSON(value interface{}) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(value)
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }

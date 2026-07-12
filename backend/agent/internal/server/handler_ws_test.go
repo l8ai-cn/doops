@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/api"
 )
 
 func TestAgentWebSocketFileReadWrite(t *testing.T) {
@@ -188,6 +189,8 @@ func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 }
 
 func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
+	prompted := make(chan struct{})
+	receivedPrompt := make(chan string, 1)
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/rpc":
@@ -196,6 +199,14 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				t.Fatalf("decode rpc: %v", err)
 			}
 			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
+					},
+				})
 			case "session/new":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
@@ -203,12 +214,17 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 					"result":  map[string]interface{}{"sessionId": "doagent-kind"},
 				})
 			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				prompt, _ := params["prompt"].(string)
+				receivedPrompt <- prompt
+				close(prompted)
 				w.WriteHeader(http.StatusAccepted)
 			default:
 				t.Fatalf("unexpected rpc method: %v", req["method"])
 			}
 		case "/events":
 			w.Header().Set("Content-Type", "text/event-stream")
+			<-prompted
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}`)
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"done"}}}}`)
@@ -251,6 +267,478 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	if params["data"] != "hello" {
 		t.Fatalf("expected first assistant chunk, got %#v", params["data"])
 	}
+
+	for {
+		var result map[string]interface{}
+		if err := conn.ReadJSON(&result); err != nil {
+			t.Fatalf("read prompt result: %v", err)
+		}
+		if _, ok := result["method"]; ok {
+			continue
+		}
+		toolResult, _ := result["result"].(map[string]interface{})
+		content, _ := toolResult["content"].([]interface{})
+		if len(content) != 1 {
+			t.Fatalf("expected text-only prompt result, got %#v", result)
+		}
+		if _, ok := toolResult["structuredContent"]; ok {
+			t.Fatalf("doops_agent_prompt must not return structured content: %#v", toolResult)
+		}
+		break
+	}
+
+	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
+		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
+	}
+}
+
+func TestAgentInitializeAdvertisesSemanticCICDReconciliation(t *testing.T) {
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+
+	var response map[string]interface{}
+	if err := conn.ReadJSON(&response); err != nil {
+		t.Fatalf("read initialize: %v", err)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	deployment, _ := capabilities["semanticDeployment"].(map[string]interface{})
+	reconcile, _ := deployment["reconcile"].(map[string]interface{})
+	if reconcile["tool"] != "doops_cicd_reconcile" ||
+		reconcile["input"] != "DeploymentPlan" ||
+		reconcile["output"] != "CICDReconcileResult" ||
+		reconcile["contractVersion"] != "doops.sh/v2" {
+		t.Fatalf("semantic deployment capability mismatch: %#v", capabilities)
+	}
+}
+
+func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
+	prompt, err := os.ReadFile(filepath.Join("..", "..", "skills", "system_prompt.md"))
+	if err != nil {
+		t.Fatalf("read system prompt: %v", err)
+	}
+	text := string(prompt)
+	if strings.Contains(text, "deploy.sh") || strings.Contains(text, "build.sh") {
+		t.Fatalf("system prompt must not require generated deployment scripts: %s", text)
+	}
+	if !strings.Contains(text, "DeploymentPlan") || !strings.Contains(text, "CICDReconcileResult") {
+		t.Fatalf("system prompt must describe the semantic CI/CD contract: %s", text)
+	}
+	for _, marker := range []string{
+		"last known good",
+		"post-deploy-log-scan",
+		"requiredFailureEvidence",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("system prompt must enforce deployment recovery evidence %q: %s", marker, text)
+		}
+	}
+}
+
+func TestValidateCICDReportRejectsInvalidStructuredFields(t *testing.T) {
+	plan := cicdPlanFixture()
+	typedPlan := mustCICDReconcilePlan(t, plan)
+	cases := []struct {
+		name   string
+		report map[string]interface{}
+	}{
+		{
+			name: "unknown status",
+			report: map[string]interface{}{
+				"planDigest": typedPlan.Digest,
+				"status":     "PASS",
+				"evidence":   []interface{}{},
+				"violations": []interface{}{},
+			},
+		},
+		{
+			name: "unstructured evidence",
+			report: map[string]interface{}{
+				"planDigest": typedPlan.Digest,
+				"status":     "Reconciling",
+				"evidence":   []interface{}{"ready"},
+				"violations": []interface{}{},
+			},
+		},
+		{
+			name: "unstructured violation",
+			report: map[string]interface{}{
+				"planDigest": typedPlan.Digest,
+				"status":     "Blocked",
+				"evidence":   []interface{}{},
+				"violations": []interface{}{map[string]interface{}{"code": "missing-evidence"}},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := validateCICDReport(tc.report, typedPlan); err == nil {
+				t.Fatalf("expected report validation error for %#v", tc.report)
+			}
+		})
+	}
+}
+
+func TestCICDReconcileReturnsAgentReportAsStructuredContent(t *testing.T) {
+	plan := cicdPlanFixture()
+	report := map[string]interface{}{
+		"planDigest": plan["digest"],
+		"status":     "Converged",
+		"evidence":   []interface{}{map[string]interface{}{"kind": "source-identity", "reference": "git:0123456789abcdef0123456789abcdef01234567"}},
+		"violations": []interface{}{},
+	}
+	prompted := make(chan struct{})
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode rpc: %v", err)
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
+					},
+				})
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "doagent-cicd"},
+				})
+			case "session/prompt":
+				close(prompted)
+				w.WriteHeader(http.StatusAccepted)
+			default:
+				t.Fatalf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			<-prompted
+			data, err := json.Marshal(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"method":  "session/update",
+				"params": map[string]interface{}{
+					"update": map[string]interface{}{
+						"sessionUpdate": "agent_report",
+						"report":        report,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal agent report: %v", err)
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
+		"session_id": "cicd-report",
+		"plan":       plan,
+		"dry_run":    true,
+	})
+	if result["error"] != nil {
+		t.Fatalf("doops_cicd_reconcile returned RPC error: %#v", result)
+	}
+	toolResult, _ := result["result"].(map[string]interface{})
+	content, _ := toolResult["content"].([]interface{})
+	if len(content) == 0 {
+		t.Fatalf("expected human-readable content, got %#v", toolResult)
+	}
+	structured, _ := toolResult["structuredContent"].(map[string]interface{})
+	if structured["planDigest"] != report["planDigest"] || structured["status"] != report["status"] {
+		t.Fatalf("unexpected structured report: %#v", structured)
+	}
+	if _, ok := structured["evidence"].([]interface{}); !ok {
+		t.Fatalf("report evidence was not preserved as an array: %#v", structured)
+	}
+	if _, ok := structured["violations"].([]interface{}); !ok {
+		t.Fatalf("report violations were not preserved as an array: %#v", structured)
+	}
+}
+
+func TestCICDReconcileFailsWhenAgentReportIsMissing(t *testing.T) {
+	reportText := `{"planDigest":"sha256:plan","status":"Converged","evidence":[],"violations":[]}`
+	prompted := make(chan struct{})
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode rpc: %v", err)
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
+					},
+				})
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "doagent-no-report"},
+				})
+			case "session/prompt":
+				close(prompted)
+				w.WriteHeader(http.StatusAccepted)
+			default:
+				t.Fatalf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			<-prompted
+			fmt.Fprintf(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":%q}}}}`+"\n\n", reportText)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
+		"session_id": "cicd-no-report",
+		"plan":       cicdPlanFixture(),
+		"dry_run":    false,
+	})
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true {
+		t.Fatalf("expected missing agent report to be a tool error, got %#v", result)
+	}
+	content, _ := toolResult["content"].([]interface{})
+	if len(content) == 0 {
+		t.Fatalf("expected missing report error text, got %#v", toolResult)
+	}
+	item, _ := content[0].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(item["text"]), "agent_report") {
+		t.Fatalf("expected agent_report error, got %#v", toolResult)
+	}
+}
+
+func TestCICDReconcileRejectsDoagentWithoutStructuredReportCapability(t *testing.T) {
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc" {
+			http.NotFound(w, r)
+			return
+		}
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode rpc: %v", err)
+		}
+		if req["method"] != "initialize" {
+			t.Fatalf("reconciliation must not create a session without the report capability: %v", req["method"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      req["id"],
+			"result":  map[string]interface{}{"capabilities": map[string]interface{}{}},
+		})
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
+		"session_id": "cicd-capability",
+		"plan":       cicdPlanFixture(),
+	})
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true {
+		t.Fatalf("expected capability failure to be a tool error, got %#v", result)
+	}
+	content, _ := toolResult["content"].([]interface{})
+	if len(content) == 0 {
+		t.Fatalf("expected capability error text, got %#v", toolResult)
+	}
+	item, _ := content[0].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(item["text"]), "cicdStructuredReport") {
+		t.Fatalf("expected capability error, got %#v", toolResult)
+	}
+}
+
+func TestCICDReconcileRejectsPlanWithoutResolvedEnvironmentProfile(t *testing.T) {
+	plan := cicdPlanFixture()
+	spec := plan["spec"].(map[string]interface{})
+	target := spec["target"].(map[string]interface{})
+	delete(target, "executionTarget")
+	sealCICDPlanFixture(plan)
+	rawPlan, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal plan: %v", err)
+	}
+	_, err = validateCICDReconcilePlan(api.CICDReconcileParams{
+		SessionID: "missing-profile",
+		Plan:      rawPlan,
+	})
+	if err == nil || !strings.Contains(err.Error(), "environment profile") {
+		t.Fatalf("expected resolved environment profile rejection, got %v", err)
+	}
+}
+
+func TestCICDReconcileRejectsForgedPlanDigest(t *testing.T) {
+	plan := cicdPlanFixture()
+	plan["digest"] = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	rawPlan, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal plan: %v", err)
+	}
+	if _, err := validateCICDReconcilePlan(api.CICDReconcileParams{
+		SessionID: "forged-digest",
+		Plan:      rawPlan,
+	}); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("expected forged digest rejection, got %v", err)
+	}
+}
+
+func cicdPlanFixture() map[string]interface{} {
+	plan := map[string]interface{}{
+		"apiVersion": "doops.sh/v2",
+		"kind":       "DeploymentPlan",
+		"digest":     "",
+		"spec": map[string]interface{}{
+			"release": map[string]interface{}{
+				"source": map[string]interface{}{
+					"repository": "https://example.test/zhiyong.git",
+					"revision":   "0123456789abcdef0123456789abcdef01234567",
+				},
+			},
+			"target": map[string]interface{}{
+				"environment":     "test",
+				"executionTarget": "gw-oilan-node",
+				"profileDigest":   "sha256:profile",
+				"profile": map[string]interface{}{
+					"target":         "gw-oilan-node",
+					"cluster":        "doops-oilan",
+					"instance":       "oilan-node",
+					"namespace":      "test",
+					"release":        "zhiyong",
+					"registry":       "registry.example.test/oilan-system",
+					"chart":          "deploy/environments/test/chart",
+					"values":         "deploy/environments/test/chart/values.yaml",
+					"runtimeFiles":   "deploy/environments/test/chart/files",
+					"deploymentMode": "application",
+					"healthChecks": map[string]interface{}{
+						"public": []interface{}{map[string]interface{}{
+							"id":             "frontend-health",
+							"url":            "https://study.example.test/healthz",
+							"expectedStatus": 200,
+						}},
+						"workloads": []interface{}{map[string]interface{}{
+							"service":          "zhiyong-exam-api",
+							"minReadyReplicas": 1,
+							"requireEndpoints": true,
+						}},
+					},
+					"authz": map[string]interface{}{"appCode": "ZHIYONG"},
+				},
+			},
+			"artifactContract": map[string]interface{}{
+				"sourceRepository":     "https://example.test/zhiyong.git",
+				"sourceBranch":         "main",
+				"services":             []interface{}{"zhiyong-exam-api"},
+				"imageTagPattern":      "^release-[0-9]{8}-[0-9a-f]{12}$",
+				"imageReferenceFormat": "repository@digest",
+				"helmImageBindings":    map[string]interface{}{"zhiyong-exam-api": "examApi"},
+				"manifestRepository":   "registry.example.test/releases",
+				"authz":                map[string]interface{}{"policyScope": []interface{}{"appCode"}},
+			},
+			"desiredState": map[string]interface{}{
+				"application":         "zhiyong",
+				"delivery":            "build-immutable-release",
+				"configurationSource": "deploy/environments.yaml",
+				"authorization":       "reconcile",
+			},
+			"acceptance": map[string]interface{}{
+				"requiredEvidence":        []interface{}{"source-identity"},
+				"requiredFailureEvidence": []interface{}{"rollback-state"},
+			},
+			"policy": map[string]interface{}{
+				"mutation":    "require-explicit-approval",
+				"convergence": "until-verified",
+				"failureMode": "restore-last-known-good",
+			},
+		},
+	}
+	sealCICDPlanFixture(plan)
+	return plan
+}
+
+func sealCICDPlanFixture(plan map[string]interface{}) {
+	spec := plan["spec"].(map[string]interface{})
+	target := spec["target"].(map[string]interface{})
+	profileDigest, err := digestCICDValue(target["profile"])
+	if err != nil {
+		panic(err)
+	}
+	target["profileDigest"] = profileDigest
+	rawPlan, err := json.Marshal(plan)
+	if err != nil {
+		panic(err)
+	}
+	planDigest, err := digestCICDPlanJSON(rawPlan)
+	if err != nil {
+		panic(err)
+	}
+	plan["digest"] = planDigest
+}
+
+func mustCICDReconcilePlan(t *testing.T, plan map[string]interface{}) cicdReconcilePlan {
+	t.Helper()
+	rawPlan, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal plan: %v", err)
+	}
+	parsed, err := validateCICDReconcilePlan(api.CICDReconcileParams{
+		SessionID: "fixture",
+		Plan:      rawPlan,
+	})
+	if err != nil {
+		t.Fatalf("validate plan fixture: %v", err)
+	}
+	return parsed
 }
 
 func TestShellNotificationIncludesRawKind(t *testing.T) {

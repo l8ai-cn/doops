@@ -36,10 +36,11 @@ type MCPClient struct {
 	Token        string
 
 	// --- 持久连接状态 ---
-	mu         sync.Mutex
-	connected  bool
-	conn       *websocket.Conn // WebSocket 长连接
-	reqCounter int64           // 请求 ID 计数器（原子递增）
+	mu           sync.Mutex
+	connected    bool
+	conn         *websocket.Conn // WebSocket 长连接
+	reqCounter   int64           // 请求 ID 计数器（原子递增）
+	capabilities map[string]interface{}
 
 	// --- WS 消息分发 ---
 	// 所有 WS 消息通过 dispatchLoop 读取并按 request ID 分发
@@ -172,6 +173,7 @@ func (c *MCPClient) connect() error {
 			c.conn.Close()
 			return err
 		}
+		c.capabilities = initializeCapabilities(evt)
 	case <-time.After(5 * time.Second):
 		c.conn.Close()
 		return fmt.Errorf("initialize handshake timed out")
@@ -325,6 +327,30 @@ func validateInitializeResponse(initID int64, evt wsEvent) error {
 	}
 	if _, ok := msg["result"].(map[string]interface{}); !ok {
 		return fmt.Errorf("initialize failed: missing result")
+	}
+	return nil
+}
+
+func initializeCapabilities(evt wsEvent) map[string]interface{} {
+	result, _ := evt.Parsed["result"].(map[string]interface{})
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	return capabilities
+}
+
+func (c *MCPClient) requireSemanticDeploymentCapability() error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	deployment, _ := c.capabilities["semanticDeployment"].(map[string]interface{})
+	reconcile, _ := deployment["reconcile"].(map[string]interface{})
+	if reconcile["tool"] != "doops_cicd_reconcile" ||
+		reconcile["input"] != "DeploymentPlan" ||
+		reconcile["output"] != "CICDReconcileResult" ||
+		reconcile["contractVersion"] != deploymentAPIVersion {
+		return fmt.Errorf("target %q does not advertise %s semantic deployment reconciliation", c.Target.Name, deploymentAPIVersion)
 	}
 	return nil
 }
@@ -607,6 +633,83 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 			}
 		case <-timeout.C:
 			return "", fmt.Errorf("tool call timed out after %s", c.callTimeout())
+		}
+	}
+}
+
+// CallStructured invokes an MCP tool whose contract returns structuredContent.
+// Human-readable tool text and progress notifications are intentionally ignored.
+func (c *MCPClient) CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+	if sid := c.SessionStore.Get(c.Target.Name, c.SessionName); sid != "" {
+		arguments["session_id"] = sid
+	} else {
+		arguments["session_id"] = c.SessionName
+	}
+
+	reqID := c.nextReqID()
+	ch := c.registerPending(reqID)
+	defer c.unregisterPending(reqID)
+	sessionID, _ := arguments["session_id"].(string)
+	c.registerPendingSession(sessionID, ch)
+	defer c.unregisterPendingSession(sessionID, ch)
+
+	c.mu.Lock()
+	err := c.conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "tools/call",
+		"id":      reqID,
+		"params": map[string]interface{}{
+			"name":      toolName,
+			"arguments": arguments,
+		},
+	})
+	c.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("tool call failed: %v", err)
+	}
+
+	timeout := time.NewTimer(c.callTimeout())
+	defer timeout.Stop()
+	for {
+		select {
+		case evt := <-ch:
+			if evt.IsError {
+				return fmt.Errorf("connection lost: %s", evt.Raw)
+			}
+			msg := evt.Parsed
+			if _, notification := msg["method"]; notification {
+				continue
+			}
+			id, ok := msg["id"].(float64)
+			if !ok || int64(id) != reqID {
+				continue
+			}
+			if result, ok := msg["result"].(map[string]interface{}); ok {
+				if toolResultIsError(result) {
+					return fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
+				}
+				content, found := result["structuredContent"]
+				if !found {
+					return fmt.Errorf("tool %s returned no structuredContent", toolName)
+				}
+				data, err := json.Marshal(content)
+				if err != nil {
+					return fmt.Errorf("encode structured tool result: %w", err)
+				}
+				if err := json.Unmarshal(data, destination); err != nil {
+					return fmt.Errorf("decode structured tool result: %w", err)
+				}
+				return nil
+			}
+			if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
+				return fmt.Errorf("remote error: %v", rpcErr["message"])
+			}
+			return fmt.Errorf("tool %s returned no result", toolName)
+		case <-timeout.C:
+			return fmt.Errorf("tool call timed out after %s", c.callTimeout())
 		}
 	}
 }

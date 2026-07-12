@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -326,5 +327,114 @@ func TestCallAndCaptureRejectsEmptyFinalResult(t *testing.T) {
 	_, err = client.CallAndCapture("doops_bg", map[string]interface{}{"command": "sleep 1"})
 	if err == nil || !strings.Contains(err.Error(), "no result received") {
 		t.Fatalf("expected empty final result to fail immediately, got %v", err)
+	}
+}
+
+func TestCallStructuredReadsStructuredContentWithoutParsingText(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				})
+			case "tools/call":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"content":           []map[string]interface{}{{"type": "text", "text": "human-readable only"}},
+						"structuredContent": map[string]interface{}{"planDigest": "sha256:plan", "status": "Converged"},
+					},
+				})
+			}
+		}
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "structured", false)
+	var result struct {
+		PlanDigest string `json:"planDigest"`
+		Status     string `json:"status"`
+	}
+	if err := client.CallStructured("doops_cicd_reconcile", map[string]interface{}{"plan": map[string]string{}}, &result); err != nil {
+		t.Fatalf("call structured: %v", err)
+	}
+	if result.PlanDigest != "sha256:plan" || result.Status != "Converged" {
+		t.Fatalf("unexpected structured result: %#v", result)
+	}
+
+	raw, err := json.Marshal(result)
+	if err != nil || strings.Contains(string(raw), "human-readable") {
+		t.Fatalf("structured result was contaminated by text: %s err=%v", raw, err)
+	}
+}
+
+func TestRequireSemanticDeploymentCapabilityRejectsTargetWithoutCapability(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	toolCalls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"capabilities": map[string]interface{}{}},
+				})
+			case "tools/call":
+				toolCalls++
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"structuredContent": map[string]interface{}{
+							"planDigest": "sha256:plan",
+							"status":     "Converged",
+						},
+					},
+				})
+			}
+		}
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "release", false)
+	err = client.requireSemanticDeploymentCapability()
+	if err == nil || !strings.Contains(err.Error(), "semantic deployment") {
+		t.Fatalf("expected semantic deployment capability error, got %v", err)
+	}
+	if toolCalls != 0 {
+		t.Fatalf("reconciliation must not call a target without the semantic deployment capability")
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -216,7 +218,8 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 						"version": "2.0",
 					},
 					"capabilities": map[string]interface{}{
-						"tools": map[string]interface{}{},
+						"tools":              map[string]interface{}{},
+						"semanticDeployment": semanticDeploymentCapability(),
 					},
 				},
 			})
@@ -378,6 +381,17 @@ func toolNotification(toolName, status string) notificationEvent {
 
 func errorNotification(text string) notificationEvent {
 	return notificationEvent{Kind: "error", Data: text}
+}
+
+func semanticDeploymentCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"reconcile": map[string]string{
+			"tool":            "doops_cicd_reconcile",
+			"input":           "DeploymentPlan",
+			"output":          "CICDReconcileResult",
+			"contractVersion": "doops.sh/v2",
+		},
+	}
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
@@ -695,7 +709,20 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			return
 		}
-		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON)
+		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, pushProgress, writeJSON, nil)
+
+	case "doops_cicd_reconcile":
+		var args api.CICDReconcileParams
+		if err := json.Unmarshal(argBytes, &args); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, "invalid doops_cicd_reconcile params"))
+			return
+		}
+		plan, err := validateCICDReconcilePlan(args)
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
+		gw.handleCICDReconcileWS(ctx, reqID, args, plan, pushProgress, writeJSON)
 
 	case "doops_git_clone":
 		result, err := handleGitClone(argBytes)
@@ -766,8 +793,13 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 }
 
+type agentPromptOptions struct {
+	sseCollector    doagentSSECollector
+	successResponse func() api.JSONRPCResponse
+}
+
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
-func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, pushProgress notificationSender, writeJSON func(v interface{})) {
+func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, pushProgress notificationSender, writeJSON func(v interface{}), options *agentPromptOptions) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: %s [Model: %s]", instr, model)
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
@@ -873,24 +905,13 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		}
 	}
 
-	// [P0 自动固化 v2] 基于审计日志提炼脚本
-	solidifyHint := fmt.Sprintf("\n\n[系统指令] 如果你成功执行了构建或部署操作：\n"+
-		"1. 读取 /root/ws/%s/.doops-audit-log（这是真实的命令执行记录）\n"+
-		"2. 从中提取最终成功的命令序列（跳过失败的尝试，但在注释中说明踩坑原因）\n"+
-		"3. 如果 /root/ws/%s/deploy.sh 已存在，对比差异仅更新变化的部分\n"+
-		"4. 如果不存在，则生成新的 deploy.sh，包含所有必要步骤\n"+
-		"5. deploy.sh 必须基于审计日志中真正执行过且成功的命令，严禁凭空编造",
-		doopsSessionID, doopsSessionID)
-
-	fullInstr := instr + solidifyHint
-
 	// 启动 SSE 事件订阅（在 prompt 之前连接，防止丢失事件）
 	sseCtx, sseCancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer sseCancel()
 
 	sseDone := make(chan error, 1)
 	go func() {
-		sseDone <- subscribeDoagentSSE(sseCtx, doagentURL, targetSessionID, pushProgress)
+		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, optionsCollector(options))
 	}()
 
 	// 等待 SSE 连接建立（本地连接 <10ms，200ms 留足余量）
@@ -904,7 +925,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"method":  "session/prompt",
 			"params": map[string]interface{}{
 				"sessionId": targetSessionID,
-				"prompt":    fullInstr,
+				"prompt":    instr,
 			},
 		})
 		if err != nil {
@@ -924,7 +945,511 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
+	if options != nil && options.successResponse != nil {
+		writeJSON(options.successResponse())
+		return
+	}
 	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+}
+
+func optionsCollector(options *agentPromptOptions) doagentSSECollector {
+	if options == nil {
+		return nil
+	}
+	return options.sseCollector
+}
+
+func (gw *Gateway) handleCICDReconcileWS(ctx context.Context, reqID interface{}, args api.CICDReconcileParams, plan cicdReconcilePlan, pushProgress notificationSender, writeJSON func(v interface{})) {
+	doagentURL := os.Getenv("DO_AGENT_URL")
+	if doagentURL == "" {
+		doagentURL = "http://127.0.0.1:9000"
+	}
+	if err := requireCICDStructuredReportCapability(doagentURL, args.SessionID); err != nil {
+		writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		return
+	}
+	instruction, err := buildCICDReconcileInstruction(args.Plan, args.DryRun)
+	if err != nil {
+		writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+		return
+	}
+
+	var report map[string]interface{}
+	gw.handleAgentPromptWS(ctx, reqID, args.SessionID, instruction, "", pushProgress, writeJSON, &agentPromptOptions{
+		sseCollector: cicdReportCollector(plan, &report),
+		successResponse: func() api.JSONRPCResponse {
+			return buildStructuredSuccessResponse(reqID, "CI/CD reconciliation report received.", report)
+		},
+	})
+}
+
+func requireCICDStructuredReportCapability(doagentURL string, doopsSessionID string) error {
+	response, err := doagentRPC(doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "capabilities-" + doopsSessionID,
+		"method":  "initialize",
+		"params":  map[string]interface{}{},
+	})
+	if err != nil {
+		return fmt.Errorf("doagent capability check failed: %w", err)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	if supportsCICDStructuredReport(result) {
+		return nil
+	}
+	meta, _ := result["_meta"].(map[string]interface{})
+	if supportsCICDStructuredReport(meta) {
+		return nil
+	}
+	return errors.New("doagent does not advertise cicdStructuredReport capability")
+}
+
+func supportsCICDStructuredReport(value map[string]interface{}) bool {
+	capabilities, _ := value["capabilities"].(map[string]interface{})
+	supported, _ := capabilities["cicdStructuredReport"].(bool)
+	return supported
+}
+
+func validateCICDReconcilePlan(args api.CICDReconcileParams) (cicdReconcilePlan, error) {
+	if strings.TrimSpace(args.SessionID) == "" {
+		return cicdReconcilePlan{}, errors.New("session_id is required")
+	}
+	var plan cicdReconcilePlan
+	if err := json.Unmarshal(args.Plan, &plan); err != nil {
+		return cicdReconcilePlan{}, errors.New("plan must be a JSON object")
+	}
+	if plan.APIVersion != "doops.sh/v2" || plan.Kind != "DeploymentPlan" {
+		return cicdReconcilePlan{}, errors.New("plan must be a doops.sh/v2 DeploymentPlan")
+	}
+	if !cicdOCIDigestPattern.MatchString(plan.Digest) {
+		return cicdReconcilePlan{}, errors.New("plan.digest must be an OCI sha256 digest")
+	}
+	expectedPlanDigest, err := digestCICDPlanJSON(args.Plan)
+	if err != nil {
+		return cicdReconcilePlan{}, err
+	}
+	if plan.Digest != expectedPlanDigest {
+		return cicdReconcilePlan{}, errors.New("plan.digest does not match the canonical DeploymentPlan")
+	}
+	if strings.TrimSpace(plan.Spec.Target.Environment) == "" ||
+		strings.TrimSpace(plan.Spec.Target.ExecutionTarget) == "" ||
+		!cicdOCIDigestPattern.MatchString(plan.Spec.Target.ProfileDigest) ||
+		len(plan.Spec.Target.Profile) == 0 {
+		return cicdReconcilePlan{}, errors.New("plan must include a resolved environment profile")
+	}
+	var profile cicdReconcileEnvironmentProfile
+	if err := json.Unmarshal(plan.Spec.Target.Profile, &profile); err != nil {
+		return cicdReconcilePlan{}, errors.New("plan resolved environment profile is invalid")
+	}
+	if err := validateCICDReconcileEnvironmentProfile(profile); err != nil {
+		return cicdReconcilePlan{}, err
+	}
+	if profile.Target != plan.Spec.Target.ExecutionTarget {
+		return cicdReconcilePlan{}, errors.New("plan execution target does not match the resolved environment profile")
+	}
+	expectedProfileDigest, err := digestCICDValue(plan.Spec.Target.Profile)
+	if err != nil {
+		return cicdReconcilePlan{}, err
+	}
+	if plan.Spec.Target.ProfileDigest != expectedProfileDigest {
+		return cicdReconcilePlan{}, errors.New("plan environment profile digest does not match the resolved environment profile")
+	}
+	if err := validateCICDReconcileArtifactContract(plan.Spec.ArtifactContract); err != nil {
+		return cicdReconcilePlan{}, err
+	}
+	if strings.TrimSpace(plan.Spec.DesiredState.Application) == "" ||
+		strings.TrimSpace(plan.Spec.DesiredState.Delivery) == "" ||
+		strings.TrimSpace(plan.Spec.DesiredState.ConfigurationSource) == "" ||
+		strings.TrimSpace(plan.Spec.DesiredState.Authorization) == "" {
+		return cicdReconcilePlan{}, errors.New("plan desiredState is incomplete")
+	}
+	if !validCICDEvidenceKinds(plan.Spec.Acceptance.RequiredEvidence) || !validCICDEvidenceKinds(plan.Spec.Acceptance.RequiredFailureEvidence) {
+		return cicdReconcilePlan{}, errors.New("plan must require non-empty, unique success and failure evidence")
+	}
+	if plan.Spec.Policy.Mutation != "require-explicit-approval" ||
+		plan.Spec.Policy.Convergence != "until-verified" ||
+		plan.Spec.Policy.FailureMode != "restore-last-known-good" {
+		return cicdReconcilePlan{}, errors.New("plan policy is not supported")
+	}
+	if (plan.Spec.Release.Source == nil) == (plan.Spec.Release.Manifest == nil) {
+		return cicdReconcilePlan{}, errors.New("plan release requires exactly one of source or manifest")
+	}
+	if source := plan.Spec.Release.Source; source != nil &&
+		(strings.TrimSpace(source.Repository) == "" || !cicdGitCommitPattern.MatchString(source.Revision)) {
+		return cicdReconcilePlan{}, errors.New("plan source release must include an immutable 40-character Git commit")
+	}
+	if manifest := plan.Spec.Release.Manifest; manifest != nil &&
+		(strings.TrimSpace(manifest.Repository) == "" ||
+			strings.TrimSpace(manifest.Reference) == "" ||
+			!cicdOCIDigestPattern.MatchString(manifest.Digest)) {
+		return cicdReconcilePlan{}, errors.New("plan manifest release must include a repository, reference, and OCI digest")
+	}
+	if field, found, err := findForbiddenCICDPlanField(args.Plan); err != nil {
+		return cicdReconcilePlan{}, err
+	} else if found {
+		return cicdReconcilePlan{}, fmt.Errorf("plan contains forbidden command-driven field %q", field)
+	}
+	return plan, nil
+}
+
+var (
+	cicdGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	cicdOCIDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
+
+var forbiddenCICDPlanFields = map[string]struct{}{
+	"stages":                    {},
+	"uses":                      {},
+	"task":                      {},
+	"run":                       {},
+	"requiredCommand":           {},
+	"verificationCommand":       {},
+	"dryRunVerificationCommand": {},
+	"script":                    {},
+}
+
+type cicdReconcileEnvironmentProfile struct {
+	Target         string                    `json:"target"`
+	Cluster        string                    `json:"cluster"`
+	Instance       string                    `json:"instance"`
+	Namespace      string                    `json:"namespace"`
+	Release        string                    `json:"release"`
+	Registry       string                    `json:"registry"`
+	Chart          string                    `json:"chart"`
+	Values         string                    `json:"values"`
+	RuntimeFiles   string                    `json:"runtimeFiles"`
+	DeploymentMode string                    `json:"deploymentMode"`
+	HealthChecks   cicdReconcileHealthChecks `json:"healthChecks"`
+	Authz          map[string]string         `json:"authz"`
+}
+
+type cicdReconcileHealthChecks struct {
+	Public    []cicdReconcilePublicHealthCheck   `json:"public"`
+	Workloads []cicdReconcileWorkloadHealthCheck `json:"workloads"`
+}
+
+type cicdReconcilePublicHealthCheck struct {
+	ID             string `json:"id"`
+	URL            string `json:"url"`
+	ExpectedStatus int    `json:"expectedStatus"`
+}
+
+type cicdReconcileWorkloadHealthCheck struct {
+	Service          string `json:"service"`
+	MinReadyReplicas int    `json:"minReadyReplicas"`
+	RequireEndpoints bool   `json:"requireEndpoints"`
+}
+
+type cicdReconcileArtifactContract struct {
+	SourceRepository     string                 `json:"sourceRepository"`
+	SourceBranch         string                 `json:"sourceBranch"`
+	Services             []string               `json:"services"`
+	ImageTagPattern      string                 `json:"imageTagPattern"`
+	ImageReferenceFormat string                 `json:"imageReferenceFormat"`
+	HelmImageBindings    map[string]string      `json:"helmImageBindings"`
+	ManifestRepository   string                 `json:"manifestRepository"`
+	Authz                map[string]interface{} `json:"authz"`
+}
+
+type cicdReconcilePlan struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Digest     string `json:"digest"`
+	Spec       struct {
+		Release struct {
+			Source   *cicdReconcileSourceRelease   `json:"source"`
+			Manifest *cicdReconcileManifestRelease `json:"manifest"`
+		} `json:"release"`
+		Target struct {
+			Environment     string          `json:"environment"`
+			ExecutionTarget string          `json:"executionTarget"`
+			ProfileDigest   string          `json:"profileDigest"`
+			Profile         json.RawMessage `json:"profile"`
+		} `json:"target"`
+		ArtifactContract cicdReconcileArtifactContract `json:"artifactContract"`
+		DesiredState     struct {
+			Application         string `json:"application"`
+			Delivery            string `json:"delivery"`
+			ConfigurationSource string `json:"configurationSource"`
+			Authorization       string `json:"authorization"`
+		} `json:"desiredState"`
+		Acceptance struct {
+			RequiredEvidence        []string `json:"requiredEvidence"`
+			RequiredFailureEvidence []string `json:"requiredFailureEvidence"`
+		} `json:"acceptance"`
+		Policy struct {
+			Mutation    string `json:"mutation"`
+			Convergence string `json:"convergence"`
+			FailureMode string `json:"failureMode"`
+		} `json:"policy"`
+	} `json:"spec"`
+}
+
+type cicdReconcileSourceRelease struct {
+	Repository string `json:"repository"`
+	Revision   string `json:"revision"`
+}
+
+type cicdReconcileManifestRelease struct {
+	Repository string `json:"repository"`
+	Reference  string `json:"reference"`
+	Digest     string `json:"digest"`
+}
+
+func buildCICDReconcileInstruction(plan json.RawMessage, dryRun bool) (string, error) {
+	request, err := json.Marshal(struct {
+		Plan   json.RawMessage `json:"plan"`
+		DryRun bool            `json:"dry_run"`
+	}{
+		Plan:   plan,
+		DryRun: dryRun,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal CI/CD reconciliation request: %w", err)
+	}
+	return "Reconcile the following CI/CD request. The resolved environment profile and artifact contract in the DeploymentPlan are authoritative; do not infer a target from a domain, business number, or historical name. Completion is valid only when you emit a session/update event with sessionUpdate \"agent_report\" and an object report containing planDigest, status, evidence, and violations. A converged report must include every requiredEvidence item, including public business API checks and post-deploy log scan. On any rollout or health failure, preserve the last known good revision, collect every requiredFailureEvidence item, restore the last known good revision, and return Failed or Blocked with rollback-state evidence. Never scale a failing workload to zero. Do not encode the report in agent_message text.\n" + string(request), nil
+}
+
+func validateCICDReconcileEnvironmentProfile(profile cicdReconcileEnvironmentProfile) error {
+	required := map[string]string{
+		"target":         profile.Target,
+		"cluster":        profile.Cluster,
+		"instance":       profile.Instance,
+		"namespace":      profile.Namespace,
+		"release":        profile.Release,
+		"registry":       profile.Registry,
+		"chart":          profile.Chart,
+		"values":         profile.Values,
+		"deploymentMode": profile.DeploymentMode,
+	}
+	for field, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("plan resolved environment profile %s is required", field)
+		}
+	}
+	if len(profile.Authz) == 0 {
+		return errors.New("plan resolved environment profile authorization is required")
+	}
+	if len(profile.HealthChecks.Public) == 0 {
+		return errors.New("plan resolved environment profile public health checks are required")
+	}
+	for _, check := range profile.HealthChecks.Public {
+		if strings.TrimSpace(check.ID) == "" || strings.TrimSpace(check.URL) == "" || check.ExpectedStatus <= 0 {
+			return errors.New("plan resolved environment profile public health checks are invalid")
+		}
+	}
+	if profile.DeploymentMode == "application" {
+		if strings.TrimSpace(profile.RuntimeFiles) == "" {
+			return errors.New("plan resolved application environment runtime files are required")
+		}
+		if len(profile.HealthChecks.Workloads) == 0 {
+			return errors.New("plan resolved application environment workload health checks are required")
+		}
+		for _, check := range profile.HealthChecks.Workloads {
+			if strings.TrimSpace(check.Service) == "" || check.MinReadyReplicas < 1 || !check.RequireEndpoints {
+				return errors.New("plan resolved application environment workload health checks are invalid")
+			}
+		}
+	}
+	return nil
+}
+
+func validateCICDReconcileArtifactContract(artifact cicdReconcileArtifactContract) error {
+	required := map[string]string{
+		"sourceRepository":     artifact.SourceRepository,
+		"sourceBranch":         artifact.SourceBranch,
+		"imageTagPattern":      artifact.ImageTagPattern,
+		"imageReferenceFormat": artifact.ImageReferenceFormat,
+		"manifestRepository":   artifact.ManifestRepository,
+	}
+	for field, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("plan artifact contract %s is required", field)
+		}
+	}
+	if len(artifact.Services) == 0 || len(artifact.HelmImageBindings) != len(artifact.Services) {
+		return errors.New("plan artifact contract must bind every service to Helm")
+	}
+	for _, service := range artifact.Services {
+		if strings.TrimSpace(service) == "" || strings.TrimSpace(artifact.HelmImageBindings[service]) == "" {
+			return errors.New("plan artifact contract service binding is invalid")
+		}
+	}
+	if len(artifact.Authz) == 0 {
+		return errors.New("plan artifact contract authorization is required")
+	}
+	return nil
+}
+
+func validCICDEvidenceKinds(kinds []string) bool {
+	if len(kinds) == 0 {
+		return false
+	}
+	seen := make(map[string]bool, len(kinds))
+	for _, kind := range kinds {
+		kind = strings.TrimSpace(kind)
+		if kind == "" || seen[kind] {
+			return false
+		}
+		seen[kind] = true
+	}
+	return true
+}
+
+func digestCICDPlanJSON(raw json.RawMessage) (string, error) {
+	var plan map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&plan); err != nil || plan == nil {
+		return "", errors.New("plan must be a JSON object")
+	}
+	plan["digest"] = ""
+	return digestCICDValue(plan)
+}
+
+func digestCICDValue(value interface{}) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode CI/CD value: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var canonical interface{}
+	if err := decoder.Decode(&canonical); err != nil {
+		return "", fmt.Errorf("decode CI/CD value: %w", err)
+	}
+	data, err = json.Marshal(canonical)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize CI/CD value: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func findForbiddenCICDPlanField(raw json.RawMessage) (string, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return "", false, errors.New("plan must be a JSON object")
+	}
+	field, found := findForbiddenCICDPlanValue(value)
+	return field, found, nil
+}
+
+func findForbiddenCICDPlanValue(value interface{}) (string, bool) {
+	switch value := value.(type) {
+	case map[string]interface{}:
+		for key, nested := range value {
+			if _, forbidden := forbiddenCICDPlanFields[key]; forbidden {
+				return key, true
+			}
+			if field, found := findForbiddenCICDPlanValue(nested); found {
+				return field, true
+			}
+		}
+	case []interface{}:
+		for _, nested := range value {
+			if field, found := findForbiddenCICDPlanValue(nested); found {
+				return field, true
+			}
+		}
+	}
+	return "", false
+}
+
+func cicdReportCollector(plan cicdReconcilePlan, destination *map[string]interface{}) doagentSSECollector {
+	return func(update map[string]interface{}) (bool, bool, error) {
+		updateType, _ := update["sessionUpdate"].(string)
+		switch updateType {
+		case "agent_report":
+			report, err := validateCICDReport(update["report"], plan)
+			if err != nil {
+				return true, false, err
+			}
+			*destination = report
+			return true, true, nil
+		case "agent_message", "completed":
+			return true, false, errors.New("agent_report missing from doagent session/update")
+		case "usage_update":
+			return true, false, nil
+		default:
+			return false, false, nil
+		}
+	}
+}
+
+func validateCICDReport(value interface{}, plan cicdReconcilePlan) (map[string]interface{}, error) {
+	report, ok := value.(map[string]interface{})
+	if !ok || report == nil {
+		return nil, errors.New("agent_report.report must be an object")
+	}
+	reportDigest, ok := report["planDigest"].(string)
+	if !ok || reportDigest != plan.Digest {
+		return nil, errors.New("agent_report.report.planDigest does not match plan.digest")
+	}
+	if _, ok := report["status"].(string); !ok {
+		return nil, errors.New("agent_report.report.status must be a string")
+	}
+	status, _ := report["status"].(string)
+	switch status {
+	case "Pending", "Reconciling", "Converged", "Blocked", "Failed":
+	default:
+		return nil, errors.New("agent_report.report.status is invalid")
+	}
+	evidence, ok := report["evidence"].([]interface{})
+	if !ok {
+		return nil, errors.New("agent_report.report.evidence must be an array")
+	}
+	for _, item := range evidence {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, errors.New("agent_report.report.evidence entries must be objects")
+		}
+		kind, _ := entry["kind"].(string)
+		reference, _ := entry["reference"].(string)
+		if strings.TrimSpace(kind) == "" || strings.TrimSpace(reference) == "" {
+			return nil, errors.New("agent_report.report.evidence entries require kind and reference")
+		}
+	}
+	violations, ok := report["violations"].([]interface{})
+	if !ok {
+		return nil, errors.New("agent_report.report.violations must be an array")
+	}
+	for _, item := range violations {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, errors.New("agent_report.report.violations entries must be objects")
+		}
+		code, _ := entry["code"].(string)
+		message, _ := entry["message"].(string)
+		if strings.TrimSpace(code) == "" || strings.TrimSpace(message) == "" {
+			return nil, errors.New("agent_report.report.violations entries require code and message")
+		}
+	}
+	actualEvidence := make(map[string]bool, len(evidence))
+	for _, item := range evidence {
+		entry := item.(map[string]interface{})
+		actualEvidence[entry["kind"].(string)] = true
+	}
+	switch status {
+	case "Converged":
+		for _, kind := range plan.Spec.Acceptance.RequiredEvidence {
+			if !actualEvidence[kind] {
+				return nil, fmt.Errorf("converged report is missing required evidence %q", kind)
+			}
+		}
+	case "Blocked", "Failed":
+		if len(violations) == 0 {
+			return nil, fmt.Errorf("%s report requires at least one violation", strings.ToLower(status))
+		}
+		for _, kind := range plan.Spec.Acceptance.RequiredFailureEvidence {
+			if !actualEvidence[kind] {
+				return nil, fmt.Errorf("%s report is missing required failure evidence %q", strings.ToLower(status), kind)
+			}
+		}
+	}
+	return report, nil
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
@@ -1366,9 +1891,15 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 	return result, nil
 }
 
+type doagentSSECollector func(update map[string]interface{}) (handled bool, completed bool, err error)
+
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
 // 当收到 agent_message（完成）或 error（失败）事件时返回。
 func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender) error {
+	return subscribeDoagentSSEWithCollector(ctx, baseURL, sessionID, pushProgress, nil)
+}
+
+func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender, collector doagentSSECollector) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1459,6 +1990,18 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 			case "session/update":
 				// session/update 包含不同类型的更新
 				sessionUpdate, _ := params["update"].(map[string]interface{})
+				if collector != nil {
+					handled, completed, err := collector(sessionUpdate)
+					if err != nil {
+						return err
+					}
+					if completed {
+						return nil
+					}
+					if handled {
+						continue
+					}
+				}
 				updateType, _ := sessionUpdate["sessionUpdate"].(string)
 
 				switch updateType {
@@ -1683,6 +2226,22 @@ func buildSuccessResponse(reqID interface{}, text string) api.JSONRPCResponse {
 					"text": text,
 				},
 			},
+		},
+	}
+}
+
+func buildStructuredSuccessResponse(reqID interface{}, text string, structuredContent map[string]interface{}) api.JSONRPCResponse {
+	return api.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      reqID,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": text,
+				},
+			},
+			"structuredContent": structuredContent,
 		},
 	}
 }

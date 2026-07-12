@@ -633,6 +633,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	if !h.store.UserCan(auth.UserID, cluster, instance, ActionInfo) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
+		!h.store.UserCan(auth.UserID, cluster, instance, ActionReconcile) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
@@ -696,7 +697,10 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 						"name":    "doops-gateway",
 						"version": "1.0",
 					},
-					"capabilities": map[string]interface{}{"tools": map[string]interface{}{}},
+					"capabilities": map[string]interface{}{
+						"tools":              map[string]interface{}{},
+						"semanticDeployment": semanticDeploymentCapability(),
+					},
 				},
 			})
 		case "tools/call":
@@ -714,6 +718,22 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
+	}
+	if params.Name == "doops_cicd_reconcile" {
+		var reconcile api.CICDReconcileParams
+		if err := json.Unmarshal(params.Arguments, &reconcile); err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, "invalid doops_cicd_reconcile params"))
+			return nil
+		}
+		plan, err := validateCICDReconcilePlan(reconcile)
+		if err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+			return nil
+		}
+		if err := validateCICDReconcileRouteBinding(plan, cluster, instance); err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+			return nil
+		}
 	}
 	action := actionForTool(params.Name, params.Arguments)
 	if action == "" {
@@ -813,6 +833,11 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
 				}
+				if status, errMsg, reportTail, failed := reconcileAuditOutcome(params.Name, result); failed {
+					finalStatus = status
+					finalErr = errMsg
+					tail.WriteString(reportTail)
+				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
@@ -838,6 +863,41 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
+}
+
+func validateCICDReconcileRouteBinding(plan cicdReconcilePlan, cluster, instance string) error {
+	var profile cicdReconcileEnvironmentProfile
+	if err := json.Unmarshal(plan.Spec.Target.Profile, &profile); err != nil {
+		return errors.New("plan resolved environment profile is invalid")
+	}
+	if profile.Cluster != cluster || profile.Instance != instance {
+		return fmt.Errorf("deployment plan target binding %s/%s does not match gateway route %s/%s", profile.Cluster, profile.Instance, cluster, instance)
+	}
+	return nil
+}
+
+func reconcileAuditOutcome(tool string, result map[string]interface{}) (string, string, string, bool) {
+	if tool != "doops_cicd_reconcile" {
+		return "", "", "", false
+	}
+	report, ok := result["structuredContent"].(map[string]interface{})
+	if !ok {
+		return "", "", "", false
+	}
+	status, _ := report["status"].(string)
+	if status != "Blocked" && status != "Failed" {
+		return "", "", "", false
+	}
+	tail, err := json.Marshal(map[string]interface{}{
+		"planDigest": report["planDigest"],
+		"status":     status,
+		"evidence":   report["evidence"],
+		"violations": report["violations"],
+	})
+	if err != nil {
+		return "failed", "CI/CD reconciliation " + strings.ToLower(status), "", true
+	}
+	return "failed", "CI/CD reconciliation " + strings.ToLower(status), string(tail), true
 }
 
 func (h *GatewayHub) acquireOperationSlot(userID string) (func(), error) {
@@ -1585,6 +1645,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionExec
 	case "doops_agent_prompt":
 		return ActionAsk
+	case "doops_cicd_reconcile":
+		return ActionReconcile
 	case "doops_git_clone":
 		return ActionPull
 	case "doops_file_read":
@@ -1610,7 +1672,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionExec, ActionAsk:
+	case ActionExec, ActionAsk, ActionReconcile:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}

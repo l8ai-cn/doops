@@ -39,31 +39,6 @@ var defaultExcludes = []string{
 	".DS_Store",
 }
 
-// cicdSourceExcludes drops bulky trees that are not needed for agent-native
-// CI/CD stages (contract tests, helm render, image build, digest verify).
-// Full-tree Zhiyong pushes were ~18k files / multi-minute transfers and made
-// long WS sessions fragile; keep only release inputs required by the workflow.
-var cicdSourceExcludes = []string{
-	".codex-work",
-	".dosql",
-	".cursor",
-	".agents",
-	".bin",
-	"agent-transcripts",
-	"/tools",
-	"skills",
-	"/output",
-	"_work",
-	"Atmp",
-	"zhiyong-manager-api",
-	"zhiyong-ai-assistant",
-	"zhiyong-tts-api",
-	"zhiyong-stt-api",
-	"*.tar.gz",
-	"*.tar.gz.b64",
-	"*.zip",
-}
-
 // Push 将本地代码无感隔离投递至大模型探针服务，不落宿主机磁盘、不污染用户 Git
 func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) error {
 	// 1. 解析源目录

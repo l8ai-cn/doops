@@ -28,47 +28,6 @@ func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 	}
 }
 
-func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	for _, rel := range []string{
-		"deploy/test/values.yaml",
-		"ops/cicd/zhiyong.deploy.yaml",
-		"zhiyong-frontend/package.json",
-		".codex-work/scu-datasets/big.tar.gz.b64",
-		"tools/heavy.bin",
-		"docs/readme.md",
-	} {
-		path := filepath.Join(src, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("mkdir %s: %v", rel, err)
-		}
-		if err := os.WriteFile(path, []byte("x\n"), 0644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-
-	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
-	if err != nil {
-		t.Fatalf("stage snapshot: %v", err)
-	}
-	for _, want := range []string{
-		filepath.Join("deploy", "test", "values.yaml"),
-		filepath.Join("ops", "cicd", "zhiyong.deploy.yaml"),
-		filepath.Join("zhiyong-frontend", "package.json"),
-		filepath.Join("docs", "readme.md"),
-	} {
-		if !containsString(files, want) {
-			t.Fatalf("expected %s kept, got %#v", want, files)
-		}
-	}
-	for _, f := range files {
-		if strings.Contains(f, ".codex-work") || strings.HasPrefix(f, "tools"+string(os.PathSeparator)) {
-			t.Fatalf("expected bulky tree excluded, got %#v", files)
-		}
-	}
-}
-
 func TestStageSnapshotKeepsNestedSourceDirectoryNamedTarget(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -113,7 +72,7 @@ func TestStageSnapshotKeepsNestedSourceDirectoryNamedTarget(t *testing.T) {
 	runTestGit(t, src, "add", "-f", relative)
 	runTestGit(t, src, "commit", "-m", "fixture")
 
-	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), nil, true)
 	if err != nil {
 		t.Fatalf("stage snapshot: %v", err)
 	}
@@ -122,48 +81,6 @@ func TestStageSnapshotKeepsNestedSourceDirectoryNamedTarget(t *testing.T) {
 	}
 	if containsString(files, buildOutput) {
 		t.Fatalf("ignored Maven build output must not be included: %#v", files)
-	}
-}
-
-func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	for _, rel := range []string{
-		"docs/readme.md",
-		"output/staged.json",
-		"zhiyong-flow/web/src/index.ts",
-		"zhiyong-lab-api/docs/docs.go",
-		"zhiyong-frontend/src/common/components/notebook/components/output/OutputArea.tsx",
-		"deploy/tools/environments/test/middleware/values.yaml",
-		"ops/cicd/tools/build_release_images.py",
-	} {
-		path := filepath.Join(src, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("mkdir %s: %v", rel, err)
-		}
-		if err := os.WriteFile(path, []byte("x\n"), 0644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-
-	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
-	if err != nil {
-		t.Fatalf("stage snapshot: %v", err)
-	}
-	for _, want := range []string{
-		filepath.Join("docs", "readme.md"),
-		filepath.Join("zhiyong-flow", "web", "src", "index.ts"),
-		filepath.Join("zhiyong-lab-api", "docs", "docs.go"),
-		filepath.Join("zhiyong-frontend", "src", "common", "components", "notebook", "components", "output", "OutputArea.tsx"),
-		filepath.Join("deploy", "tools", "environments", "test", "middleware", "values.yaml"),
-		filepath.Join("ops", "cicd", "tools", "build_release_images.py"),
-	} {
-		if !containsString(files, want) {
-			t.Fatalf("expected required build input %s kept, got %#v", want, files)
-		}
-	}
-	if containsString(files, filepath.Join("output", "staged.json")) {
-		t.Fatalf("expected root output tree excluded, got %#v", files)
 	}
 }
 
@@ -195,7 +112,7 @@ func TestStageSnapshotUsesGitIgnoreSemanticsAndKeepsTrackedFiles(t *testing.T) {
 	runTestGit(t, src, "commit", "-m", "fixture")
 	writeFixture("untracked.log", "local only\n")
 
-	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), nil, true)
 	if err != nil {
 		t.Fatalf("stage snapshot: %v", err)
 	}
@@ -267,17 +184,6 @@ func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 	want := "https://doops:secret-token@gateway.example.com:42222/v1/git/doops-oilan/oilan-node/deploy-main.git"
 	if got != want {
 		t.Fatalf("gateway git URL mismatch:\nwant %s\n got %s", want, got)
-	}
-}
-
-func TestCICDReadyCommitIgnoresFinalToolText(t *testing.T) {
-	const commit = "71eec463a01e4d5e783beebcb80305241d1d78d9"
-	got, ok := cicdReadyCommit("ready:" + commit + "\nOperation complete.")
-	if !ok {
-		t.Fatal("expected ready sentinel")
-	}
-	if got != commit {
-		t.Fatalf("ready commit mismatch: want=%s got=%s", commit, got)
 	}
 }
 
