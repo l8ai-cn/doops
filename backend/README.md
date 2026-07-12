@@ -62,14 +62,14 @@ flowchart LR
 当前维护版 agent 默认采用轻量双镜像发布：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：doagent / buildkit / git / tini / bash
+docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # 轻更新镜像：doops-agent / skills / docs / entrypoint
 ```
 
 本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；release 流水线会用 `DOOPS_AGENT_BASE_IMAGE` 固定到本次 tag 对应的 `base-light:<release>`。
 
 ```text
-Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / git / tini / bash
+Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
@@ -83,7 +83,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，默认使用保留的 doops-agent 基线镜像
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
-- 构建闸门：两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`；更新镜像还会执行 `buildctl --version`
+- 构建闸门：基础镜像必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`；两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`
 - 发布原则：CNB release 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
 
 协议与端点：

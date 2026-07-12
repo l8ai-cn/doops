@@ -72,7 +72,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
-`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、kubectl、系统包。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
+`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、kubectl、Python+PyYAML、Helm、系统包。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
 
 CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<release>` 这种仓库下级路径；不要使用 `<repo>-base-light:<release>`。
 
@@ -81,10 +81,12 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 1. `/app/doops-agent -help` 可运行。
 2. `/usr/local/bin/do-agent --help` 可运行。
 3. `buildctl --version` 可运行。
-4. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
-5. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
+4. `python3 -c 'import yaml'` 可运行。
+5. `helm version --short` 可运行。
+6. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
+7. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
 
-CNB release 在 app 镜像 push 前必须完成 base label 与前 3 项镜像内自检；第 4、5 项必须在 DaemonSet 滚动更新后对真实 target 执行。
+镜像构建必须完成 base label 与前 5 项镜像内自检；第 6、7 项必须在 Agent 滚动更新后对真实 target 执行。
 
 ---
 

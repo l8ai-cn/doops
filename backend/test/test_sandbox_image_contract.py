@@ -76,9 +76,19 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
 def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     dockerfile = read("Dockerfile.base.light")
 
-    assert "docker.cnb.cool/l8ai/ai/doops.sh:v1.0.4" in dockerfile
+    assert "docker.cnb.cool/l8ai/ai/doops.sh:v1.1-metadata-20260704" in dockerfile
     assert "kubectl version --client=true" in dockerfile
     assert "buildctl --version" in dockerfile
+    assert "python3 python3-yaml" in dockerfile
+    assert "python3 py3-yaml" in dockerfile
+    assert "python3 -c 'import yaml'" in dockerfile
+    assert "ARG HELM_VERSION=v3.14.4" in dockerfile
+    assert "FROM ${DO_AGENT_IMAGE}\n\nARG KUBECTL_VERSION\nARG HELM_VERSION\n\nUSER root" in dockerfile
+    assert "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" in dockerfile
+    assert "helm version --short" in dockerfile
+    assert "&& { apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo || true; }" in dockerfile
+    assert "&& { apk del openssh-server openssh-client rsync sudo 2>/dev/null || true; }" in dockerfile
+    assert "rm -f /usr/local/bin/start-webide.sh /entrypoint.sh /usr/bin/entrypoint.sh /init.sh 2>/dev/null || true" not in dockerfile
     assert "apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo" in dockerfile
     assert "rm -f /usr/local/bin/start-webide.sh /entrypoint.sh /usr/bin/entrypoint.sh /init.sh" in dockerfile
 
