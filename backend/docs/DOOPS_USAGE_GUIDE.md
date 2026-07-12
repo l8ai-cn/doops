@@ -141,8 +141,6 @@ doops logout --target jm
 ```bash
 doops -session upgrade_20260519 upgrade \
   --target unicom \
-  --cluster doops-jm \
-  --instance jm-228 \
   --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   --mode k8s \
   --namespace doops-system \
@@ -151,7 +149,11 @@ doops -session upgrade_20260519 upgrade \
   --dry-run
 ```
 
-Remove `--dry-run` only after reviewing the command. Gateway upgrade requires `agent:upgrade` or `admin`.
+When `--target` is given, its configured `cluster/instance` is the default
+upgrade scope. To operate outside that target, pass both `--cluster` and
+`--instance` explicitly. Broadcasting requires the explicit pair
+`--cluster '*' --instance '*'`. Remove `--dry-run` only after reviewing the
+command. Gateway upgrade requires `agent:upgrade` or `admin`.
 
 ## BuildKit Example
 

@@ -434,7 +434,6 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 ```bash
 doops -session upgrade_20260511 upgrade \
   --target jm \
-  --cluster doops-jm \
   --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   --mode k8s \
   --namespace oilan-system \
@@ -443,7 +442,11 @@ doops -session upgrade_20260511 upgrade \
   --dry-run
 ```
 
-去掉 `--dry-run` 后会对匹配的在线 `cluster/instance` 下发升级。K8s/DaemonSet 模式会执行 `kubectl set image` 和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。
+省略 `--cluster/--instance` 时，只升级 `--target` 绑定的一个
+`cluster/instance`。跨目标或批量操作必须显式传入完整的
+`--cluster/--instance`；全量广播必须明确写为 `--cluster '*' --instance '*'`。
+去掉 `--dry-run` 后才会下发升级。K8s/DaemonSet 模式会执行 `kubectl set image`
+和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。
 
 ## 维护者说明
 

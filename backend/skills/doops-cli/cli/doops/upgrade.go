@@ -33,9 +33,13 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if err != nil {
 		return err
 	}
-	selected := filterUpgradeTargets(targets, opts.Cluster, opts.Instance)
+	cluster, instance, err := resolveUpgradeScope(base, opts.Cluster, opts.Instance)
+	if err != nil {
+		return err
+	}
+	selected := filterUpgradeTargets(targets, cluster, instance)
 	if len(selected) == 0 {
-		return fmt.Errorf("no online targets matched cluster=%q instance=%q", opts.Cluster, opts.Instance)
+		return fmt.Errorf("no online targets matched cluster=%q instance=%q", cluster, instance)
 	}
 	session := strings.TrimSpace(opts.Session)
 	if session == "" {
@@ -72,6 +76,21 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		return fmt.Errorf("upgrade failed on %d/%d target(s)", failures, len(selected))
 	}
 	return nil
+}
+
+func resolveUpgradeScope(base Server, requestedCluster, requestedInstance string) (string, string, error) {
+	cluster := strings.TrimSpace(requestedCluster)
+	instance := strings.TrimSpace(requestedInstance)
+	if cluster == "" && instance == "" {
+		if strings.TrimSpace(base.Cluster) == "" || strings.TrimSpace(base.Instance) == "" {
+			return "", "", fmt.Errorf("a configured target with cluster and instance is required when --cluster and --instance are omitted")
+		}
+		return strings.TrimSpace(base.Cluster), strings.TrimSpace(base.Instance), nil
+	}
+	if cluster == "" || instance == "" {
+		return "", "", fmt.Errorf("--cluster and --instance must be specified together")
+	}
+	return cluster, instance, nil
 }
 
 func filterUpgradeTargets(targets []GatewayTarget, cluster, instance string) []GatewayTarget {
