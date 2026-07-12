@@ -637,9 +637,6 @@ func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile)
 		}
 	}
 	if profile.DeploymentMode == "application" {
-		if strings.TrimSpace(profile.RuntimeFiles) == "" {
-			return fmt.Errorf("application environment %q runtime files are required", name)
-		}
 		if len(profile.HealthChecks.Workloads) == 0 {
 			return fmt.Errorf("application environment %q workload health checks are required", name)
 		}

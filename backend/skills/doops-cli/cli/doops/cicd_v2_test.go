@@ -403,6 +403,35 @@ func TestDeploymentPlanRequiresTargetGatewayBinding(t *testing.T) {
 	}
 }
 
+func TestDeploymentPlanAllowsApplicationChartWithoutRuntimeFiles(t *testing.T) {
+	err := validateCICDEnvironmentProfile("ecp", CICDEnvironmentProfile{
+		Target:         "gw-edu-coder",
+		Cluster:        "doops-edu",
+		Instance:       "edu-coder",
+		Namespace:      "oilan",
+		Release:        "ecp",
+		Registry:       "docker.cnb.cool/l8ai/ecp",
+		Chart:          "deploy/chart",
+		Values:         "deploy/environments/oilan/values.yaml",
+		DeploymentMode: "application",
+		HealthChecks: CICDHealthChecks{
+			Public: []CICDPublicHealthCheck{{
+				ID:             "gateway-health",
+				URL:            "https://ecp.oilan.ai/healthz",
+				ExpectedStatus: 200,
+			}},
+			Workloads: []CICDWorkloadHealthCheck{{
+				Service:          "ecp-gateway",
+				MinReadyReplicas: 1,
+				RequireEndpoints: true,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("application chart without runtime files must remain valid: %v", err)
+	}
+}
+
 func TestDeploymentPlanRejectsMismatchedConfiguredGatewayTarget(t *testing.T) {
 	plan := DeploymentPlan{
 		APIVersion: deploymentAPIVersion,
