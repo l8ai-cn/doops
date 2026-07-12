@@ -84,7 +84,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：基础镜像必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`；两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`
-- 发布原则：仅允许 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 由已注册的 DoOps Agent 构建和发布 Agent。模板先构建并校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help`、`buildctl --version`、Python/PyYAML 与 Helm。CNB 只运行 PR/push 测试，不构建、推送或部署发布镜像。
+- 发布原则：DoOps `DeploymentTemplate` 仍是唯一 CD 入口。临时期间，CNB `main` CI 在全部校验通过后构建并推送 `doops.sh/base-light:20260712` 和 `doops.sh:20260712`，以及带提交短 SHA 的伴随标签；DoOps 只能提升记录的 digest。CNB 不部署、不回滚，也不执行其他 CD。
 
 协议与端点：
 
@@ -391,7 +391,7 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一发布入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。DoOps Agent 会校验 source commit，并以该 SHA 构建不可变候选镜像；一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
+唯一 CD 入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，DoOps Agent 校验 source commit，并以记录的镜像 digest 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`，随后等待 Job、Helm release 与 Kubernetes rollout 完成。临时期间，CNB 只在 `main` 校验通过后构建并推送日期版本候选镜像，不触发部署。
 
 `doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
 

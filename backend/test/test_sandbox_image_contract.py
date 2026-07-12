@@ -140,12 +140,31 @@ def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
         assert " helm" in push_block
 
 
-def test_doops_cicd_is_the_only_agent_release_definition():
+def test_cnb_main_temporarily_builds_date_versioned_agent_images_after_checks():
+    cnb = read_repo(".cnb.yml")
+    main = top_level_block(cnb, "main")
+    _, push_block = main.split("  push:", 1)
+
+    assert 'RELEASE_VERSION: "20260712"' in push_block
+    assert "services:\n        - docker" in push_block
+    assert "docker-cli" in push_block
+    assert "backend/Dockerfile.base.light" in push_block
+    assert "backend/Dockerfile" in push_block
+    assert 'base-light:${RELEASE_VERSION}' in push_block
+    assert ':${RELEASE_VERSION}' in push_block
+    assert '${RELEASE_VERSION}-${CNB_COMMIT_SHORT}' in push_block
+    assert '--build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE_REVISION}"' in push_block
+    assert "docker push" in push_block
+
+
+def test_doops_cicd_remains_the_only_agent_deployment_definition():
     cnb = read_repo(".cnb.yml")
     workflow = read_repo("backend/deploy/workflows/oilan-agent-bootstrap.yaml")
 
     assert "tag_push:" not in cnb
     assert "release-image" not in cnb
+    for forbidden in ("kubectl ", "helm upgrade", "doops -session", "cicd submit"):
+        assert forbidden not in cnb
     assert "apiVersion: doops.sh/v2" in workflow
     assert "kind: DeploymentTemplate" in workflow
     assert "stages:" not in workflow

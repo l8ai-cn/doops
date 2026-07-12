@@ -1,5 +1,6 @@
-# Temporary policy: CNB runs verification only for source changes. Image builds,
-# publication, deployment, rollback, and all CD remain owned by DoOps.
+# Temporary policy: CNB main CI verifies source changes and publishes the
+# approved date-versioned agent images. Deployment, rollback, and all CD remain
+# owned by DoOps.
 main:
   pull_request:
     - name: ai-review
@@ -23,12 +24,16 @@ main:
   push:
     - name: ci
       runner:
-        cpus: 2
+        cpus: 4
+      services:
+        - docker
       docker:
         image: golang:1.24-alpine
+      env:
+        RELEASE_VERSION: "20260712"
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
+          script: apk add --no-cache bash docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: agent tests
@@ -49,6 +54,34 @@ main:
             pnpm install --frozen-lockfile
             pnpm exec tsc --noEmit
             pnpm build
+        - name: build and publish base-light image
+          script: |
+            BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_VERSION}"
+            BASE_IMAGE_REVISION="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_VERSION}-${CNB_COMMIT_SHORT}"
+            docker build \
+              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+              --label org.opencontainers.image.version="${RELEASE_VERSION}" \
+              -f backend/Dockerfile.base.light \
+              -t "${BASE_IMAGE}" \
+              -t "${BASE_IMAGE_REVISION}" \
+              backend
+            docker push "${BASE_IMAGE}"
+            docker push "${BASE_IMAGE_REVISION}"
+        - name: build and publish doops agent image
+          script: |
+            BASE_IMAGE_REVISION="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_VERSION}-${CNB_COMMIT_SHORT}"
+            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_VERSION}"
+            APP_IMAGE_REVISION="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_VERSION}-${CNB_COMMIT_SHORT}"
+            docker build \
+              --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE_REVISION}" \
+              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+              --label org.opencontainers.image.version="${RELEASE_VERSION}" \
+              -f backend/Dockerfile \
+              -t "${APP_IMAGE}" \
+              -t "${APP_IMAGE_REVISION}" \
+              backend
+            docker push "${APP_IMAGE}"
+            docker push "${APP_IMAGE_REVISION}"
 
 master:
   pull_request:
