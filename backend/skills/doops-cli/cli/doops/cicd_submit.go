@@ -55,6 +55,9 @@ type CICDAgenticRun struct {
 type deploymentAgenticExecutor interface {
 	Run(context.Context, DeploymentPlan, CICDAgenticRunRequest) (CICDAgenticRun, error)
 }
+
+type cicdAgenticRunnerFactory func(plan DeploymentPlan, sourceDirectory string) (deploymentAgenticExecutor, func(), error)
+
 type agenticDeploymentRunner struct {
 	server          Server
 	sourceDirectory string
@@ -83,6 +86,91 @@ func (f cicdSetFlags) Set(value string) error {
 	}
 	f[strings.TrimSpace(key)] = val
 	return nil
+}
+
+type CICDCommand struct {
+	Command           string
+	File              string
+	Inputs            map[string]string
+	DryRun            bool
+	AllowMutate       bool
+	MaxIterations     int
+	MaxNoProgressRuns int
+}
+
+func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRunnerFactory) error {
+	if len(args) == 0 {
+		return fmt.Errorf("cicd subcommand is required")
+	}
+	command := strings.TrimSpace(args[0])
+	if command != "lint" && command != "plan" && command != "run" {
+		return fmt.Errorf("unsupported cicd command %q", command)
+	}
+	request := CICDCommand{Command: command, Inputs: map[string]string{}}
+	sets := cicdSetFlags(request.Inputs)
+	flags := flag.NewFlagSet("cicd "+command, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	flags.StringVar(&request.File, "f", "", "DeploymentTemplate YAML file")
+	flags.StringVar(&request.File, "file", "", "DeploymentTemplate YAML file")
+	flags.Var(sets, "set", "Template parameter override in key=value form")
+	flags.BoolVar(&request.DryRun, "dry-run", false, "Observe and validate without mutation")
+	flags.BoolVar(&request.AllowMutate, "allow-mutate", false, "Approve a mutating deployment")
+	flags.IntVar(&request.MaxIterations, "max-iterations", 12, "Maximum agent attempts")
+	flags.IntVar(&request.MaxNoProgressRuns, "max-no-progress", 3, "Maximum unchanged agent attempts")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(request.File) == "" {
+		return fmt.Errorf("-f deployment template file is required")
+	}
+	template, err := loadDeploymentTemplate(request.File)
+	if err != nil {
+		return err
+	}
+	if request.Command == "lint" {
+		fmt.Printf("deployment template ok: %s\n", template.Metadata.Name)
+		return nil
+	}
+	plan, err := buildDeploymentPlan(template, request.Inputs)
+	if err != nil {
+		return err
+	}
+	if request.Command == "plan" {
+		return writeCICDJSON(plan)
+	}
+	if !request.DryRun && !request.AllowMutate {
+		return fmt.Errorf("mutating deployment requires --allow-mutate")
+	}
+	if newRunner == nil {
+		return fmt.Errorf("Agent-native deployment runner factory is required")
+	}
+	sourceDirectory, err := findCICDSourceDirectory(request.File)
+	if err != nil {
+		return err
+	}
+	runner, cleanup, err := newRunner(plan, sourceDirectory)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+	run, runErr := runner.Run(ctx, plan, CICDAgenticRunRequest{
+		DryRun:        request.DryRun,
+		AllowMutate:   request.AllowMutate,
+		MaxIterations: request.MaxIterations,
+		MaxNoProgress: request.MaxNoProgressRuns,
+	})
+	if writeErr := writeCICDJSON(run); writeErr != nil {
+		return writeErr
+	}
+	return runErr
+}
+
+func writeCICDJSON(value interface{}) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
 
 func buildCICDSubmitCommand(args []string) (CICDSubmitCommand, error) {
