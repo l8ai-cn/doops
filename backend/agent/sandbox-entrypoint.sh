@@ -148,25 +148,16 @@ start_buildkit() {
 }
 
 configure_registry_auth() {
-    if [ -n "${REGISTRY_URL:-}" ] && [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_PASS:-}" ]; then
-        echo "🔐 Writing BuildKit registry auth: ${REGISTRY_URL}"
-        mkdir -p /root/.docker
-        local registry_auth
-        registry_auth=$(printf '%s' "${REGISTRY_USER}:${REGISTRY_PASS}" | base64 | tr -d '\n')
-        cat > /root/.docker/config.json <<EOF
-{
-  "auths": {
-    "${REGISTRY_URL}": {
-      "auth": "${registry_auth}"
-    }
-  }
-}
-EOF
-        chmod 600 /root/.docker/config.json
-        echo "✅ Registry auth config ready: /root/.docker/config.json"
-    else
-        echo "ℹ️  Registry auth config skipped (REGISTRY_URL/USER/PASS not set)"
+    local registry_auth_file="${DOOPS_REGISTRY_AUTH_FILE:-/root/.docker/config.json}"
+    if [ ! -s "${registry_auth_file}" ]; then
+        echo "❌ registry auth config is required at ${registry_auth_file}"
+        exit 1
     fi
+    if ! grep -q '"auths"' "${registry_auth_file}"; then
+        echo "❌ registry auth config is invalid: ${registry_auth_file}"
+        exit 1
+    fi
+    echo "✅ registry auth config: using mounted ${registry_auth_file}"
 }
 
 start_sandbox_services

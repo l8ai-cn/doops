@@ -63,6 +63,29 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
     assert "https://api.example.com/v1" in entrypoint
 
 
+def test_agent_registry_auth_uses_one_mounted_multi_registry_config():
+    for path in ("agent/agent.yaml", "agent/agent-default.yaml"):
+        manifest = read(path)
+
+        assert "doops-registry-auth" in manifest
+        assert "mountPath: /root/.docker" in manifest
+        assert "key: config.json" in manifest
+        assert "REGISTRY_URL" not in manifest
+        assert "REGISTRY_USER" not in manifest
+        assert "REGISTRY_PASS" not in manifest
+
+
+def test_agent_entrypoints_require_mounted_registry_auth_config():
+    for path in ("agent/agent-entrypoint.sh", "agent/sandbox-entrypoint.sh"):
+        entrypoint = read(path)
+
+        assert "DOOPS_REGISTRY_AUTH_FILE" in entrypoint
+        assert "registry auth config is required" in entrypoint
+        assert "REGISTRY_URL" not in entrypoint
+        assert "REGISTRY_USER" not in entrypoint
+        assert "REGISTRY_PASS" not in entrypoint
+
+
 def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     dockerfile = read("Dockerfile.base.light")
 

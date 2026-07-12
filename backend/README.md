@@ -328,9 +328,8 @@ ss -lntp | grep ':42222' || true
 
 ```bash
 kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system create secret generic registry-credentials \
-  --from-literal=username="$REGISTRY_USER" \
-  --from-literal=password="$REGISTRY_PASS" \
+kubectl -n doops-system create secret generic doops-registry-auth \
+  --from-file=config.json="$DOCKER_CONFIG_JSON" \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n doops-system apply -f agent/agent-config.yaml
 kubectl -n doops-system apply -f agent/agent.yaml

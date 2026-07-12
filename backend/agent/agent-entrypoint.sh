@@ -174,25 +174,17 @@ else
     echo "⚠️  buildkitd/buildctl not found, image build will not work"
 fi
 
-# ========== Registry 认证 (BuildKit 读取 Docker auth config) ==========
-if [ -n "$REGISTRY_URL" ] && [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASS" ]; then
-    echo "🔐 Writing BuildKit registry auth: $REGISTRY_URL"
-    mkdir -p /root/.docker
-    REGISTRY_AUTH=$(printf '%s' "${REGISTRY_USER}:${REGISTRY_PASS}" | base64 | tr -d '\n')
-    cat > /root/.docker/config.json <<EOF
-{
-  "auths": {
-    "${REGISTRY_URL}": {
-      "auth": "${REGISTRY_AUTH}"
-    }
-  }
-}
-EOF
-    chmod 600 /root/.docker/config.json
-    echo "✅ Registry auth config ready: /root/.docker/config.json"
-else
-    echo "ℹ️  Registry auth config skipped (REGISTRY_URL/USER/PASS not set)"
+# ========== Registry 认证 (BuildKit 读取 Kubernetes Secret 挂载的 Docker config) ==========
+DOOPS_REGISTRY_AUTH_FILE="${DOOPS_REGISTRY_AUTH_FILE:-/root/.docker/config.json}"
+if [ ! -s "${DOOPS_REGISTRY_AUTH_FILE}" ]; then
+    echo "❌ registry auth config is required at ${DOOPS_REGISTRY_AUTH_FILE}"
+    exit 1
 fi
+if ! grep -q '"auths"' "${DOOPS_REGISTRY_AUTH_FILE}"; then
+    echo "❌ registry auth config is invalid: ${DOOPS_REGISTRY_AUTH_FILE}"
+    exit 1
+fi
+echo "✅ registry auth config: using mounted ${DOOPS_REGISTRY_AUTH_FILE}"
 
 # 使用 tini 作为 PID 1 init，自动回收所有僵尸子进程
 export PATH=/usr/local/bin:$PATH
