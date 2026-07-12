@@ -270,6 +270,17 @@ func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 	}
 }
 
+func TestCICDReadyCommitIgnoresFinalToolText(t *testing.T) {
+	const commit = "71eec463a01e4d5e783beebcb80305241d1d78d9"
+	got, ok := cicdReadyCommit("ready:" + commit + "\nOperation complete.")
+	if !ok {
+		t.Fatal("expected ready sentinel")
+	}
+	if got != commit {
+		t.Fatalf("ready commit mismatch: want=%s got=%s", commit, got)
+	}
+}
+
 func TestPrebuiltCLIUsesGitSyncPushBackend(t *testing.T) {
 	bin := filepath.Join("..", "..", "bin", "doops-"+runtime.GOOS+"-"+runtime.GOARCH)
 	assertBinaryUsesGitSyncPushBackend(t, bin)

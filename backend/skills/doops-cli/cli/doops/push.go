@@ -327,8 +327,7 @@ func waitForWorkspaceReady(server Server, token string, sessionID string, worksp
 		lastOut = strings.TrimSpace(stdout)
 		lastErr = ""
 		if err == nil {
-			if strings.HasPrefix(lastOut, "ready:") {
-				remoteCommit := strings.TrimSpace(strings.TrimPrefix(lastOut, "ready:"))
+			if remoteCommit, ready := cicdReadyCommit(lastOut); ready {
 				if remoteCommit == expectedCommit {
 					return nil
 				}
@@ -352,6 +351,18 @@ func waitForWorkspaceReady(server Server, token string, sessionID string, worksp
 		return fmt.Errorf("等待超时，未发现远端 ready 哨兵 %s（代表文件 %s 不能替代提交校验）", readyFile, representativePath)
 	}
 	return fmt.Errorf("等待超时，未发现远端 ready 哨兵 %s", readyFile)
+}
+
+func cicdReadyCommit(output string) (string, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ready:") {
+			continue
+		}
+		commit := strings.TrimSpace(strings.TrimPrefix(line, "ready:"))
+		return commit, commit != ""
+	}
+	return "", false
 }
 
 func stageSnapshot(src, tmpDir string, extraExcludes []string, dryRun bool) ([]string, error) {
