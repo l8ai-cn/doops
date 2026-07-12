@@ -1,13 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: doops-agent
+  name: {{ required "workload.name is required" .Values.workload.name }}
   namespace: {{ .Release.Namespace }}
   labels:
     app: doops-agent
-  annotations:
-    meta.helm.sh/release-name: {{ .Release.Name }}
-    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
   strategy:
@@ -58,6 +55,8 @@ spec:
               value: "9000"
             - name: DO_AGENT_URL
               value: http://127.0.0.1:9000
+            - name: DO_AGENT_MODEL_ROUTING_POLICY
+              value: {{ required "modelRouting.policy is required" .Values.modelRouting.policy | quote }}
           ports:
             - name: api
               containerPort: 42222
@@ -74,10 +73,10 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
           volumeMounts:
-            - name: k3s-kubeconfig
-              mountPath: /etc/rancher/k3s/k3s.yaml
+            - name: kube-admin
+              mountPath: /etc/kubernetes/admin.conf
               readOnly: true
-            - name: k3s-kubeconfig
+            - name: kube-admin
               mountPath: /root/.kube/config
               readOnly: true
             - name: agent-home
@@ -96,8 +95,11 @@ spec:
             - name: nerdctl-real-bin
               mountPath: /usr/local/bin/nerdctl.real
               readOnly: true
+            - name: crictl-bin
+              mountPath: /usr/bin/crictl
+              readOnly: true
       volumes:
-        - name: k3s-kubeconfig
+        - name: kube-admin
           hostPath:
             path: {{ .Values.paths.kubeconfig }}
             type: File
@@ -128,4 +130,8 @@ spec:
         - name: nerdctl-real-bin
           hostPath:
             path: {{ .Values.paths.nerdctlReal }}
+            type: File
+        - name: crictl-bin
+          hostPath:
+            path: {{ .Values.paths.crictl }}
             type: File

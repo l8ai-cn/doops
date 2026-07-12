@@ -75,6 +75,8 @@ spec:
 				Instance:                  "oilan-node",
 				Namespace:                 "test",
 				Release:                   "zhiyong",
+				Workload:                  "deployment/zhiyong",
+				Container:                 "zhiyong",
 				Registry:                  "registry.example.test/oilan-system",
 				ReleaseManifestRepository: "registry.example.test/oilan-system/zhiyong-release-manifest-test",
 				Chart:                     "deploy/environments/test/chart",
@@ -161,6 +163,8 @@ environments:
     instance: edu-coder
     namespace: oilan
     release: zhiyong
+    workload: deployment/zhiyong
+    container: zhiyong
     registry: registry.example.test/oilan-system
     releaseManifestRepository: registry.example.test/oilan-system/zhiyong-release-manifest-oilan
     chart: deploy/environments/oilan/chart
@@ -406,6 +410,98 @@ func TestDeploymentPlanRequiresTargetGatewayBinding(t *testing.T) {
 	}
 }
 
+func TestDeploymentPlanRequiresDeclaredWorkload(t *testing.T) {
+	err := validateCICDEnvironmentProfile("test", CICDEnvironmentProfile{
+		Target:                    "gw-edu-coder",
+		Cluster:                   "doops-edu",
+		Instance:                  "edu-coder",
+		Namespace:                 "kz-ops",
+		Release:                   "doops-agent-live",
+		Container:                 "doops-agent",
+		Registry:                  "registry.example.test/oilan",
+		ReleaseManifestRepository: "https://example.test/oilan-manifests.git",
+		Chart:                     "deploy/chart",
+		Values:                    "deploy/values.yaml",
+		DeploymentMode:            "control-plane",
+		HealthChecks: CICDHealthChecks{Public: []CICDPublicHealthCheck{{
+			ID:             "gateway-health",
+			URL:            "https://doops.example.test/health",
+			ExpectedStatus: 200,
+		}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "workload") {
+		t.Fatalf("expected missing workload rejection, got %v", err)
+	}
+}
+
+func TestDoopsAgentPlanRequiresDeclaredModelRouting(t *testing.T) {
+	template := DeploymentTemplate{
+		APIVersion: deploymentAPIVersion,
+		Kind:       deploymentTemplateKind,
+		Metadata:   DeploymentMetadata{Name: "doops-agent"},
+		Spec: DeploymentTemplateSpec{Plan: DeploymentPlanSpec{
+			Release: CICDReleaseReference{Source: &CICDSourceRelease{
+				Repository: "https://example.test/doops.git",
+				Revision:   "0123456789abcdef0123456789abcdef01234567",
+			}},
+			Target: CICDDeploymentTarget{Environment: "oilan"},
+			DesiredState: CICDDesiredState{
+				Application:         "doops-agent",
+				Delivery:            "declarative-agent-reconciliation",
+				ConfigurationSource: deploymentConfiguration,
+				Authorization:       "reconcile",
+			},
+			Acceptance: CICDAcceptance{
+				RequiredEvidence:        []string{"runtime-state"},
+				RequiredFailureEvidence: []string{"rollback-state"},
+			},
+			Policy: CICDDeploymentPolicy{
+				Mutation:      deploymentMutationGate,
+				Convergence:   deploymentConvergence,
+				FailureMode:   deploymentFailureMode,
+				MaxAttempts:   1,
+				MaxNoProgress: 1,
+			},
+		}},
+	}
+	registry := CICDEnvironmentRegistry{
+		ArtifactContract: CICDArtifactContract{
+			SourceRepository:     "https://example.test/doops.git",
+			SourceBranch:         "main",
+			Services:             []string{"doops-agent"},
+			ImageTagPattern:      "^[0-9a-f]{40}$",
+			ImageReferenceFormat: "repository@digest",
+			HelmImageBindings:    map[string]string{"doops-agent": "image"},
+		},
+		Environments: map[string]CICDEnvironmentProfile{
+			"oilan": {
+			Target:                    "gw-edu-coder",
+			Cluster:                   "doops-edu",
+			Instance:                  "edu-coder",
+			Namespace:                 "kz-ops",
+			Release:                   "doops-agent-live",
+			Workload:                  "deployment/doops-agent-live",
+			Container:                 "doops-agent",
+			Registry:                  "registry.example.test/oilan",
+			ReleaseManifestRepository: "https://example.test/oilan-manifests.git",
+			Chart:                     "deploy/chart",
+			Values:                    "deploy/values.yaml",
+			DeploymentMode:            "control-plane",
+			HealthChecks: CICDHealthChecks{Public: []CICDPublicHealthCheck{{
+				ID:             "gateway-health",
+				URL:            "https://doops.example.test/health",
+				ExpectedStatus: 200,
+			}}},
+		},
+		},
+	}
+
+	_, err := compileDeploymentPlan(template, map[string]string{}, registry)
+	if err == nil || !strings.Contains(err.Error(), "modelRouting") {
+		t.Fatalf("expected doops agent model routing declaration rejection, got %v", err)
+	}
+}
+
 func TestDeploymentPlanRequiresEnvironmentOwnedManifestRepository(t *testing.T) {
 	err := validateCICDEnvironmentProfile("test", CICDEnvironmentProfile{
 		Target:         "gw-oilan-node",
@@ -413,6 +509,8 @@ func TestDeploymentPlanRequiresEnvironmentOwnedManifestRepository(t *testing.T) 
 		Instance:       "oilan-node",
 		Namespace:      "test",
 		Release:        "zhiyong",
+		Workload:       "deployment/zhiyong",
+		Container:      "zhiyong",
 		Registry:       "registry.example.test/oilan-system",
 		Chart:          "deploy/environments/test/chart",
 		Values:         "deploy/environments/test/chart/values.yaml",
@@ -454,6 +552,8 @@ func TestDeploymentPlanRejectsMismatchedConfiguredGatewayTarget(t *testing.T) {
 					Instance:                  "oilan-node",
 					Namespace:                 "test",
 					Release:                   "zhiyong",
+					Workload:                  "deployment/zhiyong",
+					Container:                 "zhiyong",
 					Registry:                  "registry.example.test/oilan-system",
 					ReleaseManifestRepository: "registry.example.test/oilan-system/zhiyong-release-manifest-test",
 					Chart:                     "deploy/environments/test/chart",

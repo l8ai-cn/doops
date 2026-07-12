@@ -1,8 +1,8 @@
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
-  name: oilan-agent-bootstrap
-  description: Build and reconcile one immutable Oilan doops agent release
+  name: oilan-agent-reconciliation
+  description: Reconcile one immutable Oilan doops agent release
 spec:
   parameters:
     releaseId:
@@ -23,7 +23,7 @@ spec:
       environment: oilan
     desiredState:
       application: doops-agent
-      delivery: bootstrap-helm-agent
+      delivery: declarative-agent-reconciliation
       configurationSource: backend/deploy/environments.yaml
       authorization: reconcile
     acceptance:

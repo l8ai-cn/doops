@@ -21,6 +21,8 @@ conflicts: [pipeline, image-build, k8s, docker, shell]
 - 只使用计划中的 `digest`、`release`、`target.profile`、`artifactContract`、`desiredState`、`acceptance` 和 `policy`。
 - `/root/ws/<session>` 是已同步的发布工作区。它必须与计划中的不可变 release identity 一致。
 - 不得根据域名、目录名、历史环境名、默认命名空间或聊天上下文补全目标。
+- `target.profile.workload` 与 `target.profile.container` 是唯一可协调的运行工作负载和容器身份。
+- `target.profile.modelRouting.policy` 是模型任务路由策略；`single-model` 表示保留挂载设置中的一个模型，不得伪造三个不同模型。
 - 计划未声明的目标、制品、配置或授权都是阻塞事实，不可自行猜测或替换。
 
 ## 目标状态

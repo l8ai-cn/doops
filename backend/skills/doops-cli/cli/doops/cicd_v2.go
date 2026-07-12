@@ -154,6 +154,9 @@ type CICDEnvironmentProfile struct {
 	Instance                  string            `json:"instance" yaml:"instance"`
 	Namespace                 string            `json:"namespace" yaml:"namespace"`
 	Release                   string            `json:"release" yaml:"release"`
+	Workload                  string            `json:"workload" yaml:"workload"`
+	Container                 string            `json:"container" yaml:"container"`
+	ModelRouting              *CICDModelRouting `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
 	Registry                  string            `json:"registry" yaml:"registry"`
 	ReleaseManifestRepository string            `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
 	Chart                     string            `json:"chart" yaml:"chart"`
@@ -163,6 +166,10 @@ type CICDEnvironmentProfile struct {
 	PublicHosts               []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
 	HealthChecks              CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
 	Authz                     map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
+}
+
+type CICDModelRouting struct {
+	Policy string `json:"policy" yaml:"policy"`
 }
 
 type CICDArtifactContract struct {
@@ -255,6 +262,9 @@ func compileDeploymentPlan(template DeploymentTemplate, overrides map[string]str
 		return DeploymentPlan{}, fmt.Errorf("environment %q is not declared in environment profile", spec.Target.Environment)
 	}
 	if err := validateCICDEnvironmentProfile(spec.Target.Environment, profile); err != nil {
+		return DeploymentPlan{}, err
+	}
+	if err := validateCICDModelRouting(spec.DesiredState.Application, profile.ModelRouting); err != nil {
 		return DeploymentPlan{}, err
 	}
 	if err := validateCICDArtifactContract(registry.ArtifactContract); err != nil {
@@ -535,6 +545,8 @@ func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile)
 		"instance":                  profile.Instance,
 		"namespace":                 profile.Namespace,
 		"release":                   profile.Release,
+		"workload":                  profile.Workload,
+		"container":                 profile.Container,
 		"registry":                  profile.Registry,
 		"releaseManifestRepository": profile.ReleaseManifestRepository,
 		"chart":                     profile.Chart,
@@ -568,6 +580,21 @@ func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile)
 		}
 	}
 	return nil
+}
+
+func validateCICDModelRouting(application string, routing *CICDModelRouting) error {
+	if application != "doops-agent" {
+		return nil
+	}
+	if routing == nil || strings.TrimSpace(routing.Policy) == "" {
+		return fmt.Errorf("doops-agent environment modelRouting.policy is required")
+	}
+	switch routing.Policy {
+	case "single-model", "tiered":
+		return nil
+	default:
+		return fmt.Errorf("doops-agent modelRouting.policy must be single-model or tiered")
+	}
 }
 
 func normalizeEvidenceKinds(kinds []string) []string {
@@ -634,6 +661,9 @@ func validateDeploymentPlan(plan DeploymentPlan) error {
 		return fmt.Errorf("deployment plan execution target does not match environment profile")
 	}
 	if err := validateCICDEnvironmentProfile(plan.Spec.Target.Environment, *plan.Spec.Target.Profile); err != nil {
+		return err
+	}
+	if err := validateCICDModelRouting(plan.Spec.DesiredState.Application, plan.Spec.Target.Profile.ModelRouting); err != nil {
 		return err
 	}
 	profileDigest, err := digestDeploymentValue(*plan.Spec.Target.Profile)

@@ -14,11 +14,15 @@ artifactContract:
       - service
 environments:
   oilan:
-    target: gw-oilan-node
-    cluster: doops-oilan
-    instance: oilan-node
-    namespace: doops-system
-    release: doops-agent
+    target: gw-edu-coder
+    cluster: doops-edu
+    instance: edu-coder
+    namespace: kz-ops
+    release: doops-agent-live
+    workload: deployment/doops-agent-live
+    container: doops-agent
+    modelRouting:
+      policy: single-model
     registry: docker.cnb.cool/l8ai/ai
     releaseManifestRepository: https://github.com/l8ai-cn/doops.git
     chart: backend/deploy/helm/doops-agent

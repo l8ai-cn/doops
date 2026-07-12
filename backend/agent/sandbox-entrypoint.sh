@@ -73,50 +73,16 @@ configure_kubectl() {
 configure_doagent() {
     mkdir -p /root/.agent
     local settings_file=/root/.agent/settings.json
+    local source=/opt/doagent_config/settings.json
+    local policy="${DO_AGENT_MODEL_ROUTING_POLICY:-}"
 
-    if [ ! -f "${settings_file}" ] && [ -f /opt/doagent_config/settings.json ]; then
-        cp /opt/doagent_config/settings.json "${settings_file}"
-        echo "✅ doagent config: copied from /opt/doagent_config/settings.json"
-        return
+    if [ ! -f "${source}" ]; then
+        echo "❌ doagent config: mounted settings are required at ${source}"
+        exit 1
     fi
 
-    if [ -f "${settings_file}" ]; then
-        echo "✅ doagent config: using existing ${settings_file}"
-        return
-    fi
-
-    local model="${DO_AGENT_MODEL:-openai/gpt-5.4}"
-    local base_url="${API_BASE_URL:-https://api.example.com/v1}"
-    local api_key="${OPENAI_API_KEY:-}"
-    cat > "${settings_file}" <<SETTINGSEOF
-{
-  "model": "${model}",
-  "provider": {
-    "openai": {
-      "options": {
-        "apiKey": "${api_key}",
-        "baseURL": "${base_url}"
-      },
-      "models": {
-        "gpt-5.4": { "name": "GPT-5.4" },
-        "gpt-5.4-mini": { "name": "GPT-5.4 Mini" }
-      }
-    }
-  },
-  "model_tiers": {
-    "high": "openai/gpt-5.4",
-    "default": "${model}",
-    "low": "openai/gpt-5.4-mini"
-  },
-  "mcp_servers": [],
-  "verbose": false,
-  "working_dir": "/root/ws"
-}
-SETTINGSEOF
-    echo "✅ doagent config: auto-generated ${settings_file}"
-    if [ -z "${api_key}" ]; then
-        echo "⚠️  doagent config: OPENAI_API_KEY is empty; doops ask will fail until a key is mounted or injected"
-    fi
+    python3 /app/configure_doagent_settings.py "${source}" "${settings_file}" "${policy}"
+    echo "✅ doagent config: materialized from mounted settings"
 }
 
 start_doagent() {

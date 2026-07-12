@@ -3,19 +3,25 @@ image:
   tag: ""
   pullPolicy: Always
 
+workload:
+  name: doops-agent-live
+
+modelRouting:
+  policy: single-model
+
 imagePullSecrets:
   - name: doops-registry-pull
 
 gateway:
   url: https://doops.l8ai.cn
-  cluster: doops-oilan
-  instance: oilan-node
+  cluster: doops-edu
+  instance: edu-coder
   agentTokenSecret:
     name: doops-agent-runtime
     key: agent-token
 
 nodeSelector:
-  kubernetes.io/hostname: gpu-ampere01
+  kubernetes.io/hostname: 192.168.0.24
 
 agentSettings:
   secretName: doops-agent-settings
@@ -29,9 +35,9 @@ registryAuth:
   key: config.json
 
 paths:
-  kubeconfig: /etc/rancher/k3s/k3s.yaml
-  agentHome: /home/iict/data/doops-agent-home-k3s
-  containerdSocket: /run/k3s/containerd/containerd.sock
-  nerdctl: /usr/local/bin/nerdctl
+  kubeconfig: /etc/kubernetes/admin.conf
+  agentHome: /var/lib/doops-agent-home
+  containerdSocket: /run/containerd/containerd.sock
+  nerdctl: /usr/bin/nerdctl
   nerdctlReal: /usr/local/bin/nerdctl.real
   crictl: /usr/bin/crictl

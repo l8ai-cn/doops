@@ -36,6 +36,8 @@ spec:
           value: "http://127.0.0.1:9000"
         - name: DO_AGENT_MODEL
           value: "openai/gpt-5.4"
+        - name: DO_AGENT_MODEL_ROUTING_POLICY
+          value: "single-model"
         - name: API_BASE_URL
           value: "https://api.example.com/v1"
         volumeMounts:

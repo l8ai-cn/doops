@@ -59,10 +59,12 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
     entrypoint = read("agent/sandbox-entrypoint.sh")
 
     assert "DO_AGENT_PORT=\"${DO_AGENT_PORT:-9000}\"" in entrypoint
+    assert "DO_AGENT_MODEL_ROUTING_POLICY" in entrypoint
+    assert "/app/configure_doagent_settings.py" in entrypoint
     assert "/usr/local/bin/do-agent acp-http --port" in entrypoint
     assert "buildkitd --containerd-worker=false" in entrypoint
     assert "tini -s -- /app/doops-agent" in entrypoint
-    assert "https://api.example.com/v1" in entrypoint
+    assert "https://api.example.com/v1" not in entrypoint
 
 
 def test_agent_registry_auth_uses_one_mounted_multi_registry_config():
@@ -179,12 +181,14 @@ def test_agent_bundles_a_semantic_deployment_skill():
 
 
 def test_agent_images_sync_semantic_skills_into_doagent_discovery_path():
-    for path in ("agent/Dockerfile", "agent/Dockerfile.sandbox"):
+    for path in ("Dockerfile", "agent/Dockerfile", "agent/Dockerfile.sandbox"):
         dockerfile = read(path)
         assert "COPY --from=builder /app/agent/skills /app/skills" in dockerfile
+        assert "COPY --from=builder /app/agent/configure_doagent_settings.py /app/configure_doagent_settings.py" in dockerfile
 
     for path in ("agent/agent-entrypoint.sh", "agent/sandbox-entrypoint.sh"):
         entrypoint = read(path)
+        assert "/app/configure_doagent_settings.py" in entrypoint
         assert "for d in /app/skills/*/; do" in entrypoint
         assert 'mkdir -p "/root/.agent/skills/$name"' in entrypoint
         assert 'cp -rf "$d"* "/root/.agent/skills/$name/"' in entrypoint

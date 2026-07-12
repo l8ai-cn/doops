@@ -1,1 +1,38 @@
-{}
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: Always
+
+workload:
+  name: ""
+
+modelRouting:
+  policy: ""
+
+imagePullSecrets: []
+
+gateway:
+  url: ""
+  cluster: ""
+  instance: ""
+  agentTokenSecret:
+    name: ""
+    key: ""
+
+nodeSelector: {}
+
+agentSettings:
+  secretName: ""
+  key: ""
+
+registryAuth:
+  secretName: ""
+  key: ""
+
+paths:
+  kubeconfig: ""
+  agentHome: ""
+  containerdSocket: ""
+  nerdctl: ""
+  nerdctlReal: ""
+  crictl: ""

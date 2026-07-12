@@ -106,47 +106,18 @@ if [ -d /app/skills ]; then
     echo "✅ doops skills: synced from /app/skills"
 fi
 
-# 从 ConfigMap 复制 settings.json（优先）或自动生成
+# The mounted settings Secret is authoritative. Do not reuse a persisted,
+# potentially stale settings file or synthesize credentials in the container.
 SETTINGS_FILE="/root/.agent/settings.json"
-if [ ! -f "${SETTINGS_FILE}" ] && [ -f "/opt/doagent_config/settings.json" ]; then
-    cp /opt/doagent_config/settings.json "${SETTINGS_FILE}"
-    echo "✅ doagent config: copied from /opt/doagent_config/settings.json"
-elif [ ! -f "${SETTINGS_FILE}" ]; then
-    MODEL="${DO_AGENT_MODEL:-openai/gpt-5.4}"
-    BASE_URL="${API_BASE_URL:-https://api.example.com/v1}"
-    API_KEY="${OPENAI_API_KEY:-}"
-    cat > "${SETTINGS_FILE}" <<SETTINGSEOF
-{
-  "model": "${MODEL}",
-  "provider": {
-    "openai": {
-      "options": {
-        "apiKey": "${API_KEY}",
-        "baseURL": "${BASE_URL}"
-      },
-      "models": {
-        "gpt-5.4": { "name": "GPT-5.4" },
-        "gpt-5.4-mini": { "name": "GPT-5.4 Mini" }
-      }
-    }
-  },
-  "model_tiers": {
-    "high": "openai/gpt-5.4",
-    "default": "${MODEL}",
-    "low": "openai/gpt-5.4-mini"
-  },
-  "mcp_servers": [],
-  "verbose": false,
-  "working_dir": "/root/ws"
-}
-SETTINGSEOF
-    echo "✅ doagent config: auto-generated ${SETTINGS_FILE}"
-    if [ -z "${API_KEY}" ]; then
-        echo "⚠️  doagent config: OPENAI_API_KEY is empty; doops ask will fail until a key is mounted or injected"
-    fi
-else
-    echo "✅ doagent config: using existing ${SETTINGS_FILE}"
+if [ ! -f "/opt/doagent_config/settings.json" ]; then
+    echo "❌ doagent config: mounted settings are required at /opt/doagent_config/settings.json"
+    exit 1
 fi
+python3 /app/configure_doagent_settings.py \
+    /opt/doagent_config/settings.json \
+    "${SETTINGS_FILE}" \
+    "${DO_AGENT_MODEL_ROUTING_POLICY:-}"
+echo "✅ doagent config: materialized from mounted settings"
 
 # 启动 doagent ACP HTTP 服务（后台）
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"

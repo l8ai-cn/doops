@@ -8,9 +8,18 @@ The Oilan Agent release is declared by:
 - values: `deploy/environments/oilan-values.yaml`.
 
 `deploy/environments.yaml` is authoritative for the physical binding, namespace,
-Helm release, values, and health checks. This document must not repeat that
+declared workload, values, and health checks. This document must not repeat that
 mapping, and it must not be inferred from the Oilan name, a domain, or a
 historical cluster alias.
+
+# Model Routing
+
+The Oilan declaration records `modelRouting.policy: single-model`. The mounted
+`doops-agent-settings` Secret remains the only source of the model identifier
+and provider credentials. At startup the Agent materializes a runtime copy of
+that settings document without `model_tiers`, because this policy intentionally
+routes every task class to the one declared model. The mounted Secret is never
+rewritten, and a persisted `/root/.agent/settings.json` cannot override it.
 
 # Registry Credentials
 
@@ -24,7 +33,7 @@ entry:
 - `doops-registry-auth` is an `Opaque` Secret with key `config.json`, mounted
   into the Agent for BuildKit push and pull.
 - `doops-registry-pull` is a `kubernetes.io/dockerconfigjson` Secret with key
-  `.dockerconfigjson`, referenced by the Deployment and bootstrap Job through
+  `.dockerconfigjson`, referenced by the declared Deployment through
   `imagePullSecrets`.
 
 The environment contract requires both Secrets before deployment. This keeps
