@@ -24,20 +24,15 @@ rewritten, and a persisted `/root/.agent/settings.json` cannot override it.
 # Registry Credentials
 
 The runtime Secret references are `doops-agent-runtime`,
-`doops-agent-settings`, `doops-registry-auth`, and `doops-registry-pull`.
+`doops-agent-settings`, and `doops-registry-pull`.
 
-`doops-registry-auth` and `doops-registry-pull` are generated from the same
-standard Docker configuration and must both contain an `auths.docker.cnb.cool`
-entry:
+`doops-registry-pull` is a `kubernetes.io/dockerconfigjson` Secret with key
+`.dockerconfigjson` and an `auths.docker.cnb.cool` entry. It is referenced by
+the declared Deployment through `imagePullSecrets` and mounted into the Agent
+as `/root/.docker/config.json` for BuildKit push and pull.
 
-- `doops-registry-auth` is an `Opaque` Secret with key `config.json`, mounted
-  into the Agent for BuildKit push and pull.
-- `doops-registry-pull` is a `kubernetes.io/dockerconfigjson` Secret with key
-  `.dockerconfigjson`, referenced by the declared Deployment through
-  `imagePullSecrets`.
-
-The environment contract requires both Secrets before deployment. This keeps
-registry authorization outside Git while keeping Secret references and release
+The environment contract requires this Secret before deployment. This keeps
+registry authorization outside Git while keeping its one reference and release
 behavior versioned.
 
 # Execution And Verification

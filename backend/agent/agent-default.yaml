@@ -105,9 +105,9 @@ spec:
             type: DirectoryOrCreate
         - name: registry-auth
           secret:
-            secretName: doops-registry-auth
+            secretName: doops-registry-pull
             items:
-              - key: config.json
+              - key: .dockerconfigjson
                 path: config.json
         - name: containerd-run
           hostPath:

@@ -31,8 +31,8 @@ doagentConfig:
   configMapName: doagent-config
 
 registryAuth:
-  secretName: doops-registry-auth
-  key: config.json
+  secretName: doops-registry-pull
+  key: .dockerconfigjson
 
 paths:
   kubeconfig: /etc/kubernetes/admin.conf

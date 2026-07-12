@@ -71,6 +71,15 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
         "key": "agent-token",
     }
     assert "agent-token" not in container["command"][-1]
+    registry_auth = next(
+        item
+        for item in deployment["spec"]["template"]["spec"]["volumes"]
+        if item["name"] == "registry-auth"
+    )
+    assert registry_auth["secret"]["secretName"] == "doops-registry-pull"
+    assert registry_auth["secret"]["items"] == [
+        {"key": ".dockerconfigjson", "path": "config.json"}
+    ]
     volumes = {
         item["name"]: item["hostPath"]["path"]
         for item in deployment["spec"]["template"]["spec"]["volumes"]
