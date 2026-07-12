@@ -144,6 +144,23 @@ func TestReconcileAuditOutcomeMarksBlockedAndPreservesEvidence(t *testing.T) {
 	}
 }
 
+func TestReconcileAuditOutcomePreservesConvergedEvidence(t *testing.T) {
+	status, message, tail, terminal := reconcileAuditOutcome("doops_cicd_reconcile", map[string]interface{}{
+		"structuredContent": map[string]interface{}{
+			"planDigest": "sha256:plan",
+			"status":     "Converged",
+			"evidence":   []interface{}{map[string]interface{}{"kind": "runtime-state", "reference": "deployment:zhiyong-exam-api"}},
+			"violations": []interface{}{},
+		},
+	})
+	if !terminal || status != "success" || message != "" {
+		t.Fatalf("expected converged reconciliation audit success, got status=%q message=%q terminal=%v", status, message, terminal)
+	}
+	if !strings.Contains(tail, "sha256:plan") || !strings.Contains(tail, "runtime-state") {
+		t.Fatalf("expected audit tail to preserve converged evidence, got %q", tail)
+	}
+}
+
 func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

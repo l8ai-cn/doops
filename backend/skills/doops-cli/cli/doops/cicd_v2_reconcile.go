@@ -31,6 +31,9 @@ func (c *MCPClient) Reconcile(plan DeploymentPlan, request DeploymentReconcileRe
 	if err := validateDeploymentPlan(plan); err != nil {
 		return result, err
 	}
+	if plan.Attestation == nil {
+		return result, fmt.Errorf("deployment plan attestation is required for reconciliation")
+	}
 	if err := c.requireSemanticDeploymentCapability(); err != nil {
 		return result, err
 	}

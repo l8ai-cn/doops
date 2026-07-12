@@ -31,7 +31,7 @@ func main() {
 	}
 
 	port := flag.String("port", "42222", "Agent port")
-	listen := flag.String("listen", "0.0.0.0", "Bind address for the agent HTTP/WS listener (host or IP). Default 0.0.0.0 preserves host-network deployments; use 127.0.0.1 to restrict to loopback")
+	listen := flag.String("listen", "127.0.0.1", "Bind address for the agent HTTP/WS listener (host or IP). CI/CD uses the reverse gateway tunnel; expose a non-loopback listener only with an explicit operational requirement")
 	tokenFlag := flag.String("token", "", "Agent authentication token")
 	gatewayURL := flag.String("gateway-url", "", "Public doops-gateway URL for reverse tunnel mode")
 	cluster := flag.String("cluster", "", "Cluster name registered in reverse tunnel mode")

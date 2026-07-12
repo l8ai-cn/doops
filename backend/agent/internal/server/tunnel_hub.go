@@ -730,6 +730,10 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
+		if err := verifyCICDPlanAttestation(plan); err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+			return nil
+		}
 		if err := validateCICDReconcileRouteBinding(plan, cluster, instance); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
@@ -833,10 +837,12 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
 				}
-				if status, errMsg, reportTail, failed := reconcileAuditOutcome(params.Name, result); failed {
-					finalStatus = status
-					finalErr = errMsg
+				if status, errMsg, reportTail, terminal := reconcileAuditOutcome(params.Name, result); terminal {
 					tail.WriteString(reportTail)
+					if status == "failed" {
+						finalStatus = status
+						finalErr = errMsg
+					}
 				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
@@ -885,7 +891,7 @@ func reconcileAuditOutcome(tool string, result map[string]interface{}) (string, 
 		return "", "", "", false
 	}
 	status, _ := report["status"].(string)
-	if status != "Blocked" && status != "Failed" {
+	if status != "Converged" && status != "Blocked" && status != "Failed" {
 		return "", "", "", false
 	}
 	tail, err := json.Marshal(map[string]interface{}{
@@ -895,7 +901,13 @@ func reconcileAuditOutcome(tool string, result map[string]interface{}) (string, 
 		"violations": report["violations"],
 	})
 	if err != nil {
+		if status == "Converged" {
+			return "success", "", "", true
+		}
 		return "failed", "CI/CD reconciliation " + strings.ToLower(status), "", true
+	}
+	if status == "Converged" {
+		return "success", "", string(tail), true
 	}
 	return "failed", "CI/CD reconciliation " + strings.ToLower(status), string(tail), true
 }

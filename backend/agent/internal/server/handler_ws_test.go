@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -392,7 +393,7 @@ func TestValidateCICDReportRejectsInvalidStructuredFields(t *testing.T) {
 }
 
 func TestCICDReconcileReturnsAgentReportAsStructuredContent(t *testing.T) {
-	plan := cicdPlanFixture()
+	plan := attestedCICDPlanFixture(t)
 	report := map[string]interface{}{
 		"planDigest": plan["digest"],
 		"status":     "Converged",
@@ -535,7 +536,7 @@ func TestCICDReconcileFailsWhenAgentReportIsMissing(t *testing.T) {
 
 	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
 		"session_id": "cicd-no-report",
-		"plan":       cicdPlanFixture(),
+		"plan":       attestedCICDPlanFixture(t),
 		"dry_run":    false,
 	})
 	toolResult, _ := result["result"].(map[string]interface{})
@@ -583,7 +584,7 @@ func TestCICDReconcileRejectsDoagentWithoutStructuredReportCapability(t *testing
 
 	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
 		"session_id": "cicd-capability",
-		"plan":       cicdPlanFixture(),
+		"plan":       attestedCICDPlanFixture(t),
 	})
 	toolResult, _ := result["result"].(map[string]interface{})
 	if toolResult["isError"] != true {
@@ -630,6 +631,29 @@ func TestCICDReconcileRejectsForgedPlanDigest(t *testing.T) {
 		Plan:      rawPlan,
 	}); err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Fatalf("expected forged digest rejection, got %v", err)
+	}
+}
+
+func TestCICDReconcileRejectsUnsignedPlanBeforeCallingDoagent(t *testing.T) {
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_cicd_reconcile", map[string]interface{}{
+		"session_id": "unsigned-plan",
+		"plan":       cicdPlanFixture(),
+	})
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true {
+		t.Fatalf("expected unsigned plan rejection, got %#v", result)
+	}
+	content, _ := toolResult["content"].([]interface{})
+	item, _ := content[0].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(item["text"]), "signed") {
+		t.Fatalf("expected signed-plan error, got %#v", toolResult)
 	}
 }
 
@@ -703,6 +727,21 @@ func cicdPlanFixture() map[string]interface{} {
 		},
 	}
 	sealCICDPlanFixture(plan)
+	return plan
+}
+
+func attestedCICDPlanFixture(t *testing.T) map[string]interface{} {
+	t.Helper()
+	plan := cicdPlanFixture()
+	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
+	t.Setenv("DOOPS_CICD_PLAN_PUBLIC_KEY", base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey)))
+	digest, _ := plan["digest"].(string)
+	plan["attestation"] = map[string]interface{}{
+		"algorithm":  "ed25519",
+		"issuer":     "doops-cicd-compiler",
+		"planDigest": digest,
+		"signature":  base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(digest))),
+	}
 	return plan
 }
 

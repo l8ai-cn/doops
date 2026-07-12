@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -123,6 +124,12 @@ spec:
 	}
 	if plan.Digest == "" || !strings.HasPrefix(plan.Digest, "sha256:") {
 		t.Fatalf("expected immutable plan digest, got %q", plan.Digest)
+	}
+	if err := attestDeploymentPlan(&plan, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))); err != nil {
+		t.Fatalf("attest plan: %v", err)
+	}
+	if plan.Attestation == nil || plan.Attestation.PlanDigest != plan.Digest || plan.Attestation.Signature == "" {
+		t.Fatalf("expected signed deployment plan attestation, got %#v", plan.Attestation)
 	}
 }
 

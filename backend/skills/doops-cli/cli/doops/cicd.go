@@ -108,6 +108,9 @@ func runCICDCommand(ctx context.Context, args []string, newReconciler cicdReconc
 		if err != nil {
 			return err
 		}
+		if err := attestDeploymentPlanFromEnvironment(&plan); err != nil {
+			return err
+		}
 		reconciler, cleanup, err := newReconciler(plan)
 		if err != nil {
 			return err

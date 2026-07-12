@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -960,6 +961,10 @@ func optionsCollector(options *agentPromptOptions) doagentSSECollector {
 }
 
 func (gw *Gateway) handleCICDReconcileWS(ctx context.Context, reqID interface{}, args api.CICDReconcileParams, plan cicdReconcilePlan, pushProgress notificationSender, writeJSON func(v interface{})) {
+	if err := verifyCICDPlanAttestation(plan); err != nil {
+		writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		return
+	}
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
 		doagentURL = "http://127.0.0.1:9000"
@@ -1152,10 +1157,11 @@ type cicdReconcileArtifactContract struct {
 }
 
 type cicdReconcilePlan struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Digest     string `json:"digest"`
-	Spec       struct {
+	APIVersion  string               `json:"apiVersion"`
+	Kind        string               `json:"kind"`
+	Digest      string               `json:"digest"`
+	Attestation *cicdPlanAttestation `json:"attestation"`
+	Spec        struct {
 		Release struct {
 			Source   *cicdReconcileSourceRelease   `json:"source"`
 			Manifest *cicdReconcileManifestRelease `json:"manifest"`
@@ -1183,6 +1189,13 @@ type cicdReconcilePlan struct {
 			FailureMode string `json:"failureMode"`
 		} `json:"policy"`
 	} `json:"spec"`
+}
+
+type cicdPlanAttestation struct {
+	Algorithm  string `json:"algorithm"`
+	Issuer     string `json:"issuer"`
+	PlanDigest string `json:"planDigest"`
+	Signature  string `json:"signature"`
 }
 
 type cicdReconcileSourceRelease struct {
@@ -1281,6 +1294,31 @@ func validateCICDReconcileArtifactContract(artifact cicdReconcileArtifactContrac
 	return nil
 }
 
+func verifyCICDPlanAttestation(plan cicdReconcilePlan) error {
+	if plan.Attestation == nil {
+		return errors.New("deployment plan must be signed by the CI/CD compiler")
+	}
+	if plan.Attestation.Algorithm != "ed25519" ||
+		plan.Attestation.Issuer != "doops-cicd-compiler" ||
+		plan.Attestation.PlanDigest != plan.Digest ||
+		strings.TrimSpace(plan.Attestation.Signature) == "" {
+		return errors.New("deployment plan attestation is invalid")
+	}
+	rawPublicKey := strings.TrimSpace(os.Getenv("DOOPS_CICD_PLAN_PUBLIC_KEY"))
+	if rawPublicKey == "" {
+		return errors.New("DOOPS_CICD_PLAN_PUBLIC_KEY is required for CI/CD reconciliation")
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(rawPublicKey)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		return errors.New("DOOPS_CICD_PLAN_PUBLIC_KEY must be a base64 Ed25519 public key")
+	}
+	signature, err := base64.StdEncoding.DecodeString(plan.Attestation.Signature)
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(publicKey), []byte(plan.Digest), signature) {
+		return errors.New("deployment plan attestation signature is invalid")
+	}
+	return nil
+}
+
 func validCICDEvidenceKinds(kinds []string) bool {
 	if len(kinds) == 0 {
 		return false
@@ -1304,6 +1342,7 @@ func digestCICDPlanJSON(raw json.RawMessage) (string, error) {
 		return "", errors.New("plan must be a JSON object")
 	}
 	plan["digest"] = ""
+	delete(plan, "attestation")
 	return digestCICDValue(plan)
 }
 
