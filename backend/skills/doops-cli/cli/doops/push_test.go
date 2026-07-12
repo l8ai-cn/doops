@@ -69,6 +69,62 @@ func TestCICDSourceExcludesDropBulkyTrees(t *testing.T) {
 	}
 }
 
+func TestStageSnapshotKeepsNestedSourceDirectoryNamedTarget(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatalf("mkdir source root: %v", err)
+	}
+	runTestGit(t, src, "init", "-b", "main")
+	runTestGit(t, src, "config", "user.name", "doops")
+	runTestGit(t, src, "config", "user.email", "doops@localhost")
+
+	relative := filepath.Join(
+		"ecp-backend",
+		"ecp-authz",
+		"src",
+		"main",
+		"java",
+		"cn",
+		"l8ai",
+		"authz",
+		"service",
+		"target",
+		"TargetPermissionSystemService.java",
+	)
+	path := filepath.Join(src, relative)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir source package: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package target;\n"), 0644); err != nil {
+		t.Fatalf("write source package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".gitignore"), []byte("target/\n"), 0644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	buildOutput := filepath.Join("ecp-backend", "ecp-authz", "target", "classes", "App.class")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(src, buildOutput)), 0755); err != nil {
+		t.Fatalf("mkdir build output: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, buildOutput), []byte("bytecode\n"), 0644); err != nil {
+		t.Fatalf("write build output: %v", err)
+	}
+	runTestGit(t, src, "add", ".gitignore")
+	runTestGit(t, src, "add", "-f", relative)
+	runTestGit(t, src, "commit", "-m", "fixture")
+
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), cicdSourceExcludes, true)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	if !containsString(files, relative) {
+		t.Fatalf("source directory named target must not be excluded: %#v", files)
+	}
+	if containsString(files, buildOutput) {
+		t.Fatalf("ignored Maven build output must not be included: %#v", files)
+	}
+}
+
 func TestCICDSourceExcludesKeepRequiredBuildInputs(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
