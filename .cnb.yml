@@ -1,3 +1,5 @@
+# Temporary policy: CNB runs verification only for source changes. Image builds,
+# publication, deployment, rollback, and all CD remain owned by DoOps.
 main:
   pull_request:
     - name: ai-review
