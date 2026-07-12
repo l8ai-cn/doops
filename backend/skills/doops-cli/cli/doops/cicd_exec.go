@@ -6,15 +6,13 @@ import (
 	"strings"
 )
 
-// cicdExecutor dispatches a CICD stage to the DoOps agent-native executor
-// (the built-in doagent) via doops_agent_prompt. It shares the k8sCaller shape
-// so the existing *MCPClient satisfies it without any adapter.
+// cicdExecutor dispatches a CICD stage to either the DoOps agent-native
+// executor or the direct shell tool. It shares the k8sCaller shape so the
+// existing *MCPClient satisfies it without any adapter.
 //
-// CICD is agent-driven, not code-driven: the CLI never translates a stage into
-// concrete kubectl/helm/buildkit commands. It hands the stage's declarative
-// intent to the doagent, which owns HOW — tool selection, environment
-// adaptation (base-image mirrors, proxies, source quirks), retries, and
-// verification — and reports back.
+// Most structured stages are agent-driven. Versioned build and manifest tasks
+// are intentionally different: their repository-declared command is the
+// release contract and must not be replaced by agent-selected behavior.
 type cicdExecutor = k8sCaller
 
 type cicdVerificationExecutor interface {
@@ -35,6 +33,64 @@ func isCICDAgentDrivenStage(stage CICDPlanStage) bool {
 	default:
 		return false
 	}
+}
+
+func isCICDVersionedCommandTask(stage CICDPlanStage) bool {
+	if strings.TrimSpace(stage.Uses) != "agent.task" || strings.TrimSpace(stage.Run) != "" {
+		return false
+	}
+	switch strings.TrimSpace(stage.With["task"]) {
+	case "run-versioned-build-tool", "publish-release-manifest":
+		return true
+	default:
+		return false
+	}
+}
+
+func runCICDVersionedCommandTask(executor cicdExecutor, stage CICDPlanStage, mode, session string) (bool, error) {
+	if executor == nil {
+		return false, fmt.Errorf("stage %s: nil executor", stage.ID)
+	}
+	workspace, err := cicdRemoteWorkspace(session)
+	if err != nil {
+		return false, fmt.Errorf("stage %s: %w", stage.ID, err)
+	}
+
+	var commands []string
+	if mode == "dry-run" {
+		if command := strings.TrimSpace(stage.With["dryRunVerificationCommand"]); command != "" {
+			commands = append(commands, command)
+		} else {
+			return false, nil
+		}
+	} else {
+		requiredCommand := strings.TrimSpace(stage.With["requiredCommand"])
+		verificationCommand := strings.TrimSpace(stage.With["verificationCommand"])
+		if requiredCommand == "" || verificationCommand == "" {
+			return false, fmt.Errorf("stage %s requires requiredCommand and verificationCommand", stage.ID)
+		}
+		commands = append(commands, requiredCommand, verificationCommand)
+	}
+
+	command := strings.Join(append([]string{
+		"set -e",
+		"cd " + shellQuote(workspace),
+	}, commands...), "\n")
+	if err := executor.Call("doops_shell", map[string]interface{}{"command": command}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func cicdRemoteWorkspace(session string) (string, error) {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return "", fmt.Errorf("session is required for deterministic remote command tasks")
+	}
+	if strings.Contains(session, "/") || strings.Contains(session, "\\") || strings.Contains(session, "..") {
+		return "", fmt.Errorf("invalid session %q", session)
+	}
+	return "/root/ws/" + session, nil
 }
 
 // runCICDAgentStage hands one stage's intent to the doagent and lets it drive.
@@ -147,6 +203,9 @@ func cicdAgentInstruction(plan CICDPlan, stage CICDPlanStage, mode, session stri
 	b.WriteString("stage.uses: " + stage.Uses + "\n")
 	b.WriteString(fmt.Sprintf("mode: %s\n", mode))
 	b.WriteString(fmt.Sprintf("mutates: %t\n", stage.Mutates))
+	if target := strings.TrimSpace(plan.ExecutionTarget); target != "" {
+		b.WriteString("execution.target: " + target + "\n")
+	}
 	if strings.TrimSpace(session) != "" {
 		b.WriteString("session: " + strings.TrimSpace(session) + "\n")
 		b.WriteString("remote.workspace: /root/ws/" + strings.TrimSpace(session) + "\n")

@@ -67,6 +67,103 @@ spec:
 	}
 }
 
+func TestResolveCICDExecutionTargetUsesDeclaredRoutes(t *testing.T) {
+	t.Run("single environment", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{Environments: []CICDEnvironment{{Name: "test", Target: "gw-test"}}},
+			map[string]CICDInput{},
+		)
+		if err != nil || target != "gw-test" {
+			t.Fatalf("expected gw-test, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("selected environment", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{
+				Inputs: map[string]string{"environment": "oilan"},
+				Environments: []CICDEnvironment{
+					{Name: "oilan", Target: "gw-oilan"},
+					{Name: "scu", Target: "gw-scu"},
+				},
+			},
+			map[string]CICDInput{"environment": {Required: true}},
+		)
+		if err != nil || target != "gw-oilan" {
+			t.Fatalf("expected gw-oilan, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("legacy target input", func(t *testing.T) {
+		target, err := resolveCICDExecutionTarget(
+			CICDPlan{Inputs: map[string]string{"target": "legacy-target"}},
+			map[string]CICDInput{"target": {Required: true}},
+		)
+		if err != nil || target != "legacy-target" {
+			t.Fatalf("expected legacy target, got target=%q err=%v", target, err)
+		}
+	})
+
+	t.Run("ambiguous routes fail", func(t *testing.T) {
+		_, err := resolveCICDExecutionTarget(
+			CICDPlan{Environments: []CICDEnvironment{
+				{Name: "oilan", Target: "gw-oilan"},
+				{Name: "scu", Target: "gw-scu"},
+			}},
+			map[string]CICDInput{},
+		)
+		if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+			t.Fatalf("expected ambiguous target error, got %v", err)
+		}
+	})
+}
+
+func TestCICDRunDerivesTargetWithoutTargetInput(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: routed-run
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  environments:
+    - name: test
+      target: gw-test
+      namespace: test
+      release: app
+      deploymentDoc: docs/deploy/test.md
+      services: [api]
+  stages:
+    - id: verify
+      uses: agent.task
+      with:
+        task: verify-rollout
+`)
+	writeDeploymentDoc(t, dir, "docs/deploy/test.md")
+
+	resolvedTarget := ""
+	err := runCICDCommandWithSync(
+		context.Background(),
+		[]string{"run", "-f", workflowPath, "--dry-run"},
+		func(target string) (cicdExecutor, func(), error) {
+			resolvedTarget = target
+			return &fakeK8SCaller{}, nil, nil
+		},
+		nil,
+		"routed-run-session",
+	)
+	if err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if resolvedTarget != "gw-test" {
+		t.Fatalf("expected derived target gw-test, got %q", resolvedTarget)
+	}
+}
+
 func TestCICDWorkflowRejectsInvalidSchema(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {

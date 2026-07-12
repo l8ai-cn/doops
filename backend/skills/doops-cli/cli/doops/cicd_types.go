@@ -90,13 +90,14 @@ type CICDStage struct {
 }
 
 type CICDPlan struct {
-	Name         string            `json:"name"`
-	Inputs       map[string]string `json:"inputs"`
-	Policy       CICDPolicy        `json:"policy,omitempty"`
-	Source       CICDSource        `json:"source"`
-	Environments []CICDEnvironment `json:"environments,omitempty"`
-	Locks        []CICDLock        `json:"locks"`
-	Stages       []CICDPlanStage   `json:"stages"`
+	Name            string            `json:"name"`
+	Inputs          map[string]string `json:"inputs"`
+	ExecutionTarget string            `json:"executionTarget,omitempty"`
+	Policy          CICDPolicy        `json:"policy,omitempty"`
+	Source          CICDSource        `json:"source"`
+	Environments    []CICDEnvironment `json:"environments,omitempty"`
+	Locks           []CICDLock        `json:"locks"`
+	Stages          []CICDPlanStage   `json:"stages"`
 	// Context is the rendered, shared workflow context (buildEnv + context)
 	// injected into every agent-native stage instruction.
 	Context string `json:"context,omitempty"`
@@ -166,6 +167,19 @@ func validateCICDWorkflow(workflow CICDWorkflow) error {
 		}
 		if stage.Mutates && !stage.Confirm {
 			return fmt.Errorf("mutating stage %s requires confirm", id)
+		}
+		if isCICDVersionedCommandTask(CICDPlanStage{
+			ID:   stage.ID,
+			Uses: stage.Uses,
+			Run:  stage.Run,
+			With: stage.With,
+		}) {
+			if strings.TrimSpace(stage.With["requiredCommand"]) == "" {
+				return fmt.Errorf("versioned command stage %s requires with.requiredCommand", id)
+			}
+			if strings.TrimSpace(stage.With["verificationCommand"]) == "" {
+				return fmt.Errorf("versioned command stage %s requires with.verificationCommand", id)
+			}
 		}
 	}
 	if err := validateCICDAgentNativePolicy(workflow.Spec.Policy, workflow.Spec.Stages); err != nil {

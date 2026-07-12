@@ -9,9 +9,10 @@ import (
 
 func TestCICDAgentInstructionCarriesIntent(t *testing.T) {
 	plan := CICDPlan{
-		Name:   "scu-deploy",
-		Inputs: map[string]string{"target": "gw-scu", "reason": "release"},
-		Source: CICDSource{Path: "/tmp/src"},
+		Name:            "scu-deploy",
+		Inputs:          map[string]string{"reason": "release"},
+		ExecutionTarget: "gw-scu",
+		Source:          CICDSource{Path: "/tmp/src"},
 	}
 	stage := CICDPlanStage{
 		ID:      "deploy-zhiyong",
@@ -34,7 +35,7 @@ func TestCICDAgentInstructionCarriesIntent(t *testing.T) {
 		"task: helm-upgrade",
 		"release: zhiyong",
 		"namespace: oilan-system",
-		"target: gw-scu",
+		"execution.target: gw-scu",
 		"source.path.local: /tmp/src",
 		"remote.workspace: /root/ws/sess-1",
 		"session: sess-1",
@@ -395,6 +396,56 @@ spec:
 	instruction, _ := caller.calls[0].args["instruction"].(string)
 	if !strings.Contains(instruction, "helm-upgrade") || !strings.Contains(instruction, "mode: apply") {
 		t.Fatalf("instruction missing intent: %q", instruction)
+	}
+}
+
+func TestCICDRunnerExecutesVersionedCommandTaskDirectly(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: deterministic-release
+spec:
+  policy:
+    agentNative: true
+  source:
+    path: `+quoteYAML(dir)+`
+  stages:
+    - id: build
+      uses: agent.task
+      mutates: true
+      confirm: true
+      with:
+        task: run-versioned-build-tool
+        requiredCommand: python3 ops/cicd/tools/build_release_images.py build --release-id deadbeef
+        verificationCommand: python3 ops/cicd/tools/build_release_images.py verify --release-id deadbeef
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	caller := &fakeK8SCaller{}
+	if _, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+		Executor:    caller,
+		AllowMutate: true,
+		Session:     "release-session",
+		SourceSync:  func(string) error { return nil },
+	}); err != nil {
+		t.Fatalf("run workflow: %v", err)
+	}
+	if len(caller.calls) != 1 || caller.calls[0].tool != "doops_shell" {
+		t.Fatalf("expected one direct doops_shell call, got %#v", caller.calls)
+	}
+	command, _ := caller.calls[0].args["command"].(string)
+	for _, want := range []string{
+		"cd '/root/ws/release-session'",
+		"python3 ops/cicd/tools/build_release_images.py build --release-id deadbeef",
+		"python3 ops/cicd/tools/build_release_images.py verify --release-id deadbeef",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("direct command missing %q:\n%s", want, command)
+		}
 	}
 }
 

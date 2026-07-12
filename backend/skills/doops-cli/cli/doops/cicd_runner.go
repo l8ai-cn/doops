@@ -15,6 +15,9 @@ type CICDRunOptions struct {
 	Inputs      map[string]string
 	DryRun      bool
 	AllowMutate bool
+	// ExecutionTarget is resolved from declared workflow routes. Routed workflows
+	// never require an operator-supplied target input.
+	ExecutionTarget string
 	// Session isolates the remote agent workspace at /root/ws/<session>.
 	Session string
 	// SourceSync pushes the local source tree into the remote session workspace
@@ -52,6 +55,7 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 		Name:      plan.Name,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	plan.ExecutionTarget = strings.TrimSpace(opts.ExecutionTarget)
 	sourceSynced := false
 	for _, stage := range plan.Stages {
 		step := CICDRunStepResult{ID: stage.ID, Uses: stage.Uses}
@@ -152,6 +156,24 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 				mode := "apply"
 				if opts.DryRun {
 					mode = "dry-run"
+				}
+				if isCICDVersionedCommandTask(stage) {
+					executed, err := runCICDVersionedCommandTask(opts.Executor, stage, mode, opts.Session)
+					if err != nil {
+						step.Status = "failed"
+						step.Message = err.Error()
+						result.Steps = append(result.Steps, step)
+						result.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+						return result, fmt.Errorf("stage %s failed: %w", stage.ID, err)
+					}
+					if executed {
+						step.Status = "success"
+						step.Message = "executed deterministic versioned command task (mode=" + mode + ")"
+					} else {
+						step.Status = "planned"
+						step.Message = "dry-run planned deterministic versioned command task"
+					}
+					break
 				}
 				if err := runCICDAgentStage(opts.Executor, plan, stage, mode, opts.Session); err != nil {
 					step.Status = "failed"
