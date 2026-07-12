@@ -337,24 +337,6 @@ func initializeCapabilities(evt wsEvent) map[string]interface{} {
 	return capabilities
 }
 
-func (c *MCPClient) requireSemanticDeploymentCapability() error {
-	if err := c.connect(); err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	deployment, _ := c.capabilities["semanticDeployment"].(map[string]interface{})
-	reconcile, _ := deployment["reconcile"].(map[string]interface{})
-	if reconcile["tool"] != "doops_cicd_reconcile" ||
-		reconcile["input"] != "DeploymentPlan" ||
-		reconcile["output"] != "CICDReconcileResult" ||
-		reconcile["contractVersion"] != deploymentAPIVersion {
-		return fmt.Errorf("target %q does not advertise %s semantic deployment reconciliation", c.Target.Name, deploymentAPIVersion)
-	}
-	return nil
-}
-
 // registerPending 为指定 reqID 注册一个事件接收 channel
 func (c *MCPClient) registerPending(reqID int64) chan wsEvent {
 	ch := make(chan wsEvent, 4096) // 流式输出可能包含批量 SSH/诊断结果

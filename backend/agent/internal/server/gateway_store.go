@@ -25,7 +25,6 @@ const (
 	ActionExec         GatewayAction = "exec"
 	ActionAsk          GatewayAction = "ask"
 	ActionReconcile    GatewayAction = "reconcile"
-	ActionCICDSubmit   GatewayAction = "cicd:submit"
 	ActionRead         GatewayAction = "read"
 	ActionWrite        GatewayAction = "write"
 	ActionPush         GatewayAction = "push"

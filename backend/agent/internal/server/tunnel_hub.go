@@ -46,9 +46,6 @@ type GatewayHub struct {
 	activeOps   map[string]*gatewayActiveOperation
 	activeSeq   uint64
 
-	cicdSubmitMu  sync.RWMutex
-	cicdSubmitter CICDReleaseSubmitter
-
 	scheduler *Scheduler
 }
 
@@ -637,7 +634,6 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionReconcile) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionCICDSubmit) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
@@ -722,15 +718,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	var releaseSubmission cicdReleaseSubmission
-	if params.Name == "doops_cicd_submit" {
-		var err error
-		releaseSubmission, err = parseCICDReleaseSubmitParams(params.Arguments)
-		if err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-			return nil
-		}
-	}
 	action := actionForTool(params.Name, params.Arguments)
 	if action == "" {
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
@@ -760,43 +747,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
-		return nil
-	}
-	if params.Name == "doops_cicd_submit" {
-		releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-		if err != nil {
-			finishAudit("rate_limited", err.Error(), "", 0)
-			writeJSON(buildToolErrorResponse(req.ID, err.Error()))
-			return nil
-		}
-		defer releaseLimit()
-
-		opCtx, cancelOp := context.WithCancel(context.Background())
-		defer cancelOp()
-		opID := h.registerActiveOperation(GatewayActiveOperation{
-			UserID:         auth.UserID,
-			TokenID:        auth.TokenID,
-			Cluster:        cluster,
-			Instance:       instance,
-			Action:         action,
-			Session:        releaseSubmission.SessionID,
-			CommandSummary: summarizeToolCall(params.Name, params.Arguments),
-			Kind:           "cicd-release",
-		}, cancelOp)
-		defer h.finishActiveOperation(opID)
-
-		result, err := h.submitCICDRelease(opCtx, releaseSubmission)
-		if err != nil {
-			finishAudit("blocked", err.Error(), "", 0)
-			writeJSON(buildToolErrorResponse(req.ID, err.Error()))
-			return nil
-		}
-		structuredContent := map[string]interface{}{
-			"releaseId": result.ReleaseID,
-			"status":    result.Status,
-		}
-		finishAudit("success", "", "", 0)
-		writeJSON(buildStructuredSuccessResponse(req.ID, "remote multi-Ops release accepted.", structuredContent))
 		return nil
 	}
 	agent := h.getAgent(cluster, instance)
@@ -866,13 +816,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
 				}
-				if status, errMsg, reportTail, terminal := reconcileAuditOutcome(params.Name, result); terminal {
-					tail.WriteString(reportTail)
-					if status == "failed" {
-						finalStatus = status
-						finalErr = errMsg
-					}
-				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
@@ -898,47 +841,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
-}
-
-func validateCICDReconcileRouteBinding(plan cicdReconcilePlan, cluster, instance string) error {
-	var profile cicdReconcileEnvironmentProfile
-	if err := json.Unmarshal(plan.Spec.Target.Profile, &profile); err != nil {
-		return errors.New("plan resolved environment profile is invalid")
-	}
-	if profile.Cluster != cluster || profile.Instance != instance {
-		return fmt.Errorf("deployment plan target binding %s/%s does not match gateway route %s/%s", profile.Cluster, profile.Instance, cluster, instance)
-	}
-	return nil
-}
-
-func reconcileAuditOutcome(tool string, result map[string]interface{}) (string, string, string, bool) {
-	if tool != "doops_cicd_reconcile" {
-		return "", "", "", false
-	}
-	report, ok := result["structuredContent"].(map[string]interface{})
-	if !ok {
-		return "", "", "", false
-	}
-	status, _ := report["status"].(string)
-	if status != "Converged" && status != "Blocked" && status != "Failed" {
-		return "", "", "", false
-	}
-	tail, err := json.Marshal(map[string]interface{}{
-		"planDigest": report["planDigest"],
-		"status":     status,
-		"evidence":   report["evidence"],
-		"violations": report["violations"],
-	})
-	if err != nil {
-		if status == "Converged" {
-			return "success", "", "", true
-		}
-		return "failed", "CI/CD reconciliation " + strings.ToLower(status), "", true
-	}
-	if status == "Converged" {
-		return "success", "", string(tail), true
-	}
-	return "failed", "CI/CD reconciliation " + strings.ToLower(status), string(tail), true
 }
 
 func (h *GatewayHub) acquireOperationSlot(userID string) (func(), error) {

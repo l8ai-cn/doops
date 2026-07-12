@@ -105,7 +105,7 @@ type DeploymentPlanSpec struct {
 	ArtifactContract CICDArtifactContract `json:"artifactContract,omitempty" yaml:"artifactContract,omitempty"`
 	DesiredState     CICDDesiredState     `json:"desiredState" yaml:"desiredState"`
 	Acceptance       CICDAcceptance       `json:"acceptance" yaml:"acceptance"`
-	Policy           CICDReconcilePolicy  `json:"policy" yaml:"policy"`
+	Policy           CICDDeploymentPolicy `json:"policy" yaml:"policy"`
 }
 
 type CICDReleaseReference struct {
@@ -145,7 +145,7 @@ type CICDAcceptance struct {
 	RequiredFailureEvidence []string `json:"requiredFailureEvidence" yaml:"requiredFailureEvidence"`
 }
 
-type CICDReconcilePolicy struct {
+type CICDDeploymentPolicy struct {
 	Mutation    string `json:"mutation" yaml:"mutation"`
 	Convergence string `json:"convergence" yaml:"convergence"`
 	FailureMode string `json:"failureMode" yaml:"failureMode"`
@@ -201,33 +201,6 @@ type CICDWorkloadHealthCheck struct {
 	Service          string `json:"service" yaml:"service"`
 	MinReadyReplicas int    `json:"minReadyReplicas" yaml:"minReadyReplicas"`
 	RequireEndpoints bool   `json:"requireEndpoints" yaml:"requireEndpoints"`
-}
-
-type CICDReconcileStatus string
-
-const (
-	CICDReconcilePending     CICDReconcileStatus = "Pending"
-	CICDReconcileReconciling CICDReconcileStatus = "Reconciling"
-	CICDReconcileConverged   CICDReconcileStatus = "Converged"
-	CICDReconcileBlocked     CICDReconcileStatus = "Blocked"
-	CICDReconcileFailed      CICDReconcileStatus = "Failed"
-)
-
-type CICDEvidence struct {
-	Kind      string `json:"kind"`
-	Reference string `json:"reference"`
-}
-
-type CICDViolation struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-type CICDReconcileResult struct {
-	PlanDigest string              `json:"planDigest"`
-	Status     CICDReconcileStatus `json:"status"`
-	Evidence   []CICDEvidence      `json:"evidence,omitempty"`
-	Violations []CICDViolation     `json:"violations,omitempty"`
 }
 
 func loadDeploymentTemplate(path string) (DeploymentTemplate, error) {
@@ -529,56 +502,6 @@ func renderCICDReleaseReference(release CICDReleaseReference, inputs map[string]
 		release.Manifest = &manifest
 	}
 	return release
-}
-
-func evaluateDeploymentReconcile(plan DeploymentPlan, result CICDReconcileResult) (CICDReconcileStatus, error) {
-	if strings.TrimSpace(plan.Digest) == "" {
-		return "", fmt.Errorf("deployment plan digest is required")
-	}
-	if result.PlanDigest != plan.Digest {
-		return "", fmt.Errorf("reconcile result plan digest mismatch: want=%s got=%s", plan.Digest, result.PlanDigest)
-	}
-	switch result.Status {
-	case CICDReconcileBlocked, CICDReconcileFailed:
-		if len(result.Violations) == 0 {
-			return "", fmt.Errorf("%s reconciliation result requires at least one violation", strings.ToLower(string(result.Status)))
-		}
-		requiredFailureEvidence := normalizeEvidenceKinds(plan.Spec.Acceptance.RequiredFailureEvidence)
-		actualFailureEvidence := map[string]bool{}
-		for _, evidence := range result.Evidence {
-			if strings.TrimSpace(evidence.Kind) == "" || strings.TrimSpace(evidence.Reference) == "" {
-				return "", fmt.Errorf("reconcile evidence requires kind and reference")
-			}
-			actualFailureEvidence[evidence.Kind] = true
-		}
-		for _, kind := range requiredFailureEvidence {
-			if !actualFailureEvidence[kind] {
-				return "", fmt.Errorf("%s reconciliation result is missing required failure evidence %q", strings.ToLower(string(result.Status)), kind)
-			}
-		}
-		return result.Status, nil
-	case CICDReconcilePending, CICDReconcileReconciling, CICDReconcileConverged:
-	default:
-		return "", fmt.Errorf("unsupported reconcile status %q", result.Status)
-	}
-
-	required := normalizeEvidenceKinds(plan.Spec.Acceptance.RequiredEvidence)
-	actual := map[string]bool{}
-	for _, evidence := range result.Evidence {
-		if strings.TrimSpace(evidence.Kind) == "" || strings.TrimSpace(evidence.Reference) == "" {
-			return "", fmt.Errorf("reconcile evidence requires kind and reference")
-		}
-		actual[evidence.Kind] = true
-	}
-	for _, kind := range required {
-		if !actual[kind] {
-			if result.Status == CICDReconcileConverged {
-				return "", fmt.Errorf("converged result is missing required evidence %q", kind)
-			}
-			return CICDReconcileReconciling, nil
-		}
-	}
-	return CICDReconcileConverged, nil
 }
 
 func validateCICDArtifactContract(artifact CICDArtifactContract) error {

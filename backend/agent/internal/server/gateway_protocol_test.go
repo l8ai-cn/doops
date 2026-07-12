@@ -117,50 +117,6 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestCICDReconcilePlanMustBindToGatewayRoute(t *testing.T) {
-	plan := mustCICDReconcilePlan(t, cicdPlanFixture())
-	if err := validateCICDReconcileRouteBinding(plan, "doops-oilan", "oilan-node"); err != nil {
-		t.Fatalf("expected matching gateway route to be accepted: %v", err)
-	}
-	if err := validateCICDReconcileRouteBinding(plan, "doops-edu", "edu-coder"); err == nil {
-		t.Fatal("expected mismatched gateway route to be rejected")
-	}
-}
-
-func TestReconcileAuditOutcomeMarksBlockedAndPreservesEvidence(t *testing.T) {
-	status, message, tail, failed := reconcileAuditOutcome("doops_cicd_reconcile", map[string]interface{}{
-		"structuredContent": map[string]interface{}{
-			"planDigest": "sha256:plan",
-			"status":     "Blocked",
-			"evidence":   []interface{}{map[string]interface{}{"kind": "rollback-state", "reference": "helm:41"}},
-			"violations": []interface{}{map[string]interface{}{"code": "no-progress", "message": "no new evidence"}},
-		},
-	})
-	if !failed || status != "failed" || !strings.Contains(message, "blocked") {
-		t.Fatalf("expected blocked reconciliation audit failure, got status=%q message=%q failed=%v", status, message, failed)
-	}
-	if !strings.Contains(tail, "rollback-state") || !strings.Contains(tail, "no-progress") {
-		t.Fatalf("expected audit tail to preserve structured evidence, got %q", tail)
-	}
-}
-
-func TestReconcileAuditOutcomePreservesConvergedEvidence(t *testing.T) {
-	status, message, tail, terminal := reconcileAuditOutcome("doops_cicd_reconcile", map[string]interface{}{
-		"structuredContent": map[string]interface{}{
-			"planDigest": "sha256:plan",
-			"status":     "Converged",
-			"evidence":   []interface{}{map[string]interface{}{"kind": "runtime-state", "reference": "deployment:zhiyong-exam-api"}},
-			"violations": []interface{}{},
-		},
-	})
-	if !terminal || status != "success" || message != "" {
-		t.Fatalf("expected converged reconciliation audit success, got status=%q message=%q terminal=%v", status, message, terminal)
-	}
-	if !strings.Contains(tail, "sha256:plan") || !strings.Contains(tail, "runtime-state") {
-		t.Fatalf("expected audit tail to preserve converged evidence, got %q", tail)
-	}
-}
-
 func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -1084,8 +1040,10 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
 	}
-	if got := actionForTool("doops_cicd_reconcile", json.RawMessage(`{"session_id":"release"}`)); got != "" {
-		t.Fatalf("dedicated reconciliation must not bypass Ask, got %q", got)
+	for _, tool := range []string{"doops_cicd_reconcile", "doops_cicd_submit"} {
+		if got := actionForTool(tool, json.RawMessage(`{"session_id":"release"}`)); got != "" {
+			t.Fatalf("dedicated CI/CD tool %q must not bypass Ask, got %q", tool, got)
+		}
 	}
 	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
 		t.Fatalf("doops_check_deployment must map to check, got %q", got)
