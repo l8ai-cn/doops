@@ -47,7 +47,6 @@ var defaultGatewayUserActions = []GatewayAction{
 	ActionInfo,
 	ActionCheck,
 	ActionClean,
-	ActionAgentUpgrade,
 }
 
 type TokenKind string

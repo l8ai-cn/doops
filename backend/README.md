@@ -391,7 +391,9 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一发布入口是版本化 DoOps Workflow。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/ops/cicd/oilan-doops-agent-bootstrap.yaml`。Workflow 会校验 source commit、构建并验证候选镜像、通过一次性 Helm bootstrap Job 接管 Deployment，并等待 Helm 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
+唯一发布入口是版本化 DoOps Workflow。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/ops/cicd/oilan-doops-agent-bootstrap.yaml`。Workflow 会校验 source commit，并以该 SHA 构建不可变候选镜像；一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
+
+`doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
 
 ## 常用命令
 

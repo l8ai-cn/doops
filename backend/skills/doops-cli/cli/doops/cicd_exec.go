@@ -46,7 +46,7 @@ func isCICDVersionedCommandTask(stage CICDPlanStage) bool {
 		return false
 	}
 	switch strings.TrimSpace(stage.With["task"]) {
-	case "run-versioned-build-tool", "publish-release-manifest":
+	case "run-versioned-build-tool", "run-versioned-deploy-command", "publish-release-manifest":
 		return true
 	default:
 		return false

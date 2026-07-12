@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,6 +249,25 @@ func runCICDGitClone(ctx context.Context, source CICDSource) (string, string, er
 	if err := os.MkdirAll(filepath.Dir(pathAbs), 0o755); err != nil {
 		return "", "", err
 	}
+	if info, statErr := os.Stat(pathAbs); statErr == nil {
+		if !info.IsDir() {
+			return "", "", fmt.Errorf("source.path exists but is not a directory: %s", pathAbs)
+		}
+		insideWorkTree, stderr, err := runCICDCommandOutput(ctx, pathAbs, nil, "git", "rev-parse", "--is-inside-work-tree")
+		if err != nil || strings.TrimSpace(insideWorkTree) != "true" {
+			return strings.TrimSpace(insideWorkTree), strings.TrimSpace(stderr), fmt.Errorf("source.path exists but is not a Git worktree: %s", pathAbs)
+		}
+		remote, stderr, err := runCICDCommandOutput(ctx, pathAbs, nil, "git", "remote", "get-url", "origin")
+		if err != nil {
+			return strings.TrimSpace(remote), strings.TrimSpace(stderr), fmt.Errorf("read source origin: %w", err)
+		}
+		if strings.TrimSpace(remote) != repo {
+			return strings.TrimSpace(remote), "", fmt.Errorf("source.path origin mismatch: want=%s got=%s", repo, strings.TrimSpace(remote))
+		}
+		return runCICDCommandOutput(ctx, pathAbs, nil, "git", "fetch", "origin", "--prune")
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", "", statErr
+	}
 	args := []string{"clone", "--no-hardlinks"}
 	if strings.TrimSpace(source.Branch) != "" {
 		args = append(args, "--branch", strings.TrimSpace(source.Branch))
@@ -304,6 +324,10 @@ func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID 
 	if err := run("checkout", "--detach", releaseID); err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 	}
+	attestationPath := filepath.Join(sourcePath, ".doops-source-release.json")
+	if err := os.Remove(attestationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("remove prior source release attestation: %w", err)
+	}
 	status, statusErr, err := runCICDCommandOutput(ctx, sourcePath, nil, "git", "status", "--porcelain")
 	if err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
@@ -323,7 +347,6 @@ func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID 
 	if err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 	}
-	attestationPath := filepath.Join(sourcePath, ".doops-source-release.json")
 	if err := os.WriteFile(attestationPath, append(attestation, '\n'), 0o644); err != nil {
 		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 	}

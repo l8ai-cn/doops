@@ -124,7 +124,7 @@ def test_agent_update_dockerfiles_default_to_base_light_runtime():
 
 def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
     cnb = read_repo(".cnb.yml")
-    contract_cmd = "python3 -m pytest backend/test/test_sandbox_image_contract.py -q"
+    contract_cmd = "python3 -m pytest backend/test -q"
 
     for branch in ("main", "master"):
         block = top_level_block(cnb, branch)
@@ -134,6 +134,10 @@ def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
         assert contract_cmd in push_block
         assert "py3-pytest" in pr_block
         assert "py3-pytest" in push_block
+        assert "py3-yaml" in pr_block
+        assert "py3-yaml" in push_block
+        assert " helm" in pr_block
+        assert " helm" in push_block
 
 
 def test_doops_cicd_is_the_only_agent_release_definition():

@@ -195,43 +195,45 @@ spec:
 		t.Fatalf("load workflow: %v", err)
 	}
 
-	synced := false
-	verifier := &sourceReleaseVerifier{}
-	_, err = runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
-		Inputs:   map[string]string{"releaseId": releaseID},
-		Executor: verifier,
-		Session:  "attested-release",
-		SourceSync: func(src string) error {
-			data, err := os.ReadFile(filepath.Join(src, ".doops-source-release.json"))
-			if err != nil {
-				return err
-			}
-			var attestation struct {
-				ReleaseID string `json:"releaseId"`
-			}
-			if err := json.Unmarshal(data, &attestation); err != nil {
-				return err
-			}
-			if attestation.ReleaseID != releaseID {
-				return fmt.Errorf("attested release=%s want=%s", attestation.ReleaseID, releaseID)
-			}
-			head, _, err := runCICDCommandOutput(context.Background(), src, nil, "git", "rev-parse", "HEAD")
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(head) != releaseID {
-				return fmt.Errorf("checked out release=%s want=%s", strings.TrimSpace(head), releaseID)
-			}
-			verifier.attestation = string(data)
-			synced = true
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("run workflow: %v", err)
-	}
-	if !synced {
-		t.Fatal("expected attested source sync")
+	for run := 1; run <= 2; run++ {
+		synced := false
+		verifier := &sourceReleaseVerifier{}
+		_, err = runCICDWorkflow(context.Background(), workflow, CICDRunOptions{
+			Inputs:   map[string]string{"releaseId": releaseID},
+			Executor: verifier,
+			Session:  "attested-release",
+			SourceSync: func(src string) error {
+				data, err := os.ReadFile(filepath.Join(src, ".doops-source-release.json"))
+				if err != nil {
+					return err
+				}
+				var attestation struct {
+					ReleaseID string `json:"releaseId"`
+				}
+				if err := json.Unmarshal(data, &attestation); err != nil {
+					return err
+				}
+				if attestation.ReleaseID != releaseID {
+					return fmt.Errorf("attested release=%s want=%s", attestation.ReleaseID, releaseID)
+				}
+				head, _, err := runCICDCommandOutput(context.Background(), src, nil, "git", "rev-parse", "HEAD")
+				if err != nil {
+					return err
+				}
+				if strings.TrimSpace(head) != releaseID {
+					return fmt.Errorf("checked out release=%s want=%s", strings.TrimSpace(head), releaseID)
+				}
+				verifier.attestation = string(data)
+				synced = true
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if !synced {
+			t.Fatalf("run %d: expected attested source sync", run)
+		}
 	}
 }
 
@@ -570,6 +572,17 @@ func TestIsCICDAgentDrivenStage(t *testing.T) {
 		got := isCICDAgentDrivenStage(CICDPlanStage{Uses: c.uses, Run: c.run})
 		if got != c.want {
 			t.Fatalf("uses=%q run=%q => %v, want %v", c.uses, c.run, got, c.want)
+		}
+	}
+}
+
+func TestIsCICDVersionedCommandTaskIncludesDeployCommands(t *testing.T) {
+	for _, task := range []string{"run-versioned-build-tool", "run-versioned-deploy-command", "publish-release-manifest"} {
+		if !isCICDVersionedCommandTask(CICDPlanStage{
+			Uses: "agent.task",
+			With: map[string]string{"task": task},
+		}) {
+			t.Fatalf("expected %q to use deterministic command executor", task)
 		}
 	}
 }

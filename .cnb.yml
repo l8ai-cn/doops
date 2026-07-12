@@ -15,9 +15,9 @@ main:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
-          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
+          script: python3 -m pytest backend/test -q
   push:
     - name: ci
       runner:
@@ -26,9 +26,9 @@ main:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
-          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
+          script: python3 -m pytest backend/test -q
         - name: agent tests
           script: |
             cd backend/agent
@@ -65,9 +65,9 @@ master:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
-          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
+          script: python3 -m pytest backend/test -q
   push:
     - name: ci
       runner:
@@ -76,9 +76,9 @@ master:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git nodejs npm python3 py3-pytest
+          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
-          script: python3 -m pytest backend/test/test_sandbox_image_contract.py -q
+          script: python3 -m pytest backend/test -q
         - name: agent tests
           script: |
             cd backend/agent

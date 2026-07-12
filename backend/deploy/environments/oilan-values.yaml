@@ -1,6 +1,6 @@
 image:
   repository: docker.cnb.cool/l8ai/ai/doops.sh
-  tag: agent-runtime-20260712-01
+  tag: ""
   pullPolicy: Always
 
 imagePullSecrets:

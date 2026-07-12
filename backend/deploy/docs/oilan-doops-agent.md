@@ -2,7 +2,7 @@
 
 - Helm release: `doops-agent`
 - Namespace: `doops-system`
-- Candidate image: `docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01`
+- Candidate image: `docker.cnb.cool/l8ai/ai/doops.sh:<releaseId>`
 - Runtime Secret references: `doops-agent-runtime`, `doops-agent-settings`, and `doops-registry-auth`
 
 # Deployment
@@ -10,7 +10,8 @@
 The versioned bootstrap Job is created through the DoOps workflow. Its candidate
 image contains the chart and Helm binary. The Job first adds Helm ownership
 metadata to the existing Deployment, then runs `helm upgrade --install` with
-`deploy/environments/oilan-values.yaml`.
+`deploy/environments/oilan-values.yaml` and the immutable `releaseId` image
+tag. Each release creates a distinct Job and must wait for that Job's result.
 
 The chart supplies the public TLS gateway URL and cluster identity as ordinary
 configuration. The registration token remains a Kubernetes Secret reference;

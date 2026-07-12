@@ -15,7 +15,7 @@ spec:
       - Rollback
       - Verification
   source:
-    path: .
+    path: /tmp/doops-cicd/oilan-doops-agent/${inputs.releaseId}
     repo: https://github.com/l8ai-cn/doops.git
     branch: main
     requireCleanCommit: true
@@ -35,9 +35,11 @@ spec:
   buildEnv:
     registryAuthPath: /root/.docker/config.json
     buildkitAddress: unix:///run/buildkit/buildkitd.sock
-    baseImage: docker.cnb.cool/l8ai/ai/doops.sh/base-light:agent-runtime-20260712-01
-    appImage: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+    baseImage: docker.cnb.cool/l8ai/ai/doops.sh/base-light:${inputs.releaseId}
+    appImage: docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}
   stages:
+    - id: clone-release-source
+      uses: git.clone
     - id: verify-release-source
       uses: agent.task
       with:
@@ -57,8 +59,8 @@ spec:
           buildctl --version
         requiredCommand: |
           set -e
-          BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:agent-runtime-20260712-01
-          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:${inputs.releaseId}
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}
           buildctl build \
             --frontend dockerfile.v0 \
             --local context=backend \
@@ -74,7 +76,7 @@ spec:
             --output type=image,name="${APP_IMAGE}",push=true
         verificationCommand: |
           set -e
-          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}
           nerdctl pull "${APP_IMAGE}"
           nerdctl run --rm --entrypoint /bin/sh "${APP_IMAGE}" -lc '
             python3 -c "import yaml"
@@ -84,16 +86,35 @@ spec:
             test -f /app/deploy/helm/doops-agent/Chart.yaml
           '
     - id: bootstrap-helm-release
-      uses: doops.k8s
+      uses: agent.task
       mutates: true
       confirm: true
       with:
-        operation: apply-manifest
-        manifest: backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml
-        namespace: doops-system
-        resource: job/doops-agent-helm-bootstrap
-        verificationCommand: >-
-          kubectl -n doops-system wait --for=condition=complete
-          job/doops-agent-helm-bootstrap --timeout=10m &&
-          helm -n doops-system status doops-agent &&
+        task: run-versioned-deploy-command
+        dryRunVerificationCommand: >-
+          test -f backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml &&
+          grep -q '__DOOPS_AGENT_IMAGE__' backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml &&
+          grep -q '__DOOPS_AGENT_IMAGE_TAG__' backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml &&
+          kubectl version --client=true
+        requiredCommand: |
+          set -e
+          RELEASE_ID=${inputs.releaseId}
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}
+          sed \
+            -e "s|__DOOPS_AGENT_IMAGE__|${APP_IMAGE}|g" \
+            -e "s|__DOOPS_AGENT_IMAGE_TAG__|${RELEASE_ID}|g" \
+            backend/deploy/bootstrap/oilan-doops-agent-bootstrap.yaml |
+            kubectl apply -f -
+        verificationCommand: |
+          set -e
+          RELEASE_ID=${inputs.releaseId}
+          APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}
+          JOB_NAME="$(kubectl -n doops-system get jobs \
+            -l app=doops-agent-bootstrap,doops.sh/release-id="${RELEASE_ID}" \
+            --sort-by=.metadata.creationTimestamp \
+            -o jsonpath='{.items[-1:].metadata.name}')"
+          test -n "${JOB_NAME}"
+          kubectl -n doops-system wait --for=condition=complete "job/${JOB_NAME}" --timeout=10m
+          kubectl -n doops-system get secret -l owner=helm,name=doops-agent,status=deployed -o name | grep -q .
           kubectl -n doops-system rollout status deployment/doops-agent --timeout=10m
+          test "$(kubectl -n doops-system get deployment doops-agent -o jsonpath='{.spec.template.spec.containers[0].image}')" = "${APP_IMAGE}"

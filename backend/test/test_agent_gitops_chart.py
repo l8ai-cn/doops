@@ -9,6 +9,7 @@ CHART = ROOT / "deploy" / "helm" / "doops-agent"
 OILAN_VALUES = ROOT / "deploy" / "environments" / "oilan-values.yaml"
 BOOTSTRAP_JOB = ROOT / "deploy" / "bootstrap" / "oilan-doops-agent-bootstrap.yaml"
 WORKFLOW = ROOT / "ops" / "cicd" / "oilan-doops-agent-bootstrap.yaml"
+RELEASE_ID = "a" * 40
 
 
 def load_yaml(path: Path):
@@ -33,6 +34,8 @@ def render_oilan_chart():
             "doops-system",
             "--values",
             str(OILAN_VALUES),
+            "--set-string",
+            f"image.tag={RELEASE_ID}",
         ],
         check=True,
         capture_output=True,
@@ -53,7 +56,7 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert deployment["metadata"]["annotations"]["meta.helm.sh/release-namespace"] == "doops-system"
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"] == "gpu-ampere01"
-    assert container["image"].endswith(":agent-runtime-20260712-01")
+    assert container["image"].endswith(f":{RELEASE_ID}")
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {item["name"] for item in container["env"]}
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
     assert env_value(container, "DOOPS_GATEWAY_AGENT_TOKEN")["valueFrom"]["secretKeyRef"] == {
@@ -65,21 +68,24 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
 
 
 def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
-    values = load_yaml(OILAN_VALUES)
     job = load_yaml(BOOTSTRAP_JOB)
-    candidate = f'{values["image"]["repository"]}:{values["image"]["tag"]}'
 
     assert job["kind"] == "Job"
     assert job["metadata"]["namespace"] == "doops-system"
+    assert job["metadata"]["generateName"] == "doops-agent-helm-bootstrap-"
+    assert "name" not in job["metadata"]
+    assert job["metadata"]["labels"]["doops.sh/release-id"] == "__DOOPS_AGENT_IMAGE_TAG__"
     assert job["spec"]["template"]["spec"]["restartPolicy"] == "Never"
     assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [{"name": "harbor-pull"}]
-    assert {item["name"] for item in job["spec"]["template"]["spec"]["initContainers"]} == {
+    init_containers = job["spec"]["template"]["spec"]["initContainers"]
+    assert {item["name"] for item in init_containers} == {
         "adopt-helm-label",
         "adopt-helm-release-name",
         "adopt-helm-release-namespace",
     }
+    assert {item["image"] for item in init_containers} == {"__DOOPS_AGENT_IMAGE__"}
     helm = job["spec"]["template"]["spec"]["containers"][0]
-    assert helm["image"] == candidate
+    assert helm["image"] == "__DOOPS_AGENT_IMAGE__"
     assert helm["command"] == ["/usr/local/bin/helm"]
     assert helm["args"] == [
         "upgrade",
@@ -90,6 +96,8 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
         "doops-system",
         "--values",
         "/app/deploy/environments/oilan-values.yaml",
+        "--set-string",
+        "image.tag=__DOOPS_AGENT_IMAGE_TAG__",
         "--wait",
         "--timeout",
         "10m",
@@ -101,9 +109,11 @@ def test_bootstrap_workflow_is_agent_native_and_has_no_shell_deploy_stage():
     stages = workflow["spec"]["stages"]
 
     assert workflow["spec"]["policy"]["agentNative"] is True
+    assert workflow["spec"]["source"]["path"].endswith("/${inputs.releaseId}")
     assert workflow["spec"]["environments"][0]["target"] == "gw-oilan-node"
     assert workflow["spec"]["environments"][0]["deploymentDoc"] == "backend/deploy/docs/oilan-doops-agent.md"
     assert all(stage["uses"] != "shell" for stage in stages)
+    assert stages[0]["uses"] == "git.clone"
     assert any(
         stage["uses"] == "agent.task"
         and stage["with"]["task"] == "run-versioned-build-tool"
@@ -112,12 +122,16 @@ def test_bootstrap_workflow_is_agent_native_and_has_no_shell_deploy_stage():
         for stage in stages
     )
     assert any(
-        stage["uses"] == "doops.k8s"
-        and stage["with"]["operation"] == "apply-manifest"
+        stage["uses"] == "agent.task"
+        and stage["with"]["task"] == "run-versioned-deploy-command"
         and stage["mutates"] is True
         and stage["confirm"] is True
         for stage in stages
     )
+    workflow_text = WORKFLOW.read_text(encoding="utf-8")
+    assert "agent-runtime-20260712-01" not in workflow_text
+    assert "BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:${inputs.releaseId}" in workflow_text
+    assert "APP_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:${inputs.releaseId}" in workflow_text
 
 
 def test_agent_images_bundle_the_versioned_helm_chart():

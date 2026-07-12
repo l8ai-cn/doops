@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: doops-agent-helm-bootstrap
+  generateName: doops-agent-helm-bootstrap-
   namespace: doops-system
   labels:
     app: doops-agent-bootstrap
-    app.kubernetes.io/managed-by: Helm
+    doops.sh/release-id: __DOOPS_AGENT_IMAGE_TAG__
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 600
@@ -23,7 +23,7 @@ spec:
       restartPolicy: Never
       initContainers:
         - name: adopt-helm-label
-          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          image: __DOOPS_AGENT_IMAGE__
           imagePullPolicy: Always
           command: ["/usr/local/bin/kubectl"]
           args:
@@ -41,7 +41,7 @@ spec:
               mountPath: /root/.kube/config
               readOnly: true
         - name: adopt-helm-release-name
-          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          image: __DOOPS_AGENT_IMAGE__
           imagePullPolicy: Always
           command: ["/usr/local/bin/kubectl"]
           args:
@@ -59,7 +59,7 @@ spec:
               mountPath: /root/.kube/config
               readOnly: true
         - name: adopt-helm-release-namespace
-          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          image: __DOOPS_AGENT_IMAGE__
           imagePullPolicy: Always
           command: ["/usr/local/bin/kubectl"]
           args:
@@ -78,7 +78,7 @@ spec:
               readOnly: true
       containers:
         - name: helm-bootstrap
-          image: docker.cnb.cool/l8ai/ai/doops.sh:agent-runtime-20260712-01
+          image: __DOOPS_AGENT_IMAGE__
           imagePullPolicy: Always
           command: ["/usr/local/bin/helm"]
           args:
@@ -90,6 +90,8 @@ spec:
             - doops-system
             - --values
             - /app/deploy/environments/oilan-values.yaml
+            - --set-string
+            - image.tag=__DOOPS_AGENT_IMAGE_TAG__
             - --wait
             - --timeout
             - 10m

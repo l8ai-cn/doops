@@ -666,6 +666,47 @@ spec:
 	}
 }
 
+func TestCICDRunnerReusesVerifiedCloneForSameRelease(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	clone := filepath.Join(dir, "clone")
+	runTestGitCommand(t, "", "init", origin)
+	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	runTestGitCommand(t, origin, "add", "README.md")
+	runTestGitCommand(t, origin, "-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "-m", "init")
+	runTestGitCommand(t, origin, "branch", "-M", "main")
+
+	workflowPath := writeCICDTestWorkflow(t, dir, `
+apiVersion: doops.sh/v1
+kind: Workflow
+metadata:
+  name: clone-reuse
+spec:
+  source:
+    repo: `+quoteYAML(origin)+`
+    branch: main
+    path: `+quoteYAML(clone)+`
+  stages:
+    - id: clone
+      uses: git.clone
+`)
+	workflow, err := loadCICDWorkflow(workflowPath)
+	if err != nil {
+		t.Fatalf("load workflow: %v", err)
+	}
+	for run := 1; run <= 2; run++ {
+		result, err := runCICDWorkflow(context.Background(), workflow, CICDRunOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if len(result.Steps) != 1 || result.Steps[0].Status != "success" {
+			t.Fatalf("run %d steps: %#v", run, result.Steps)
+		}
+	}
+}
+
 func TestCICDRunnerRejectsSymlinkWorkdirEscape(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source")
