@@ -24,7 +24,6 @@ const (
 	ActionAll          GatewayAction = "*"
 	ActionExec         GatewayAction = "exec"
 	ActionAsk          GatewayAction = "ask"
-	ActionReconcile    GatewayAction = "reconcile"
 	ActionCICDSubmit   GatewayAction = "cicd:submit"
 	ActionRead         GatewayAction = "read"
 	ActionWrite        GatewayAction = "write"
@@ -42,7 +41,6 @@ var defaultGatewayUserActions = []GatewayAction{
 	ActionTargetsList,
 	ActionExec,
 	ActionAsk,
-	ActionReconcile,
 	ActionRead,
 	ActionWrite,
 	ActionPush,

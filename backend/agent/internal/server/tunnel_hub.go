@@ -636,7 +636,6 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	if !h.store.UserCan(auth.UserID, cluster, instance, ActionInfo) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionReconcile) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionCICDSubmit) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
@@ -722,15 +721,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	var releaseSubmission cicdReleaseSubmission
-	if params.Name == "doops_cicd_submit" {
-		var err error
-		releaseSubmission, err = parseCICDReleaseSubmitParams(params.Arguments)
-		if err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-			return nil
-		}
-	}
 	action := actionForTool(params.Name, params.Arguments)
 	if action == "" {
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
@@ -761,6 +751,16 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
+	}
+	var releaseSubmission cicdReleaseSubmission
+	if params.Name == "doops_cicd_submit" {
+		var err error
+		releaseSubmission, err = parseCICDReleaseSubmitParams(params.Arguments)
+		if err != nil {
+			finishAudit("invalid", err.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+			return nil
+		}
 	}
 	if params.Name == "doops_cicd_submit" {
 		releaseLimit, err := h.acquireOperationSlot(auth.UserID)
@@ -866,13 +866,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
 				}
-				if status, errMsg, reportTail, terminal := reconcileAuditOutcome(params.Name, result); terminal {
-					tail.WriteString(reportTail)
-					if status == "failed" {
-						finalStatus = status
-						finalErr = errMsg
-					}
-				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
@@ -898,47 +891,6 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
-}
-
-func validateCICDReconcileRouteBinding(plan cicdReconcilePlan, cluster, instance string) error {
-	var profile cicdReconcileEnvironmentProfile
-	if err := json.Unmarshal(plan.Spec.Target.Profile, &profile); err != nil {
-		return errors.New("plan resolved environment profile is invalid")
-	}
-	if profile.Cluster != cluster || profile.Instance != instance {
-		return fmt.Errorf("deployment plan target binding %s/%s does not match gateway route %s/%s", profile.Cluster, profile.Instance, cluster, instance)
-	}
-	return nil
-}
-
-func reconcileAuditOutcome(tool string, result map[string]interface{}) (string, string, string, bool) {
-	if tool != "doops_cicd_reconcile" {
-		return "", "", "", false
-	}
-	report, ok := result["structuredContent"].(map[string]interface{})
-	if !ok {
-		return "", "", "", false
-	}
-	status, _ := report["status"].(string)
-	if status != "Converged" && status != "Blocked" && status != "Failed" {
-		return "", "", "", false
-	}
-	tail, err := json.Marshal(map[string]interface{}{
-		"planDigest": report["planDigest"],
-		"status":     status,
-		"evidence":   report["evidence"],
-		"violations": report["violations"],
-	})
-	if err != nil {
-		if status == "Converged" {
-			return "success", "", "", true
-		}
-		return "failed", "CI/CD reconciliation " + strings.ToLower(status), "", true
-	}
-	if status == "Converged" {
-		return "success", "", string(tail), true
-	}
-	return "failed", "CI/CD reconciliation " + strings.ToLower(status), string(tail), true
 }
 
 func (h *GatewayHub) acquireOperationSlot(userID string) (func(), error) {

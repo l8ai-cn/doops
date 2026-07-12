@@ -68,13 +68,6 @@ type AgentPromptParams struct {
 	Mode        string `json:"mode,omitempty"`
 }
 
-// CICDReconcileParams 用于 doops_cicd_reconcile 结构化 CI/CD 回执。
-type CICDReconcileParams struct {
-	SessionID string          `json:"session_id"`
-	Plan      json.RawMessage `json:"plan"`
-	DryRun    bool            `json:"dry_run"`
-}
-
 // CICDReleaseSubmitParams 用于向远程多 Ops 控制面提交发布请求。
 // 请求只包含不可变源码和仓库内 workflow 引用，不携带本地路径、环境目标或签名。
 type CICDReleaseSubmitParams struct {

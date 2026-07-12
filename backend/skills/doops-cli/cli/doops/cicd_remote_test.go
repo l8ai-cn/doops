@@ -8,8 +8,6 @@ import (
 )
 
 func TestCICDSubmitDoesNotReadLocalDeploymentState(t *testing.T) {
-	t.Setenv("DOOPS_CICD_PLAN_SIGNING_KEY", "must-not-be-read")
-
 	var submitted ReleaseRequest
 	err := runCICDSubmitCommand(context.Background(), []string{
 		"submit",
@@ -67,5 +65,24 @@ func TestCICDSubmitRejectsLocalWorkflowFile(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected local workflow file rejection")
+	}
+}
+
+func TestCICDSubmitRejectsNonAcceptedRemoteStatus(t *testing.T) {
+	err := runCICDSubmitCommand(context.Background(), []string{
+		"submit",
+		"--target", "release-control-plane",
+		"--repository-id", "repo_zhiyong",
+		"--revision", "0123456789abcdef0123456789abcdef01234567",
+		"--workflow", "deploy/workflows/test.yaml",
+		"--allow-mutate",
+	}, func(ReleaseRequest) (ReleaseResult, error) {
+		return ReleaseResult{
+			ReleaseID: "release-20260712-0123456789ab",
+			Status:    "Blocked",
+		}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "status") {
+		t.Fatalf("expected non-accepted remote status rejection, got %v", err)
 	}
 }

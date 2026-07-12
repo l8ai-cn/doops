@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -134,6 +135,132 @@ func TestGatewayCICDSubmitFailsClosedBeforeContactingDeploymentTarget(t *testing
 	if len(events) != 1 || events[0].Status != "blocked" || !strings.Contains(events[0].Error, "compiler") {
 		t.Fatalf("expected blocked cicd submit audit, got %#v", events)
 	}
+}
+
+func TestGatewayCICDSubmitRejectsNonAcceptedCompilerResult(t *testing.T) {
+	store, token, hub := newCICDSubmitTestGateway(t)
+	defer store.Close()
+	hub.SetCICDReleaseSubmitter(func(context.Context, cicdReleaseSubmission) (CICDReleaseResult, error) {
+		return CICDReleaseResult{
+			ReleaseID: "release-20260712-0123456789ab",
+			Status:    "Blocked",
+		}, nil
+	})
+
+	response := callCICDSubmitForTest(t, hub, store, token.Plaintext, validCICDSubmitToolCall(t))
+	if response.Result == nil {
+		t.Fatalf("expected fail-closed tool result, got %#v", response)
+	}
+	result := response.Result.(map[string]interface{})
+	content := result["content"].([]map[string]interface{})
+	if len(content) == 0 || !strings.Contains(content[0]["text"].(string), "status") {
+		t.Fatalf("expected non-accepted release result rejection, got %#v", response)
+	}
+
+	events, err := store.ListAuditFiltered(AuditFilter{Action: ActionCICDSubmit, Limit: 1})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "blocked" {
+		t.Fatalf("expected blocked non-accepted submission audit, got %#v", events)
+	}
+}
+
+func TestGatewayCICDSubmitAuditsInvalidRequest(t *testing.T) {
+	store, token, hub := newCICDSubmitTestGateway(t)
+	defer store.Close()
+
+	params := mustJSON(t, api.ToolCallParams{
+		Name: "doops_cicd_submit",
+		Arguments: mustJSON(t, api.CICDReleaseSubmitParams{
+			SessionID: "release-invalid",
+			Request: json.RawMessage(`{
+				"apiVersion":"doops.sh/v3",
+				"kind":"ReleaseRequest",
+				"repositoryId":"repo_zhiyong",
+				"revision":"main",
+				"workflowPath":"deploy/workflows/test.yaml",
+				"dryRun":true
+			}`),
+		}),
+	})
+	response := callCICDSubmitForTest(t, hub, store, token.Plaintext, params)
+	if response.Error == nil || !strings.Contains(response.Error.Message, "immutable") {
+		t.Fatalf("expected invalid release request error, got %#v", response)
+	}
+
+	events, err := store.ListAuditFiltered(AuditFilter{Action: ActionCICDSubmit, Limit: 1})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "invalid" || !strings.Contains(events[0].Error, "immutable") {
+		t.Fatalf("expected invalid submission audit, got %#v", events)
+	}
+}
+
+func newCICDSubmitTestGateway(t *testing.T) (*GatewayStore, CreatedToken, *GatewayHub) {
+	t.Helper()
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	user, err := store.CreateUser("release-operator")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{
+		Kind:   TokenKindUser,
+		UserID: user.ID,
+		Name:   "release-operator",
+	})
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster:  "control",
+		Instance: "release-plane",
+		Actions:  []GatewayAction{ActionCICDSubmit},
+	}); err != nil {
+		t.Fatalf("grant cicd submit: %v", err)
+	}
+	return store, token, NewGatewayHub(store, GatewayHubOptions{})
+}
+
+func validCICDSubmitToolCall(t *testing.T) json.RawMessage {
+	t.Helper()
+	return mustJSON(t, api.ToolCallParams{
+		Name: "doops_cicd_submit",
+		Arguments: mustJSON(t, api.CICDReleaseSubmitParams{
+			SessionID: "release-0123456789ab",
+			Request: json.RawMessage(`{
+				"apiVersion":"doops.sh/v3",
+				"kind":"ReleaseRequest",
+				"repositoryId":"repo_zhiyong",
+				"revision":"0123456789abcdef0123456789abcdef01234567",
+				"workflowPath":"deploy/workflows/test.yaml",
+				"allowMutate":true
+			}`),
+		}),
+	})
+}
+
+func callCICDSubmitForTest(t *testing.T, hub *GatewayHub, store *GatewayStore, plaintext string, params json.RawMessage) api.JSONRPCResponse {
+	t.Helper()
+	var response api.JSONRPCResponse
+	err := hub.handleGatewayToolCall(tokenAuthForTest(t, store, plaintext), "control", "release-plane", api.JSONRPCRequest{
+		ID:     1,
+		Params: params,
+	}, func([]byte) error {
+		t.Fatal("release submission must not relay to a deployment target")
+		return nil
+	}, func(value interface{}) error {
+		response = value.(api.JSONRPCResponse)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("handle cicd submit: %v", err)
+	}
+	return response
 }
 
 func tokenAuthForTest(t *testing.T, store *GatewayStore, plaintext string) TokenAuth {

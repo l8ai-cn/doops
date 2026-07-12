@@ -16,6 +16,7 @@ import (
 const (
 	cicdReleaseRequestAPIVersion = "doops.sh/v3"
 	cicdReleaseRequestKind       = "ReleaseRequest"
+	cicdReleaseStatusAccepted    = "Accepted"
 )
 
 var cicdReleaseRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -117,8 +118,18 @@ func (h *GatewayHub) submitCICDRelease(ctx context.Context, submission cicdRelea
 	if err != nil {
 		return CICDReleaseResult{}, err
 	}
-	if strings.TrimSpace(result.ReleaseID) == "" || strings.TrimSpace(result.Status) == "" {
-		return CICDReleaseResult{}, errors.New("remote multi-Ops compiler returned an incomplete release result")
+	if err := validateCICDReleaseResult(result); err != nil {
+		return CICDReleaseResult{}, err
 	}
 	return result, nil
+}
+
+func validateCICDReleaseResult(result CICDReleaseResult) error {
+	if strings.TrimSpace(result.ReleaseID) == "" || strings.TrimSpace(result.Status) == "" {
+		return errors.New("remote multi-Ops compiler returned an incomplete release result")
+	}
+	if result.Status != cicdReleaseStatusAccepted {
+		return fmt.Errorf("remote multi-Ops compiler returned non-accepted status %q", result.Status)
+	}
+	return nil
 }

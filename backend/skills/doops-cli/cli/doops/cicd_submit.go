@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 )
 
 const (
 	releaseRequestAPIVersion = "doops.sh/v3"
 	releaseRequestKind       = "ReleaseRequest"
+	releaseStatusAccepted    = "Accepted"
 )
+
+var immutableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type ReleaseRequest struct {
 	APIVersion   string            `json:"apiVersion"`
@@ -145,12 +149,22 @@ func executeCICDSubmitCommand(ctx context.Context, command CICDSubmitCommand, su
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(result.ReleaseID) == "" || strings.TrimSpace(result.Status) == "" {
-		return fmt.Errorf("remote release submission returned an incomplete result")
+	if err := validateReleaseResult(result); err != nil {
+		return err
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(result)
+}
+
+func validateReleaseResult(result ReleaseResult) error {
+	if strings.TrimSpace(result.ReleaseID) == "" || strings.TrimSpace(result.Status) == "" {
+		return fmt.Errorf("remote release submission returned an incomplete result")
+	}
+	if result.Status != releaseStatusAccepted {
+		return fmt.Errorf("remote release submission returned non-accepted status %q", result.Status)
+	}
+	return nil
 }
 
 func (c *MCPClient) SubmitRelease(request ReleaseRequest) (ReleaseResult, error) {

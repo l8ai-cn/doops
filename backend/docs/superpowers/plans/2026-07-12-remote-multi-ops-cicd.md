@@ -20,7 +20,7 @@
 
 - [ ] **Step 1: Write a failing CLI test**
 
-Require `doops cicd submit` to construct this request without loading a local YAML file, resolving `deploy/environments.yaml`, or reading `DOOPS_CICD_PLAN_SIGNING_KEY`:
+Require `doops cicd submit` to construct this request without loading a local YAML file, resolving `deploy/environments.yaml`, or reading any local signing material:
 
 ```go
 ReleaseRequest{
@@ -42,7 +42,7 @@ Run:
 cd backend/skills/doops-cli && go test ./cli/doops -run TestCICDSubmitDoesNotReadLocalDeploymentState -count=1
 ```
 
-Expected: failure because the CLI still calls `loadDeploymentTemplate`, `buildDeploymentPlan`, and `attestDeploymentPlanFromEnvironment`.
+Expected: failure because the CLI still resolves a local deployment plan instead of submitting a typed release request.
 
 - [ ] **Step 3: Add the minimal request-only CLI path**
 
@@ -126,7 +126,7 @@ Run:
 cd backend/agent && go test ./internal/server -run TestGatewayCICDSubmit -count=1
 ```
 
-Expected: failure because the Gateway recognizes only the single-target `doops_cicd_reconcile` tool.
+Expected: failure because the Gateway has not yet recognized the remote release submission action.
 
 - [ ] **Step 3: Add the remote submission route**
 
@@ -172,7 +172,7 @@ Implement a structured compiler tool that emits a signed `DeploymentPlan` plus s
 Run:
 
 ```bash
-cd backend/agent && go test ./internal/server -run 'TestRemoteCICDCompiler|TestCICDReconcile' -count=1
+cd backend/agent && go test ./internal/server -run 'TestRemoteCICDCompiler|TestGatewayCICDSubmit' -count=1
 ```
 
 Expected: `PASS`.

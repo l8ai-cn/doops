@@ -117,47 +117,47 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestCICDReconcilePlanMustBindToGatewayRoute(t *testing.T) {
-	plan := mustCICDReconcilePlan(t, cicdPlanFixture())
-	if err := validateCICDReconcileRouteBinding(plan, "doops-oilan", "oilan-node"); err != nil {
-		t.Fatalf("expected matching gateway route to be accepted: %v", err)
+func TestGatewayRejectsClientWithOnlyRetiredReconcileGrant(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
 	}
-	if err := validateCICDReconcileRouteBinding(plan, "doops-edu", "edu-coder"); err == nil {
-		t.Fatal("expected mismatched gateway route to be rejected")
+	defer store.Close()
+
+	user, err := store.CreateUser("retired-reconcile")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: user.Name})
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster:  "dev",
+		Instance: "local",
+		Actions:  []GatewayAction{GatewayAction("reconcile")},
+	}); err != nil {
+		t.Fatalf("grant retired action: %v", err)
+	}
+
+	gateway := NewGatewayHub(store, GatewayHubOptions{})
+	mux := http.NewServeMux()
+	gateway.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	clientWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/rpc?cluster=dev&instance=local"
+	if conn, response, err := websocket.DefaultDialer.Dial(clientWS, http.Header{"Authorization": []string{"Bearer " + token.Plaintext}}); err == nil {
+		conn.Close()
+		t.Fatal("retired reconcile-only grant must not authorize an RPC session")
+	} else if response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected HTTP 403 for retired grant, response=%#v err=%v", response, err)
 	}
 }
 
-func TestReconcileAuditOutcomeMarksBlockedAndPreservesEvidence(t *testing.T) {
-	status, message, tail, failed := reconcileAuditOutcome("doops_cicd_reconcile", map[string]interface{}{
-		"structuredContent": map[string]interface{}{
-			"planDigest": "sha256:plan",
-			"status":     "Blocked",
-			"evidence":   []interface{}{map[string]interface{}{"kind": "rollback-state", "reference": "helm:41"}},
-			"violations": []interface{}{map[string]interface{}{"code": "no-progress", "message": "no new evidence"}},
-		},
-	})
-	if !failed || status != "failed" || !strings.Contains(message, "blocked") {
-		t.Fatalf("expected blocked reconciliation audit failure, got status=%q message=%q failed=%v", status, message, failed)
-	}
-	if !strings.Contains(tail, "rollback-state") || !strings.Contains(tail, "no-progress") {
-		t.Fatalf("expected audit tail to preserve structured evidence, got %q", tail)
-	}
-}
-
-func TestReconcileAuditOutcomePreservesConvergedEvidence(t *testing.T) {
-	status, message, tail, terminal := reconcileAuditOutcome("doops_cicd_reconcile", map[string]interface{}{
-		"structuredContent": map[string]interface{}{
-			"planDigest": "sha256:plan",
-			"status":     "Converged",
-			"evidence":   []interface{}{map[string]interface{}{"kind": "runtime-state", "reference": "deployment:zhiyong-exam-api"}},
-			"violations": []interface{}{},
-		},
-	})
-	if !terminal || status != "success" || message != "" {
-		t.Fatalf("expected converged reconciliation audit success, got status=%q message=%q terminal=%v", status, message, terminal)
-	}
-	if !strings.Contains(tail, "sha256:plan") || !strings.Contains(tail, "runtime-state") {
-		t.Fatalf("expected audit tail to preserve converged evidence, got %q", tail)
+func TestParseActionsRejectsRetiredReconcileGrant(t *testing.T) {
+	if _, err := parseActions([]string{"reconcile"}); err == nil || !strings.Contains(err.Error(), "unknown action") {
+		t.Fatalf("retired reconcile grant must be rejected, got %v", err)
 	}
 }
 
@@ -1083,9 +1083,6 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
-	}
-	if got := actionForTool("doops_cicd_reconcile", json.RawMessage(`{"session_id":"release"}`)); got != "" {
-		t.Fatalf("dedicated reconciliation must not bypass Ask, got %q", got)
 	}
 	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
 		t.Fatalf("doops_check_deployment must map to check, got %q", got)
