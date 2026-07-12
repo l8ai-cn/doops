@@ -148,20 +148,21 @@ type CICDEnvironmentRegistry struct {
 }
 
 type CICDEnvironmentProfile struct {
-	DisplayName    string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Target         string            `json:"target" yaml:"target"`
-	Cluster        string            `json:"cluster" yaml:"cluster"`
-	Instance       string            `json:"instance" yaml:"instance"`
-	Namespace      string            `json:"namespace" yaml:"namespace"`
-	Release        string            `json:"release" yaml:"release"`
-	Registry       string            `json:"registry" yaml:"registry"`
-	Chart          string            `json:"chart" yaml:"chart"`
-	Values         string            `json:"values" yaml:"values"`
-	RuntimeFiles   string            `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
-	DeploymentMode string            `json:"deploymentMode" yaml:"deploymentMode"`
-	PublicHosts    []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
-	HealthChecks   CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
-	Authz          map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
+	DisplayName               string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Target                    string            `json:"target" yaml:"target"`
+	Cluster                   string            `json:"cluster" yaml:"cluster"`
+	Instance                  string            `json:"instance" yaml:"instance"`
+	Namespace                 string            `json:"namespace" yaml:"namespace"`
+	Release                   string            `json:"release" yaml:"release"`
+	Registry                  string            `json:"registry" yaml:"registry"`
+	ReleaseManifestRepository string            `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
+	Chart                     string            `json:"chart" yaml:"chart"`
+	Values                    string            `json:"values" yaml:"values"`
+	RuntimeFiles              string            `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
+	DeploymentMode            string            `json:"deploymentMode" yaml:"deploymentMode"`
+	PublicHosts               []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
+	HealthChecks              CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
+	Authz                     map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
 }
 
 type CICDArtifactContract struct {
@@ -171,7 +172,6 @@ type CICDArtifactContract struct {
 	ImageTagPattern      string                 `json:"imageTagPattern,omitempty" yaml:"imageTagPattern,omitempty"`
 	ImageReferenceFormat string                 `json:"imageReferenceFormat,omitempty" yaml:"imageReferenceFormat,omitempty"`
 	HelmImageBindings    map[string]string      `json:"helmImageBindings,omitempty" yaml:"helmImageBindings,omitempty"`
-	ManifestRepository   string                 `json:"manifestRepository,omitempty" yaml:"manifestRepository,omitempty"`
 	Authz                map[string]interface{} `json:"authz,omitempty" yaml:"authz,omitempty"`
 }
 
@@ -517,9 +517,6 @@ func validateCICDArtifactContract(artifact CICDArtifactContract) error {
 	if strings.TrimSpace(artifact.ImageReferenceFormat) == "" {
 		return fmt.Errorf("artifact contract image reference format is required")
 	}
-	if strings.TrimSpace(artifact.ManifestRepository) == "" {
-		return fmt.Errorf("artifact contract manifest repository is required")
-	}
 	if len(artifact.HelmImageBindings) != len(artifact.Services) {
 		return fmt.Errorf("artifact contract must bind every service to Helm")
 	}
@@ -533,15 +530,16 @@ func validateCICDArtifactContract(artifact CICDArtifactContract) error {
 
 func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile) error {
 	required := map[string]string{
-		"target":         profile.Target,
-		"cluster":        profile.Cluster,
-		"instance":       profile.Instance,
-		"namespace":      profile.Namespace,
-		"release":        profile.Release,
-		"registry":       profile.Registry,
-		"chart":          profile.Chart,
-		"values":         profile.Values,
-		"deploymentMode": profile.DeploymentMode,
+		"target":                    profile.Target,
+		"cluster":                   profile.Cluster,
+		"instance":                  profile.Instance,
+		"namespace":                 profile.Namespace,
+		"release":                   profile.Release,
+		"registry":                  profile.Registry,
+		"releaseManifestRepository": profile.ReleaseManifestRepository,
+		"chart":                     profile.Chart,
+		"values":                    profile.Values,
+		"deploymentMode":            profile.DeploymentMode,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {

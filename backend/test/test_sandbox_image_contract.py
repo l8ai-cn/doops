@@ -154,5 +154,41 @@ def test_doops_cicd_is_the_only_agent_release_definition():
     assert "cicd submit" not in workflow
 
 
+def test_agent_bundles_a_semantic_deployment_skill():
+    skill = read("agent/skills/semantic-deployment/SKILL.md")
+    system_prompt = read("agent/skills/system_prompt.md")
+
+    assert "name: semantic-deployment" in skill
+    assert "DeploymentPlan" in skill
+    assert "ReconciliationResult" in skill
+    assert "requires: []" in skill
+    assert "conflicts: [pipeline, image-build, k8s, docker, shell]" in skill
+    assert "semantic-deployment" in system_prompt
+    for forbidden in (
+        "cicd submit",
+        "CNB",
+        "stages:",
+        "uses: shell",
+        "requiredCommand",
+        "verificationCommand",
+        "buildctl ",
+        "helm ",
+        "kubectl ",
+    ):
+        assert forbidden not in skill
+
+
+def test_agent_images_sync_semantic_skills_into_doagent_discovery_path():
+    for path in ("agent/Dockerfile", "agent/Dockerfile.sandbox"):
+        dockerfile = read(path)
+        assert "COPY --from=builder /app/agent/skills /app/skills" in dockerfile
+
+    for path in ("agent/agent-entrypoint.sh", "agent/sandbox-entrypoint.sh"):
+        entrypoint = read(path)
+        assert "for d in /app/skills/*/; do" in entrypoint
+        assert 'mkdir -p "/root/.agent/skills/$name"' in entrypoint
+        assert 'cp -rf "$d"* "/root/.agent/skills/$name/"' in entrypoint
+
+
 def test_legacy_manual_agent_deploy_script_is_removed():
     assert not (ROOT / "deploy.sh").exists()

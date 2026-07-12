@@ -67,20 +67,20 @@ spec:
 			ImageTagPattern:      "^release-[0-9]{8}-[0-9a-f]{12}$",
 			ImageReferenceFormat: "repository@digest",
 			HelmImageBindings:    map[string]string{"zhiyong-exam-api": "examApi"},
-			ManifestRepository:   "registry.example.test/releases",
 		},
 		Environments: map[string]CICDEnvironmentProfile{
 			"test": {
-				Target:         "gw-oilan-node",
-				Cluster:        "doops-oilan",
-				Instance:       "oilan-node",
-				Namespace:      "test",
-				Release:        "zhiyong",
-				Registry:       "registry.example.test/oilan-system",
-				Chart:          "deploy/environments/test/chart",
-				Values:         "deploy/environments/test/chart/values.yaml",
-				RuntimeFiles:   "deploy/environments/test/chart/files",
-				DeploymentMode: "application",
+				Target:                    "gw-oilan-node",
+				Cluster:                   "doops-oilan",
+				Instance:                  "oilan-node",
+				Namespace:                 "test",
+				Release:                   "zhiyong",
+				Registry:                  "registry.example.test/oilan-system",
+				ReleaseManifestRepository: "registry.example.test/oilan-system/zhiyong-release-manifest-test",
+				Chart:                     "deploy/environments/test/chart",
+				Values:                    "deploy/environments/test/chart/values.yaml",
+				RuntimeFiles:              "deploy/environments/test/chart/files",
+				DeploymentMode:            "application",
 				HealthChecks: CICDHealthChecks{
 					Public: []CICDPublicHealthCheck{{
 						ID:             "frontend-health",
@@ -108,6 +108,9 @@ spec:
 	}
 	if plan.Spec.Target.Environment != "test" || plan.Spec.Target.ExecutionTarget != "gw-oilan-node" {
 		t.Fatalf("target was not resolved from environment profile: %#v", plan.Spec.Target)
+	}
+	if plan.Spec.Target.Profile.ReleaseManifestRepository != "registry.example.test/oilan-system/zhiyong-release-manifest-test" {
+		t.Fatalf("plan must retain the environment-owned manifest repository: %#v", plan.Spec.Target.Profile)
 	}
 	encoded, err := json.Marshal(plan)
 	if err != nil {
@@ -151,7 +154,6 @@ artifactContract:
   imageReferenceFormat: repository@digest
   helmImageBindings:
     zhiyong-exam-api: examApi
-  manifestRepository: registry.example.test/releases
 environments:
   oilan:
     target: gw-edu-coder
@@ -160,6 +162,7 @@ environments:
     namespace: oilan
     release: zhiyong
     registry: registry.example.test/oilan-system
+    releaseManifestRepository: registry.example.test/oilan-system/zhiyong-release-manifest-oilan
     chart: deploy/environments/oilan/chart
     values: deploy/environments/oilan/chart/values.yaml
     runtimeFiles: deploy/environments/oilan/chart/files
@@ -176,33 +179,31 @@ environments:
 `), 0o644); err != nil {
 		t.Fatalf("write registry: %v", err)
 	}
-	templatePath := filepath.Join(templateDir, "promote.yaml")
+	templatePath := filepath.Join(templateDir, "oilan.yaml")
 	if err := os.WriteFile(templatePath, []byte(`
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
-  name: promote
+  name: oilan
 spec:
   parameters:
     releaseId:
       required: true
-    manifestDigest:
-      required: true
   plan:
     release:
-      manifest:
-        repository: registry.example.test/releases
-        reference: ${inputs.releaseId}
-        digest: ${inputs.manifestDigest}
+      source:
+        repository: https://example.test/zhiyong.git
+        revision: ${inputs.releaseId}
+        branch: main
     target:
       environment: oilan
     desiredState:
       application: zhiyong
-      delivery: promote-immutable-release
+      delivery: build-and-deploy-immutable-release
       configurationSource: backend/deploy/environments.yaml
       authorization: reconcile
     acceptance:
-      requiredEvidence: [release-manifest, runtime-state]
+      requiredEvidence: [source-identity, image-set, release-manifest, runtime-state]
       requiredFailureEvidence: [rollout-status, rollback-state]
     policy:
       mutation: require-explicit-approval
@@ -229,8 +230,7 @@ spec:
 		t.Fatalf("load template: %v", err)
 	}
 	plan, err := buildDeploymentPlan(template, map[string]string{
-		"releaseId":      "release-20260712-0123456789ab",
-		"manifestDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"releaseId": "0123456789abcdef0123456789abcdef01234567",
 	})
 	if err != nil {
 		t.Fatalf("build deployment plan: %v", err)
@@ -379,7 +379,38 @@ func TestDeploymentPlanRejectsMutableReleaseReferences(t *testing.T) {
 
 func TestDeploymentPlanRequiresTargetGatewayBinding(t *testing.T) {
 	err := validateCICDEnvironmentProfile("test", CICDEnvironmentProfile{
+		Target:                    "gw-oilan-node",
+		Namespace:                 "test",
+		Release:                   "zhiyong",
+		Registry:                  "registry.example.test/oilan-system",
+		ReleaseManifestRepository: "registry.example.test/oilan-system/zhiyong-release-manifest-test",
+		Chart:                     "deploy/environments/test/chart",
+		Values:                    "deploy/environments/test/chart/values.yaml",
+		RuntimeFiles:              "deploy/environments/test/chart/files",
+		DeploymentMode:            "application",
+		HealthChecks: CICDHealthChecks{
+			Public: []CICDPublicHealthCheck{{
+				ID:             "frontend-health",
+				URL:            "https://study.example.test/healthz",
+				ExpectedStatus: 200,
+			}},
+			Workloads: []CICDWorkloadHealthCheck{{
+				Service:          "zhiyong-exam-api",
+				MinReadyReplicas: 1,
+				RequireEndpoints: true,
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("environment profile without cluster and instance binding must be rejected")
+	}
+}
+
+func TestDeploymentPlanRequiresEnvironmentOwnedManifestRepository(t *testing.T) {
+	err := validateCICDEnvironmentProfile("test", CICDEnvironmentProfile{
 		Target:         "gw-oilan-node",
+		Cluster:        "doops-oilan",
+		Instance:       "oilan-node",
 		Namespace:      "test",
 		Release:        "zhiyong",
 		Registry:       "registry.example.test/oilan-system",
@@ -400,8 +431,8 @@ func TestDeploymentPlanRequiresTargetGatewayBinding(t *testing.T) {
 			}},
 		},
 	})
-	if err == nil {
-		t.Fatal("environment profile without cluster and instance binding must be rejected")
+	if err == nil || !strings.Contains(err.Error(), "releaseManifestRepository") {
+		t.Fatalf("expected environment-owned release manifest repository rejection, got %v", err)
 	}
 }
 
@@ -418,16 +449,17 @@ func TestDeploymentPlanRejectsMismatchedConfiguredGatewayTarget(t *testing.T) {
 				Environment:     "test",
 				ExecutionTarget: "gw-oilan-node",
 				Profile: &CICDEnvironmentProfile{
-					Target:         "gw-oilan-node",
-					Cluster:        "doops-oilan",
-					Instance:       "oilan-node",
-					Namespace:      "test",
-					Release:        "zhiyong",
-					Registry:       "registry.example.test/oilan-system",
-					Chart:          "deploy/environments/test/chart",
-					Values:         "deploy/environments/test/chart/values.yaml",
-					RuntimeFiles:   "deploy/environments/test/chart/files",
-					DeploymentMode: "application",
+					Target:                    "gw-oilan-node",
+					Cluster:                   "doops-oilan",
+					Instance:                  "oilan-node",
+					Namespace:                 "test",
+					Release:                   "zhiyong",
+					Registry:                  "registry.example.test/oilan-system",
+					ReleaseManifestRepository: "registry.example.test/oilan-system/zhiyong-release-manifest-test",
+					Chart:                     "deploy/environments/test/chart",
+					Values:                    "deploy/environments/test/chart/values.yaml",
+					RuntimeFiles:              "deploy/environments/test/chart/files",
+					DeploymentMode:            "application",
 					HealthChecks: CICDHealthChecks{
 						Public: []CICDPublicHealthCheck{{
 							ID:             "frontend-health",
@@ -449,7 +481,6 @@ func TestDeploymentPlanRejectsMismatchedConfiguredGatewayTarget(t *testing.T) {
 				ImageTagPattern:      "^release-[0-9]{8}-[0-9a-f]{12}$",
 				ImageReferenceFormat: "repository@digest",
 				HelmImageBindings:    map[string]string{"zhiyong-exam-api": "examApi"},
-				ManifestRepository:   "registry.example.test/releases",
 			},
 			DesiredState: CICDDesiredState{
 				Application:         "zhiyong",

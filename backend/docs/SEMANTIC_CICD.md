@@ -86,6 +86,11 @@ The doagent owns semantic execution. It may choose the operational actions
 needed to reach the declared state, but cannot replace the plan with a fixed
 stage graph, command list, generated shell script, or another target.
 
+The target image bundles the `semantic-deployment` Skill. Structured
+`DeploymentPlan` requests select that Skill, which defines the desired state,
+required evidence, recovery boundary, and `ReconciliationResult` contract
+without embedding a command workflow in the declaration.
+
 ## Result
 
 The terminal Ask result is one object:
