@@ -32,6 +32,13 @@ existing Deployment, then runs `helm upgrade --install` with
 `deploy/environments/oilan-values.yaml` and the immutable `releaseId` image
 tag. Each release creates a distinct Job and must wait for that Job's result.
 
+The bootstrap manifest uses `metadata.generateName`. After substituting the
+candidate image and release ID, the reconciler must create it with:
+
+```bash
+kubectl create -f -
+```
+
 The chart supplies the public TLS gateway URL and cluster identity as ordinary
 configuration. The registration token remains a Kubernetes Secret reference;
 no token or endpoint is embedded in the Deployment command.

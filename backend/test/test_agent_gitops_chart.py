@@ -110,6 +110,15 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
     ]
 
 
+def test_bootstrap_job_with_generate_name_is_created_not_applied():
+    deployment_doc = (
+        ROOT / "deploy" / "docs" / "oilan-doops-agent.md"
+    ).read_text(encoding="utf-8")
+
+    assert "kubectl create -f -" in deployment_doc
+    assert "kubectl apply -f -" not in deployment_doc
+
+
 def test_bootstrap_workflow_is_a_v2_deployment_template_without_commands():
     workflow = load_yaml(WORKFLOW)
     registry = load_yaml(REGISTRY)
