@@ -19,7 +19,7 @@ spec:
       nodeSelector:
         kubernetes.io/hostname: gpu-ampere01
       imagePullSecrets:
-        - name: harbor-pull
+        - name: doops-registry-pull
       restartPolicy: Never
       initContainers:
         - name: adopt-helm-label

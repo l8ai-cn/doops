@@ -70,6 +70,7 @@ def test_agent_registry_auth_uses_one_mounted_multi_registry_config():
         manifest = read(path)
 
         assert "doops-registry-auth" in manifest
+        assert "doops-registry-pull" in manifest
         assert "mountPath: /root/.docker" in manifest
         assert "key: config.json" in manifest
         assert "REGISTRY_URL" not in manifest

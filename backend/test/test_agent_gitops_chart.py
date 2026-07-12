@@ -57,6 +57,9 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert deployment["metadata"]["annotations"]["meta.helm.sh/release-namespace"] == "doops-system"
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"] == "gpu-ampere01"
+    assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "doops-registry-pull"}
+    ]
     assert container["image"].endswith(f":{RELEASE_ID}")
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {item["name"] for item in container["env"]}
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
@@ -77,7 +80,9 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
     assert "name" not in job["metadata"]
     assert job["metadata"]["labels"]["doops.sh/release-id"] == "__DOOPS_AGENT_IMAGE_TAG__"
     assert job["spec"]["template"]["spec"]["restartPolicy"] == "Never"
-    assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [{"name": "harbor-pull"}]
+    assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "doops-registry-pull"}
+    ]
     init_containers = job["spec"]["template"]["spec"]["initContainers"]
     assert {item["name"] for item in init_containers} == {
         "adopt-helm-label",

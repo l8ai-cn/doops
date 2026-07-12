@@ -4,7 +4,7 @@ image:
   pullPolicy: Always
 
 imagePullSecrets:
-  - name: harbor-pull
+  - name: doops-registry-pull
 
 gateway:
   url: https://doops.l8ai.cn
