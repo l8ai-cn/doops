@@ -42,7 +42,7 @@ var defaultExcludes = []string{
 // cicdSourceExcludes drops bulky trees that are not needed for agent-native
 // CI/CD stages (contract tests, helm render, image build, digest verify).
 // Full-tree Zhiyong pushes were ~18k files / multi-minute transfers and made
-// long WS sessions fragile; keep only deployable sources + deploy/ops charts.
+// long WS sessions fragile; keep only release inputs required by the workflow.
 var cicdSourceExcludes = []string{
 	".codex-work",
 	".dosql",
@@ -51,7 +51,6 @@ var cicdSourceExcludes = []string{
 	".bin",
 	"agent-transcripts",
 	"/tools",
-	"/docs",
 	"skills",
 	"/output",
 	"_work",

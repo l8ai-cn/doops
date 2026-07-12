@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -75,6 +76,17 @@ func runCICDWorkflow(ctx context.Context, workflow CICDWorkflow, opts CICDRunOpt
 		switch stage.Uses {
 		case "git.clone":
 			stdout, stderr, err := runCICDGitClone(ctx, plan.Source)
+			if err == nil && plan.Source.RequireCleanCommit && strings.TrimSpace(plan.Inputs["releaseId"]) != "" {
+				var releaseStdout string
+				var releaseStderr string
+				releaseStdout, releaseStderr, err = checkoutCICDExactRelease(ctx, plan.Source, plan.Inputs["releaseId"])
+				if releaseStdout != "" {
+					stdout = strings.TrimSpace(stdout + "\n" + releaseStdout)
+				}
+				if releaseStderr != "" {
+					stderr = strings.TrimSpace(stderr + "\n" + releaseStderr)
+				}
+			}
 			step.Stdout = stdout
 			step.Stderr = stderr
 			if err != nil {
@@ -204,6 +216,87 @@ func runCICDGitClone(ctx context.Context, source CICDSource) (string, string, er
 	}
 	args = append(args, repo, pathAbs)
 	return runCICDCommandOutput(ctx, "", nil, "git", args...)
+}
+
+type cicdSourceReleaseAttestation struct {
+	ReleaseID string `json:"releaseId"`
+}
+
+func checkoutCICDExactRelease(ctx context.Context, source CICDSource, releaseID string) (string, string, error) {
+	releaseID = strings.TrimSpace(releaseID)
+	if !isCICDCommitHash(releaseID) {
+		return "", "", fmt.Errorf("releaseId must be a 40-character lowercase Git commit SHA")
+	}
+
+	sourcePath := strings.TrimSpace(source.Path)
+	if sourcePath == "" {
+		return "", "", fmt.Errorf("source.path is required to checkout releaseId")
+	}
+	sourcePath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return "", "", err
+	}
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	run := func(args ...string) error {
+		out, errOut, runErr := runCICDCommandOutput(ctx, sourcePath, nil, "git", args...)
+		if out != "" {
+			stdout.WriteString(out + "\n")
+		}
+		if errOut != "" {
+			stderr.WriteString(errOut + "\n")
+		}
+		return runErr
+	}
+
+	if err := run("rev-parse", "--verify", releaseID+"^{commit}"); err != nil {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("releaseId %s is not available in cloned source: %w", releaseID, err)
+	}
+	if branch := strings.TrimSpace(source.Branch); branch != "" {
+		if err := run("rev-parse", "--verify", "origin/"+branch); err != nil {
+			return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("source branch %s is not available after clone: %w", branch, err)
+		}
+		if err := run("merge-base", "--is-ancestor", releaseID, "origin/"+branch); err != nil {
+			return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("releaseId %s is not contained in source branch %s: %w", releaseID, branch, err)
+		}
+	}
+	if err := run("checkout", "--detach", releaseID); err != nil {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
+	}
+	status, statusErr, err := runCICDCommandOutput(ctx, sourcePath, nil, "git", "status", "--porcelain")
+	if err != nil {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
+	}
+	if statusErr != "" {
+		stderr.WriteString(statusErr + "\n")
+	}
+	if strings.TrimSpace(status) != "" {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), fmt.Errorf("checked out release %s is not clean: %s", releaseID, strings.TrimSpace(status))
+	}
+
+	attestation, err := json.Marshal(cicdSourceReleaseAttestation{ReleaseID: releaseID})
+	if err != nil {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
+	}
+	attestationPath := filepath.Join(sourcePath, ".doops-source-release.json")
+	if err := os.WriteFile(attestationPath, append(attestation, '\n'), 0o644); err != nil {
+		return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
+	}
+	stdout.WriteString("checked out and attested release " + releaseID + "\n")
+	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), nil
+}
+
+func isCICDCommitHash(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func runCICDGitUpdate(ctx context.Context, source CICDSource) (string, string, error) {
