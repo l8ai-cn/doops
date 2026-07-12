@@ -166,6 +166,16 @@ def test_bootstrap_workflow_is_a_v2_deployment_template_without_commands():
     assert not (ROOT / "ops" / "cicd" / "oilan-doops-agent-bootstrap.yaml").exists()
 
 
+def test_environment_profile_owns_release_manifest_repository():
+    registry = load_yaml(REGISTRY)
+
+    assert "manifestRepository" not in registry["artifactContract"]
+    assert (
+        registry["environments"]["oilan"]["releaseManifestRepository"]
+        == "https://github.com/l8ai-cn/doops.git"
+    )
+
+
 def test_agent_images_bundle_the_versioned_helm_chart():
     for path in ("Dockerfile", "agent/Dockerfile", "agent/Dockerfile.sandbox"):
         dockerfile = (ROOT / path).read_text(encoding="utf-8")

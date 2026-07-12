@@ -7,7 +7,6 @@ artifactContract:
   imageReferenceFormat: repository@digest
   helmImageBindings:
     doops-agent: image
-  manifestRepository: https://github.com/l8ai-cn/doops.git
   authz:
     policyScope:
       - cluster
@@ -21,6 +20,7 @@ environments:
     namespace: doops-system
     release: doops-agent
     registry: docker.cnb.cool/l8ai/ai
+    releaseManifestRepository: https://github.com/l8ai-cn/doops.git
     chart: backend/deploy/helm/doops-agent
     values: backend/deploy/environments/oilan-values.yaml
     deploymentMode: control-plane
