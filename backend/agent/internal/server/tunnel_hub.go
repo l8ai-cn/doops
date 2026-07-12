@@ -1686,8 +1686,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionExec
 	case "doops_agent_prompt":
 		return ActionAsk
-	case "doops_cicd_submit":
-		return ActionCICDSubmit
 	case "doops_git_clone":
 		return ActionPull
 	case "doops_file_read":
@@ -1713,7 +1711,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionExec, ActionAsk, ActionCICDSubmit:
+	case ActionExec, ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}
