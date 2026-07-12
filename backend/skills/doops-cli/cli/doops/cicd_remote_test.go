@@ -2,70 +2,70 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 )
 
-func TestCICDSubmitDoesNotReadLocalDeploymentState(t *testing.T) {
-	t.Setenv("DOOPS_CICD_PLAN_SIGNING_KEY", "must-not-be-read")
-
-	var submitted ReleaseRequest
-	err := runCICDSubmitCommand(context.Background(), []string{
-		"submit",
-		"--target", "release-control-plane",
-		"--repository-id", "repo_zhiyong",
-		"--revision", "0123456789abcdef0123456789abcdef01234567",
-		"--workflow", "deploy/workflows/test.yaml",
-		"--set", "reason=release",
-		"--allow-mutate",
-	}, func(request ReleaseRequest) (ReleaseResult, error) {
-		submitted = request
-		return ReleaseResult{
-			ReleaseID: "release-20260712-0123456789ab",
-			Status:    "Accepted",
-		}, nil
-	})
+func TestAgenticDeploymentPushesBeforeAsk(t *testing.T) {
+	calls := make([]string, 0, 2)
+	runner := agenticDeploymentRunner{
+		server:          Server{Name: "gw-oilan-node"},
+		sourceDirectory: t.TempDir(),
+		sessionID:       "agentic-release",
+		pushWorkspace: func(Server, string, string) error {
+			calls = append(calls, "push")
+			return nil
+		},
+		ask: func(string) (string, error) {
+			calls = append(calls, "ask")
+			return "Converged", nil
+		},
+	}
+	run, err := runner.Run(context.Background(), DeploymentPlan{
+		Digest: "sha256:plan",
+		Spec: DeploymentPlanSpec{
+			Target: CICDDeploymentTarget{ExecutionTarget: "gw-oilan-node"},
+		},
+	}, CICDAgenticRunRequest{})
 	if err != nil {
-		t.Fatalf("submit release request: %v", err)
+		t.Fatalf("run agentic deployment: %v", err)
 	}
-
-	if submitted.RepositoryID != "repo_zhiyong" {
-		t.Fatalf("repository id = %q, want repo_zhiyong", submitted.RepositoryID)
+	if len(calls) != 2 || calls[0] != "push" || calls[1] != "ask" {
+		t.Fatalf("CI/CD must push before Ask, got %#v", calls)
 	}
-	if submitted.Revision != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("revision = %q", submitted.Revision)
-	}
-	if submitted.WorkflowPath != "deploy/workflows/test.yaml" {
-		t.Fatalf("workflow path = %q", submitted.WorkflowPath)
-	}
-	if submitted.Inputs["reason"] != "release" {
-		t.Fatalf("inputs = %#v", submitted.Inputs)
-	}
-	if !submitted.AllowMutate {
-		t.Fatal("expected an explicitly approved mutation request")
-	}
-	payload, err := json.Marshal(submitted)
-	if err != nil {
-		t.Fatalf("marshal submitted request: %v", err)
-	}
-	if strings.Contains(string(payload), "localTemplatePath") || strings.Contains(string(payload), "planSignature") {
-		t.Fatalf("submit request must not carry local deployment authority: %s", payload)
+	if run.Outcome != "Converged" {
+		t.Fatalf("Ask outcome = %q", run.Outcome)
 	}
 }
 
-func TestCICDSubmitRejectsLocalWorkflowFile(t *testing.T) {
-	err := runCICDSubmitCommand(context.Background(), []string{
-		"submit",
-		"--target", "release-control-plane",
-		"--repository-id", "repo_zhiyong",
-		"--revision", "0123456789abcdef0123456789abcdef01234567",
-		"-f", "deploy/workflows/test.yaml",
-	}, func(ReleaseRequest) (ReleaseResult, error) {
-		t.Fatal("local workflow file must not be submitted")
-		return ReleaseResult{}, nil
+func TestAgenticDeploymentInstructionCarriesGoalAndAcceptance(t *testing.T) {
+	instruction, err := buildAgenticDeploymentInstruction(DeploymentPlan{
+		Digest: "sha256:semantic-plan",
+		Spec: DeploymentPlanSpec{
+			Acceptance: CICDAcceptance{RequiredEvidence: []string{"source-identity", "runtime-state"}},
+		},
+	}, CICDAgenticRunRequest{
+		SessionID:     "agentic-release",
+		AllowMutate:   true,
+		MaxIterations: 12,
+		MaxNoProgress: 3,
 	})
-	if err == nil {
-		t.Fatal("expected local workflow file rejection")
+	if err != nil {
+		t.Fatalf("build Ask instruction: %v", err)
+	}
+	for _, want := range []string{
+		"/root/ws/agentic-release",
+		"DeploymentPlan",
+		"Validate every requiredEvidence",
+		"restore the last known good revision",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("Ask instruction must contain %q:\n%s", want, instruction)
+		}
+	}
+	for _, forbidden := range []string{"deploy.sh", "uses: shell", "agent.task"} {
+		if strings.Contains(instruction, forbidden) {
+			t.Fatalf("Ask instruction must not contain %q:\n%s", forbidden, instruction)
+		}
 	}
 }
