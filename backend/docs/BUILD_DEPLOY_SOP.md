@@ -61,7 +61,7 @@ bash deploy.sh master-node
 **底层执行原理 (`deploy.sh` 逻辑)：**
 1. **代码推送**: 解析目标节点，并执行 `doops push --target master-node --src .` 极速同步至沙盒 (`/root/ws/deploy_master-node`)。
 2. **应用配置**: 执行远端 `kubectl apply` 更新 ConfigMap 和 DaemonSet。
-3. **远端构建**: Agent 容器内统一使用内置 `buildkitd + buildctl` 构建 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`。基础镜像先在受控远端环境发布，CNB release 只拉取并复用该基础镜像构建轻更新镜像，避免 CNB runner 访问私有基线镜像时出现 401。日常升级只滚动轻更新镜像 `doops.sh:<release>`；基础镜像只在 doagent/buildkit/kubectl/系统工具变化时升级。
+3. **远端构建**: Agent 容器内统一使用内置 `buildkitd + buildctl` 构建 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`。基础镜像和轻更新镜像均由受控 doops agent 构建、校验并推送；日常升级只滚动轻更新镜像 `doops.sh:<release>`，基础镜像只在 doagent/buildkit/kubectl/系统工具变化时升级。
 
 ### 双镜像构建原则
 
@@ -84,7 +84,7 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 4. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
 5. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
 
-CNB release 在 app 镜像 push 前必须完成 base label 与前 3 项镜像内自检；第 4、5 项必须在 DaemonSet 滚动更新后对真实 target 执行。
+受控 doops agent 在 app 镜像 push 前必须完成 base label 与前 3 项镜像内自检；第 4、5 项必须在 DaemonSet 滚动更新后对真实 target 执行。
 
 ---
 

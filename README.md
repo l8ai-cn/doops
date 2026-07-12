@@ -15,7 +15,7 @@ backend/gateway/             doops-gateway compatibility entrypoint
 backend/skills/doops-cli/    doops CLI source and prebuilt CLI artifacts
 backend/docs/                Runtime, deployment, and protocol documentation
 Dockerfile.web               Production web console image
-.cnb.yml                     CNB CI/release pipeline
+.cnb.yml                     CNB source-mirror declaration (no CI/CD)
 .github/workflows/ci.yml     GitHub CI checks
 ```
 
@@ -25,7 +25,7 @@ sources at the repository root; new work should use the layout above.
 
 ## Development Checks
 
-Run the same checks before publishing to GitHub or CNB:
+Run the same checks before publishing source:
 
 ```bash
 (cd backend/agent && go test ./...)
@@ -37,10 +37,10 @@ pnpm build
 
 ## Publishing Model
 
-- GitHub and CNB should receive the same commit SHA for a release branch.
+- GitHub and CNB should receive the same commit SHA for the normalized source branch.
 - GitHub uses `main` as the normalized public branch.
-- CNB may still retain a legacy `master` branch; publish the normalized tree to
-  `main` or to the same feature branch name used on GitHub.
+- CNB is a source mirror only. Build, verification, image publication, rollout,
+  and rollback execute through registered doops agents.
 - Do not publish local runtime directories such as `.next/`, `node_modules/`,
   `.pytest_cache/`, top-level `examples/`, or top-level `test/`.
 

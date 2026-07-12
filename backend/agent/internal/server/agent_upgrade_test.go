@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,5 +31,23 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	}
 	if !strings.Contains(out, "pull image before rollout") {
 		t.Fatalf("dry-run should document pre-pull before rollout: %s", out)
+	}
+}
+
+func TestAgentDockerfileInstallsAndVerifiesKubectl(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read agent Dockerfile: %v", err)
+	}
+
+	out := string(dockerfile)
+	for _, requirement := range []string{
+		"dl.k8s.io/release/",
+		"sha256sum",
+		"kubectl version --client >/dev/null",
+	} {
+		if !strings.Contains(out, requirement) {
+			t.Fatalf("agent Dockerfile must install and verify kubectl; missing %q", requirement)
+		}
 	}
 }

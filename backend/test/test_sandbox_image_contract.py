@@ -13,16 +13,6 @@ def read_repo(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
-def top_level_block(text: str, key: str) -> str:
-    start = text.index(f"{key}:\n")
-    end = len(text)
-    for marker in ("\nmain:\n", "\nmaster:\n", "\n$:\n"):
-        pos = text.find(marker, start + len(key) + 2)
-        if pos != -1:
-            end = min(end, pos + 1)
-    return text[start:end]
-
-
 def require_ordered(text: str, *needles: str) -> None:
     previous = -1
     for needle in needles:
@@ -97,35 +87,12 @@ def test_agent_update_dockerfiles_default_to_base_light_runtime():
         assert "buildctl --version" in dockerfile
 
 
-def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
-    cnb = read_repo(".cnb.yml")
-    contract_cmd = "python3 -m pytest backend/test/test_sandbox_image_contract.py -q"
-
-    for branch in ("main", "master"):
-        block = top_level_block(cnb, branch)
-        pr_block, push_block = block.split("  push:", 1)
-
-        assert contract_cmd in pr_block
-        assert contract_cmd in push_block
-        assert "py3-pytest" in pr_block
-        assert "py3-pytest" in push_block
-
-
-def test_cnb_release_validates_app_image_base_and_runtime_before_push():
+def test_cnb_configuration_does_not_define_ci_or_release_pipeline():
     cnb = read_repo(".cnb.yml")
 
-    require_ordered(
-        cnb,
-        "name: build app image",
-        "name: validate release app image",
-        "name: push app image",
-    )
-    assert ': "${DOOPS_AGENT_BASE_IMAGE:?release base image was not exported}"' in cnb
-    assert "org.opencontainers.image.base.name" in cnb
-    assert 'test "${ACTUAL_BASE}" = "${DOOPS_AGENT_BASE_IMAGE}"' in cnb
-    assert 'docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null' in cnb
-    assert 'docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --help >/dev/null' in cnb
-    assert 'docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" -lc "buildctl --version"' in cnb
+    assert "doops agent" in cnb.lower()
+    for forbidden in ("pull_request:", "push:", "tag_push:", "docker build", "docker push", "type: git:release"):
+        assert forbidden not in cnb
 
 
 def test_deploy_script_rolls_out_the_image_it_builds():

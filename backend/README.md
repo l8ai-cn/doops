@@ -84,7 +84,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`；更新镜像还会执行 `buildctl --version`
-- 发布原则：CNB release 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
+- 发布原则：受控 doops agent 先构建并发布 `doops.sh/base-light:<release>`，再用该镜像构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help` 和 `buildctl --version`。
 
 协议与端点：
 
@@ -129,7 +129,7 @@ bash scripts/build-gateway.sh
 
 ## Agent 双镜像发布
 
-正式发布由 CNB release tag 触发，同一版本会产出两类镜像：
+正式发布由受控 doops agent 触发，同一版本会产出两类镜像：
 
 ```text
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
@@ -143,7 +143,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 禁止把基础 rootfs 压平成每次 release 都变化的大层。线上升级默认只替换 `doops.sh:<release>`，这样节点已缓存的基础层可以复用，避免 doops-agent 在拉镜像阶段长时间离线。
 
-CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
+非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被受控发布流程复用。
 
 ## 固定路径
 
