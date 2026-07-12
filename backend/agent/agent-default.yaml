@@ -20,7 +20,7 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       imagePullSecrets:
-        - name: harbor-pull
+        - name: doops-registry-pull
       containers:
         - name: doops-agent
           image: docker.cnb.cool/l8ai/ai/doops.sh:v1.1

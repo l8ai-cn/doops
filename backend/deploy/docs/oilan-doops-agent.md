@@ -3,7 +3,24 @@
 - Helm release: `doops-agent`
 - Namespace: `doops-system`
 - Candidate image: `docker.cnb.cool/l8ai/ai/doops.sh:<releaseId>`
-- Runtime Secret references: `doops-agent-runtime`, `doops-agent-settings`, and `doops-registry-auth`
+- Runtime Secret references: `doops-agent-runtime`, `doops-agent-settings`,
+  `doops-registry-auth`, and `doops-registry-pull`
+
+# Registry Credentials
+
+`doops-registry-auth` and `doops-registry-pull` are generated from the same
+standard Docker configuration and must both contain an `auths.docker.cnb.cool`
+entry:
+
+- `doops-registry-auth`: an `Opaque` Secret with key `config.json`, mounted into
+  the Agent for BuildKit push and pull.
+- `doops-registry-pull`: a `kubernetes.io/dockerconfigjson` Secret with key
+  `.dockerconfigjson`, referenced by the Deployment and bootstrap Job through
+  `imagePullSecrets`.
+
+The environment contract requires both Secrets before reconciliation starts.
+This keeps registry authorization outside Git while keeping the Secret
+references and release behavior versioned.
 
 # Deployment
 
@@ -14,6 +31,18 @@ the chart and Helm binary. The Job first adds Helm ownership metadata to the
 existing Deployment, then runs `helm upgrade --install` with
 `deploy/environments/oilan-values.yaml` and the immutable `releaseId` image
 tag. Each release creates a distinct Job and must wait for that Job's result.
+
+The bootstrap manifest uses `metadata.generateName`. After substituting the
+candidate image and release ID, the reconciler must create it with:
+
+```bash
+kubectl create -f -
+```
+
+Before the first Helm upgrade, the bootstrap Job also normalizes the legacy
+gateway URL, cluster, and instance environment variables to the values in the
+versioned Oilan configuration. This removes the old Secret-backed field shape
+so the first Helm three-way merge cannot retain both `value` and `valueFrom`.
 
 The chart supplies the public TLS gateway URL and cluster identity as ordinary
 configuration. The registration token remains a Kubernetes Secret reference;

@@ -57,6 +57,9 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert deployment["metadata"]["annotations"]["meta.helm.sh/release-namespace"] == "doops-system"
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"] == "gpu-ampere01"
+    assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "doops-registry-pull"}
+    ]
     assert container["image"].endswith(f":{RELEASE_ID}")
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {item["name"] for item in container["env"]}
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
@@ -77,13 +80,33 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
     assert "name" not in job["metadata"]
     assert job["metadata"]["labels"]["doops.sh/release-id"] == "__DOOPS_AGENT_IMAGE_TAG__"
     assert job["spec"]["template"]["spec"]["restartPolicy"] == "Never"
-    assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [{"name": "harbor-pull"}]
+    assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": "doops-registry-pull"}
+    ]
     init_containers = job["spec"]["template"]["spec"]["initContainers"]
     assert {item["name"] for item in init_containers} == {
         "adopt-helm-label",
         "adopt-helm-release-name",
         "adopt-helm-release-namespace",
+        "normalize-gateway-environment",
     }
+    normalize = next(
+        item
+        for item in init_containers
+        if item["name"] == "normalize-gateway-environment"
+    )
+    assert normalize["command"] == ["/usr/local/bin/kubectl"]
+    assert normalize["args"] == [
+        "-n",
+        "doops-system",
+        "set",
+        "env",
+        "deployment/doops-agent",
+        "DOOPS_ALLOW_INSECURE_GATEWAY-",
+        "DOOPS_GATEWAY_URL=https://doops.l8ai.cn",
+        "DOOPS_GATEWAY_CLUSTER=doops-oilan",
+        "DOOPS_GATEWAY_INSTANCE=oilan-node",
+    ]
     assert {item["image"] for item in init_containers} == {"__DOOPS_AGENT_IMAGE__"}
     helm = job["spec"]["template"]["spec"]["containers"][0]
     assert helm["image"] == "__DOOPS_AGENT_IMAGE__"
@@ -103,6 +126,15 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
         "--timeout",
         "10m",
     ]
+
+
+def test_bootstrap_job_with_generate_name_is_created_not_applied():
+    deployment_doc = (
+        ROOT / "deploy" / "docs" / "oilan-doops-agent.md"
+    ).read_text(encoding="utf-8")
+
+    assert "kubectl create -f -" in deployment_doc
+    assert "kubectl apply -f -" not in deployment_doc
 
 
 def test_bootstrap_workflow_is_a_v2_deployment_template_without_commands():

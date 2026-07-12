@@ -19,7 +19,7 @@ spec:
       nodeSelector:
         kubernetes.io/hostname: gpu-ampere01
       imagePullSecrets:
-        - name: harbor-pull
+        - name: doops-registry-pull
       restartPolicy: Never
       initContainers:
         - name: adopt-helm-label
@@ -69,6 +69,27 @@ spec:
             - deployment/doops-agent
             - meta.helm.sh/release-namespace=doops-system
             - --overwrite
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: k3s-kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+        - name: normalize-gateway-environment
+          image: __DOOPS_AGENT_IMAGE__
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/kubectl"]
+          args:
+            - -n
+            - doops-system
+            - set
+            - env
+            - deployment/doops-agent
+            - DOOPS_ALLOW_INSECURE_GATEWAY-
+            - DOOPS_GATEWAY_URL=https://doops.l8ai.cn
+            - DOOPS_GATEWAY_CLUSTER=doops-oilan
+            - DOOPS_GATEWAY_INSTANCE=oilan-node
           env:
             - name: KUBECONFIG
               value: /root/.kube/config
