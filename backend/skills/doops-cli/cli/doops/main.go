@@ -37,7 +37,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 运维入口 (get/logs/rollout/scale/deploy-image/plan/apply-plan)
-  cicd        远程多 Ops CI/CD 发布入口 (submit)
+  cicd        声明式 CI/CD workflow 入口 (lint/plan/run)
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -56,14 +56,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
   -help       显示此帮助信息
 
-远程多 Ops CI/CD 示例:
-  # 本机只提交不可变源码、仓库内 workflow 和显式变更授权。
-  # 远程控制面负责源码校验、BuildKit 构建、制品签名、部署、健康观测和回滚。
-  doops -session release_20260712 cicd submit --target release-control-plane \
-    --repository-id repo_zhiyong \
-    --revision <40-char-git-commit> \
-    --workflow deploy/workflows/test.yaml \
-    --allow-mutate
+声明式 CI/CD 闭环示例:
+  # run 先把当前仓库同步到 /root/ws/<session>，再通过 Ask 交给 doagent 执行和核验。
+  doops cicd lint -f deploy/workflows/test.yaml
+  doops cicd plan -f deploy/workflows/test.yaml --set releaseId=<immutable-release> --set reason=smoke
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set releaseId=<immutable-release> --set reason=smoke
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set releaseId=<immutable-release> --set reason=release
 `)
 	}
 	flag.Parse()
