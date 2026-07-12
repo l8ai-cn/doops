@@ -366,7 +366,11 @@ func resolveDeploymentConfigurationPath(template DeploymentTemplate, source stri
 	if strings.TrimSpace(template.path) == "" {
 		return "", fmt.Errorf("deployment template path is required to resolve configuration source")
 	}
-	root := filepath.Dir(template.path)
+	templatePath, err := filepath.Abs(template.path)
+	if err != nil {
+		return "", fmt.Errorf("resolve deployment template path: %w", err)
+	}
+	root := filepath.Dir(templatePath)
 	for dir := root; ; {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			root = dir
