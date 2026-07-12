@@ -26,7 +26,6 @@ var defaultExcludes = []string{
 	".cache",
 	"node_modules",
 	"vendor",
-	"target",
 	"__pycache__",
 	".idea",
 	".vscode",
