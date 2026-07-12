@@ -88,7 +88,25 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
         "adopt-helm-label",
         "adopt-helm-release-name",
         "adopt-helm-release-namespace",
+        "normalize-gateway-environment",
     }
+    normalize = next(
+        item
+        for item in init_containers
+        if item["name"] == "normalize-gateway-environment"
+    )
+    assert normalize["command"] == ["/usr/local/bin/kubectl"]
+    assert normalize["args"] == [
+        "-n",
+        "doops-system",
+        "set",
+        "env",
+        "deployment/doops-agent",
+        "DOOPS_ALLOW_INSECURE_GATEWAY-",
+        "DOOPS_GATEWAY_URL=https://doops.l8ai.cn",
+        "DOOPS_GATEWAY_CLUSTER=doops-oilan",
+        "DOOPS_GATEWAY_INSTANCE=oilan-node",
+    ]
     assert {item["image"] for item in init_containers} == {"__DOOPS_AGENT_IMAGE__"}
     helm = job["spec"]["template"]["spec"]["containers"][0]
     assert helm["image"] == "__DOOPS_AGENT_IMAGE__"

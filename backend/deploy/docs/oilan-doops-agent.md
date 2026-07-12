@@ -39,6 +39,11 @@ candidate image and release ID, the reconciler must create it with:
 kubectl create -f -
 ```
 
+Before the first Helm upgrade, the bootstrap Job also normalizes the legacy
+gateway URL, cluster, and instance environment variables to the values in the
+versioned Oilan configuration. This removes the old Secret-backed field shape
+so the first Helm three-way merge cannot retain both `value` and `valueFrom`.
+
 The chart supplies the public TLS gateway URL and cluster identity as ordinary
 configuration. The registration token remains a Kubernetes Secret reference;
 no token or endpoint is embedded in the Deployment command.
