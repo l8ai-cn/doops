@@ -5,12 +5,27 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestAgentPromptJSONReturnsFinalObjectInStructuredContent(t *testing.T) {
-	doagent := newJSONAgentPromptTestServer(t, `{"status":"converged","attempts":1}`)
+func TestAgentPromptJSONReturnsResultArtifactInStructuredContent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	resultPath := filepath.Join(root, "json-prompt", ".doops", "structured-result.json")
+	doagent := newJSONAgentPromptTestServer(t, "```json\n{\"ignored\":true}\n```", func(prompt string) {
+		if !strings.Contains(prompt, resultPath) {
+			t.Errorf("structured prompt must declare the result artifact path: %s", prompt)
+		}
+		if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
+			t.Fatalf("create result directory: %v", err)
+		}
+		if err := os.WriteFile(resultPath, []byte(`{"status":"converged","attempts":1}`), 0o600); err != nil {
+			t.Fatalf("write structured result: %v", err)
+		}
+	})
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
@@ -36,8 +51,17 @@ func TestAgentPromptJSONReturnsFinalObjectInStructuredContent(t *testing.T) {
 	}
 }
 
-func TestAgentPromptJSONRejectsNonJSONObjectFinalMessage(t *testing.T) {
-	doagent := newJSONAgentPromptTestServer(t, "deployment completed")
+func TestAgentPromptJSONRejectsMissingResultArtifact(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	resultPath := filepath.Join(root, "invalid-json-prompt", ".doops", "structured-result.json")
+	if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
+		t.Fatalf("create stale result directory: %v", err)
+	}
+	if err := os.WriteFile(resultPath, []byte(`{"status":"stale"}`), 0o600); err != nil {
+		t.Fatalf("write stale structured result: %v", err)
+	}
+	doagent := newJSONAgentPromptTestServer(t, `{"status":"converged"}`, nil)
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
@@ -55,10 +79,23 @@ func TestAgentPromptJSONRejectsNonJSONObjectFinalMessage(t *testing.T) {
 	})
 	toolResult, _ := result["result"].(map[string]interface{})
 	if toolResult["isError"] != true {
-		t.Fatalf("non-JSON terminal message must fail: %#v", result)
+		t.Fatalf("missing structured result artifact must fail: %#v", result)
 	}
-	if !strings.Contains(fmt.Sprint(toolResult["content"]), "JSON object") {
-		t.Fatalf("expected JSON object validation error, got %#v", result)
+	if !strings.Contains(fmt.Sprint(toolResult["content"]), "structured result artifact") {
+		t.Fatalf("expected structured result artifact error, got %#v", result)
+	}
+	if _, err := os.Stat(resultPath); !os.IsNotExist(err) {
+		t.Fatalf("stale structured result must be removed before prompting, stat error: %v", err)
+	}
+}
+
+func TestReadDoagentStructuredResultRejectsMarkdown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "structured-result.json")
+	if err := os.WriteFile(path, []byte("```json\n{\"status\":\"converged\"}\n```"), 0o600); err != nil {
+		t.Fatalf("write structured result: %v", err)
+	}
+	if _, _, err := readDoagentStructuredResult(path); err == nil || !strings.Contains(err.Error(), "one JSON object") {
+		t.Fatalf("Markdown-wrapped result artifact must be rejected, got %v", err)
 	}
 }
 
@@ -81,7 +118,7 @@ func TestAgentPromptJSONRejectsUnsupportedResponseFormat(t *testing.T) {
 	}
 }
 
-func newJSONAgentPromptTestServer(t *testing.T, finalMessage string) *httptest.Server {
+func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt func(string)) *httptest.Server {
 	t.Helper()
 	t.Setenv("DOOPS_AGENT_AUTO_APPROVE", "")
 	prompted := make(chan struct{})
@@ -106,6 +143,11 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string) *httptest.S
 					"result":  map[string]interface{}{"sessionId": "doagent-json"},
 				})
 			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				prompt, _ := params["prompt"].(string)
+				if onPrompt != nil {
+					onPrompt(prompt)
+				}
 				close(prompted)
 				w.WriteHeader(http.StatusAccepted)
 			default:

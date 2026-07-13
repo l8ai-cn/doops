@@ -791,6 +791,17 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
+	var structuredResultPath string
+	if responseFormat == "json" {
+		var err error
+		structuredResultPath, err = prepareDoagentStructuredResult(doopsSessionID)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result artifact: %v", err)))
+			return
+		}
+		instr = appendDoagentStructuredResultContract(instr, structuredResultPath)
+	}
+
 	// 查找已有的 doagent session 映射
 	gw.sessionMapMu.RLock()
 	entry := gw.sessionMap[doopsSessionID]
@@ -889,25 +900,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseCtx, sseCancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer sseCancel()
 
-	var terminalMessage string
-	var collector doagentSSECollector
-	if responseFormat == "json" {
-		collector = func(update map[string]interface{}) (bool, bool, error) {
-			if updateType, _ := update["sessionUpdate"].(string); updateType != "agent_message" {
-				return false, false, nil
-			}
-			text, err := doagentAgentMessageText(update["content"])
-			if err != nil {
-				return false, false, err
-			}
-			terminalMessage = text
-			return false, false, nil
-		}
-	}
-
 	sseDone := make(chan error, 1)
 	go func() {
-		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, collector)
+		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, nil)
 	}()
 
 	// 等待 SSE 连接建立（本地连接 <10ms，200ms 留足余量）
@@ -941,12 +936,12 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 	if responseFormat == "json" {
-		structuredContent, err := decodeDoagentJSONObject(terminalMessage)
+		resultText, structuredContent, err := readDoagentStructuredResult(structuredResultPath)
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("doagent terminal response must be one JSON object: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result artifact: %v", err)))
 			return
 		}
-		writeJSON(buildStructuredSuccessResponse(reqID, terminalMessage, structuredContent))
+		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))
 		return
 	}
 
@@ -1444,6 +1439,73 @@ func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	return object, nil
+}
+
+func prepareDoagentStructuredResult(sessionID string) (string, error) {
+	workspace, err := workspacePath(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureDoagentResultDirectory(workspace); err != nil {
+		return "", fmt.Errorf("prepare session workspace: %w", err)
+	}
+	resultDirectory := filepath.Join(workspace, ".doops")
+	if err := ensureDoagentResultDirectory(resultDirectory); err != nil {
+		return "", fmt.Errorf("prepare result directory: %w", err)
+	}
+	resultPath := filepath.Join(resultDirectory, "structured-result.json")
+	if err := os.Remove(resultPath); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("remove stale result: %w", err)
+	}
+	return resultPath, nil
+}
+
+func ensureDoagentResultDirectory(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case os.IsNotExist(err):
+		if err := os.Mkdir(path, 0o700); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+	case err != nil:
+		return fmt.Errorf("inspect directory: %w", err)
+	case info.Mode()&os.ModeSymlink != 0 || !info.IsDir():
+		return fmt.Errorf("path must be a real directory")
+	}
+	return nil
+}
+
+func appendDoagentStructuredResultContract(instruction, resultPath string) string {
+	return instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
+		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
+		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
+		"The terminal response is not used as the machine result."
+}
+
+func readDoagentStructuredResult(path string) (string, map[string]interface{}, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil, fmt.Errorf("structured result artifact was not created")
+		}
+		return "", nil, fmt.Errorf("inspect structured result artifact: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("structured result artifact must be a regular file")
+	}
+	if info.Size() > maxFileReadBytes() {
+		return "", nil, fmt.Errorf("structured result artifact size %d exceeds limit %d", info.Size(), maxFileReadBytes())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("read structured result artifact: %w", err)
+	}
+	text := string(data)
+	object, err := decodeDoagentJSONObject(text)
+	if err != nil {
+		return "", nil, fmt.Errorf("structured result artifact must contain one JSON object: %w", err)
+	}
+	return text, object, nil
 }
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。

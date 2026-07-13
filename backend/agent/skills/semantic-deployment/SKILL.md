@@ -56,7 +56,10 @@ conflicts: [pipeline, image-build, k8s, docker, shell]
 
 ## 输出契约
 
-最终回复必须是且只能是一个 JSON 对象：
+当调用指令声明机器结果文件路径时，必须先把最终 JSON 对象写入同目录临时文件，
+再通过原子 rename 写入该路径。机器结果文件必须只包含一个 JSON 对象，不能包含
+Markdown 或解释性文本。最终回复必须与该文件表达同一个对象，且只能是一个 JSON
+对象：
 
 ```json
 {

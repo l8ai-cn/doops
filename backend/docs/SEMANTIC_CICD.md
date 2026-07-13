@@ -78,9 +78,12 @@ binding, then:
 2. calls `doops_agent_prompt` with the plan and `response_format=json`;
 3. validates the returned `ReconciliationResult`.
 
-The Gateway is transport-neutral: `response_format=json` requires exactly one
-JSON object from doagent and returns it as MCP `structuredContent`. It does not
-interpret CI/CD fields or implement a second release controller.
+The Gateway is transport-neutral: `response_format=json` assigns one
+session-scoped result artifact under the synchronized workspace. It removes any
+stale artifact before prompting, requires doagent to write exactly one JSON
+object atomically, and returns that object as MCP `structuredContent`. Terminal
+text is never parsed as the machine result. The Gateway does not interpret
+CI/CD fields or implement a second release controller.
 
 The doagent owns semantic execution. It may choose the operational actions
 needed to reach the declared state, but cannot replace the plan with a fixed
@@ -93,7 +96,7 @@ without embedding a command workflow in the declaration.
 
 ## Result
 
-The terminal Ask result is one object:
+The machine result artifact is one object:
 
 ```json
 {
