@@ -65,7 +65,8 @@ conflicts: []
 ## 验收
 
 - 只有全部 required evidence 都来自实际观察时才能报告 converged。
-- 每条 evidence 必须引用产生该观察事实的真实 `toolCallId`；bridge 只接受匹配且已完成的观察调用，并注入对应工具摘要。
+- 每条 evidence 必须用 `toolRef` 指定精确工具名和同名终态 SSE 事件的一基序号；
+  bridge 只接受匹配且已完成的观察调用，并注入真实 `toolCallId` 和对应工具摘要。
 - 缺能力或权限时报告 blocked，并记录具体缺失事实。
 - mutation 后验收失败时，只能使用环境明确声明的可逆恢复能力。
 

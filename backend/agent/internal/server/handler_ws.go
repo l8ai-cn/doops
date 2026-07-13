@@ -18,7 +18,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -690,6 +689,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				writeJSON(buildErrorResponse(reqID, -32602, "reconciliation plan_digest must be a sha256 digest"))
 				return
 			}
+			if args.SourceRevision != "" && !validAgentSourceRevision(args.SourceRevision) {
+				writeJSON(buildErrorResponse(reqID, -32602, "reconciliation source_revision must be an immutable Git commit"))
+				return
+			}
 			if err := validateReconcileWorkspaceCommit(sessionID, args.WorkspaceCommit); err != nil {
 				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
@@ -736,6 +739,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				NativeMode:      nativeMode,
 				Operation:       operation,
 				PlanDigest:      strings.TrimSpace(args.PlanDigest),
+				SourceRevision:  strings.ToLower(strings.TrimSpace(args.SourceRevision)),
 				WorkspaceCommit: strings.ToLower(strings.TrimSpace(args.WorkspaceCommit)),
 			},
 			pushProgress,
@@ -847,10 +851,24 @@ func validAgentPlanDigest(value string) bool {
 	return true
 }
 
+func validAgentSourceRevision(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 type agentPromptExecutionContext struct {
 	NativeMode      string
 	Operation       string
 	PlanDigest      string
+	SourceRevision  string
 	WorkspaceCommit string
 }
 
@@ -883,7 +901,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result artifact: %v", err)))
 			return
 		}
-		instr = appendDoagentStructuredResultContract(instr, structuredResultPath)
+		instr = appendDoagentStructuredResultContract(instr, structuredResultPath, execution)
 	}
 
 	// 查找已有的 doagent session 映射
@@ -984,7 +1002,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	defer sseCancel()
 
 	var terminalTurnID string
-	toolTrace := make(map[string]doagentToolTraceRecord)
+	toolTrace := make([]doagentToolTraceRecord, 0)
 	var collector doagentSSECollector
 	if responseFormat == "json" {
 		collector = func(update map[string]interface{}) (bool, bool, error) {
@@ -993,7 +1011,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 				if record, ok, err := doagentToolTraceRecordFromUpdate(update); err != nil {
 					return false, false, err
 				} else if ok {
-					toolTrace[record.CallID] = record
+					toolTrace = append(toolTrace, record)
 				}
 			case "turn_finished":
 				terminalTurnID, _ = update["turnId"].(string)
@@ -1606,9 +1624,11 @@ func doagentToolTraceRecordFromUpdate(update map[string]interface{}) (doagentToo
 	callID, _ := update["toolCallId"].(string)
 	toolName, _ := update["toolName"].(string)
 	callID = strings.TrimSpace(callID)
-	toolName = strings.TrimSpace(toolName)
 	if callID == "" || toolName == "" {
 		return doagentToolTraceRecord{}, false, fmt.Errorf("terminal tool update requires toolCallId and toolName")
+	}
+	if strings.TrimSpace(toolName) != toolName {
+		return doagentToolTraceRecord{}, false, fmt.Errorf("terminal toolName must be exact")
 	}
 	encoded, err := json.Marshal(update)
 	if err != nil {
@@ -1625,12 +1645,11 @@ func doagentToolTraceRecordFromUpdate(update map[string]interface{}) (doagentToo
 }
 
 func doagentObservationTool(toolName string) bool {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "agent", "append", "bash", "cicdreport", "edit", "executecode", "fileedit", "filewrite",
-		"listagents", "noteedit", "skill", "taskcreate", "teamcreate", "waitagent", "write":
-		return false
-	default:
+	switch toolName {
+	case "Read", "list_files", "glob", "grep", "search", "WebFetch", "WebSearch":
 		return true
+	default:
+		return false
 	}
 }
 
@@ -1638,20 +1657,25 @@ func attestReconciliationResult(
 	result map[string]interface{},
 	execution agentPromptExecutionContext,
 	turnID string,
-	records map[string]doagentToolTraceRecord,
+	records []doagentToolTraceRecord,
 ) error {
 	if turnID == "" {
 		return fmt.Errorf("turn_finished has no turnId")
 	}
-	toolCalls := make([]doagentToolTraceRecord, 0, len(records))
-	for _, record := range records {
-		toolCalls = append(toolCalls, record)
+	if _, exists := result["executionEvidence"]; exists {
+		return fmt.Errorf("executionEvidence is bridge-managed and must be omitted")
 	}
-	sort.Slice(toolCalls, func(i, j int) bool {
-		return toolCalls[i].CallID < toolCalls[j].CallID
-	})
+	toolCalls := append([]doagentToolTraceRecord(nil), records...)
+	seen := make(map[string]struct{}, len(toolCalls))
+	for _, record := range toolCalls {
+		if _, exists := seen[record.CallID]; exists {
+			return fmt.Errorf("terminal toolCallId %q was observed more than once", record.CallID)
+		}
+		seen[record.CallID] = struct{}{}
+	}
 	traceDigest, err := doagentReconciliationTraceDigest(
 		execution.PlanDigest,
+		execution.SourceRevision,
 		execution.WorkspaceCommit,
 		turnID,
 		toolCalls,
@@ -1666,6 +1690,7 @@ func attestReconciliationResult(
 	}
 	result["executionEvidence"] = map[string]interface{}{
 		"turnId":          turnID,
+		"sourceRevision":  execution.SourceRevision,
 		"workspaceCommit": execution.WorkspaceCommit,
 		"traceDigest":     traceDigest,
 		"toolCalls":       toolCalls,
@@ -1673,11 +1698,27 @@ func attestReconciliationResult(
 	return nil
 }
 
-func appendDoagentStructuredResultContract(instruction, resultPath string) string {
-	return instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
+func appendDoagentStructuredResultContract(
+	instruction, resultPath string,
+	execution agentPromptExecutionContext,
+) string {
+	contract := instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
 		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
 		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
 		"The terminal response is not used as the machine result."
+	if execution.Operation != "reconcile" {
+		return contract
+	}
+	contract += "\nEvidence binding contract: each evidence item must contain toolRef with the exact runtime tool name " +
+		"and its one-based ordinal among terminal SSE events with that same tool name. " +
+		"Do not write toolCallId, toolDigest, traceDigest, or executionEvidence; the bridge resolves and injects them."
+	if execution.SourceRevision != "" {
+		contract += "\nSource identity contract: sourceRevision " + execution.SourceRevision +
+			" is the immutable release identity. workspaceCommit " + execution.WorkspaceCommit +
+			" is only the transport snapshot identity. Verify source identity from .doops/source.json; " +
+			"do not compare the workspace Git HEAD with sourceRevision."
+	}
+	return contract
 }
 
 func readDoagentStructuredResult(path string) (string, map[string]interface{}, error) {
@@ -1709,7 +1750,7 @@ func readDoagentStructuredResult(path string) (string, map[string]interface{}, e
 func bindReconciliationEvidenceTrace(
 	result map[string]interface{},
 	field, traceDigest string,
-	records map[string]doagentToolTraceRecord,
+	records []doagentToolTraceRecord,
 ) error {
 	raw, exists := result[field]
 	if !exists || raw == nil {
@@ -1724,39 +1765,79 @@ func bindReconciliationEvidenceTrace(
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		callID, _ := item["toolCallId"].(string)
-		callID = strings.TrimSpace(callID)
-		if callID == "" {
-			return fmt.Errorf("%s item toolCallId is required", field)
+		for _, managed := range []string{"toolCallId", "toolDigest", "traceDigest"} {
+			if _, exists := item[managed]; exists {
+				return fmt.Errorf("%s item %s is bridge-managed and must be omitted", field, managed)
+			}
 		}
-		record, ok := records[callID]
-		if !ok {
-			return fmt.Errorf("%s item toolCallId %q was not observed", field, callID)
+		record, tool, ordinal, err := resolveReconciliationEvidenceToolRef(item, records)
+		if err != nil {
+			return fmt.Errorf("%s item %w", field, err)
 		}
 		if record.Status != "completed" {
-			return fmt.Errorf("%s item toolCallId %q did not complete successfully", field, callID)
+			return fmt.Errorf("%s item toolRef %s#%d did not complete successfully", field, tool, ordinal)
 		}
 		if !record.Observation {
-			return fmt.Errorf("%s item toolCallId %q is not an observation call", field, callID)
+			return fmt.Errorf("%s item toolRef %s#%d is not an observation call", field, tool, ordinal)
 		}
-		item["toolCallId"] = callID
+		delete(item, "toolRef")
+		item["toolCallId"] = record.CallID
 		item["toolDigest"] = record.Digest
 		item["traceDigest"] = traceDigest
 	}
 	return nil
 }
 
+func resolveReconciliationEvidenceToolRef(
+	item map[string]interface{},
+	records []doagentToolTraceRecord,
+) (doagentToolTraceRecord, string, int, error) {
+	raw, exists := item["toolRef"]
+	if !exists {
+		return doagentToolTraceRecord{}, "", 0, fmt.Errorf("toolRef is required")
+	}
+	ref, ok := raw.(map[string]interface{})
+	if !ok {
+		return doagentToolTraceRecord{}, "", 0, fmt.Errorf("toolRef must be an object")
+	}
+	tool, _ := ref["tool"].(string)
+	if tool == "" {
+		return doagentToolTraceRecord{}, "", 0, fmt.Errorf("toolRef.tool is required")
+	}
+	if strings.TrimSpace(tool) != tool {
+		return doagentToolTraceRecord{}, "", 0, fmt.Errorf("toolRef.tool must match the exact runtime tool name")
+	}
+	rawOrdinal, ok := ref["ordinal"].(float64)
+	if !ok || rawOrdinal < 1 || rawOrdinal != float64(int(rawOrdinal)) {
+		return doagentToolTraceRecord{}, "", 0, fmt.Errorf("toolRef.ordinal must be a positive integer")
+	}
+	ordinal := int(rawOrdinal)
+	current := 0
+	for _, record := range records {
+		if record.Tool != tool {
+			continue
+		}
+		current++
+		if current == ordinal {
+			return record, tool, ordinal, nil
+		}
+	}
+	return doagentToolTraceRecord{}, tool, ordinal, fmt.Errorf("toolRef %s#%d was not observed", tool, ordinal)
+}
+
 func doagentReconciliationTraceDigest(
-	planDigest, workspaceCommit, turnID string,
+	planDigest, sourceRevision, workspaceCommit, turnID string,
 	toolCalls []doagentToolTraceRecord,
 ) (string, error) {
 	payload := struct {
 		PlanDigest      string                   `json:"planDigest"`
+		SourceRevision  string                   `json:"sourceRevision,omitempty"`
 		WorkspaceCommit string                   `json:"workspaceCommit"`
 		TurnID          string                   `json:"turnId"`
 		ToolCalls       []doagentToolTraceRecord `json:"toolCalls"`
 	}{
 		PlanDigest:      planDigest,
+		SourceRevision:  sourceRevision,
 		WorkspaceCommit: workspaceCommit,
 		TurnID:          turnID,
 		ToolCalls:       toolCalls,

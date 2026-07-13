@@ -24,6 +24,9 @@ func TestReconciliationResultAcceptsRequiredEvidence(t *testing.T) {
 	if err := validateReconciliationResult(plan, workspaceCommit, result); err != nil {
 		t.Fatalf("validate reconciliation result: %v", err)
 	}
+	if result.ExecutionEvidence.SourceRevision != plan.Spec.Release.Source.Revision {
+		t.Fatalf("source revision must remain distinct from transport workspace commit: %#v", result.ExecutionEvidence)
+	}
 }
 
 func TestReconciliationResultRejectsUnattestedEvidence(t *testing.T) {
@@ -64,6 +67,58 @@ func TestReconciliationResultRejectsTamperedTraceDigest(t *testing.T) {
 
 	if err := validateReconciliationResult(plan, workspaceCommit, result); err == nil {
 		t.Fatal("tampered bridge trace digest must be rejected")
+	}
+}
+
+func TestReconciliationResultRejectsMismatchedSourceRevision(t *testing.T) {
+	plan := reconciliationResultTestPlan()
+	workspaceCommit := strings.Repeat("a", 40)
+	result := ReconciliationResult{
+		APIVersion: deploymentAPIVersion,
+		Kind:       reconciliationResultKind,
+		PlanDigest: plan.Digest,
+		Status:     ReconciliationConverged,
+		Attempts:   1,
+		Evidence: []ReconciliationEvidence{
+			reconciliationResultTestEvidence("source-identity"),
+			reconciliationResultTestEvidence("runtime-state"),
+		},
+	}
+	attestReconciliationResultForTest(plan, workspaceCommit, &result)
+	result.ExecutionEvidence.SourceRevision = strings.Repeat("f", 40)
+
+	err := validateReconciliationResult(plan, workspaceCommit, result)
+	if err == nil || !strings.Contains(err.Error(), "sourceRevision does not match") {
+		t.Fatalf("mismatched source revision must be rejected: %v", err)
+	}
+}
+
+func TestReconciliationResultTraceBindsOriginalToolOrder(t *testing.T) {
+	plan := reconciliationResultTestPlan()
+	workspaceCommit := strings.Repeat("a", 40)
+	result := ReconciliationResult{
+		APIVersion: deploymentAPIVersion,
+		Kind:       reconciliationResultKind,
+		PlanDigest: plan.Digest,
+		Status:     ReconciliationConverged,
+		Attempts:   1,
+		Evidence: []ReconciliationEvidence{
+			reconciliationResultTestEvidence("source-identity"),
+			reconciliationResultTestEvidence("runtime-state"),
+		},
+	}
+	attestReconciliationResultForTest(plan, workspaceCommit, &result)
+	result.ExecutionEvidence.ToolCalls = append(
+		result.ExecutionEvidence.ToolCalls,
+		completedObservationToolCallForTest("call-second"),
+	)
+	refreshReconciliationAttestationForTest(plan, &result)
+	result.ExecutionEvidence.ToolCalls[0], result.ExecutionEvidence.ToolCalls[1] =
+		result.ExecutionEvidence.ToolCalls[1], result.ExecutionEvidence.ToolCalls[0]
+
+	err := validateReconciliationResult(plan, workspaceCommit, result)
+	if err == nil || !strings.Contains(err.Error(), "traceDigest does not match") {
+		t.Fatalf("reordered tool trace must be rejected: %v", err)
 	}
 }
 
@@ -267,6 +322,12 @@ func reconciliationResultTestPlan() DeploymentPlan {
 	return DeploymentPlan{
 		Digest: "sha256:expected-plan",
 		Spec: DeploymentPlanSpec{
+			Release: CICDReleaseReference{
+				Source: &CICDSourceRelease{
+					Repository: "https://cnb.cool/l8ai/example.git",
+					Revision:   strings.Repeat("c", 40),
+				},
+			},
 			Acceptance: CICDAcceptance{
 				RequiredEvidence: []string{"source-identity", "runtime-state"},
 			},
@@ -284,8 +345,13 @@ func reconciliationResultTestEvidence(kind string) ReconciliationEvidence {
 }
 
 func attestReconciliationResultForTest(plan DeploymentPlan, workspaceCommit string, result *ReconciliationResult) {
+	sourceRevision := ""
+	if plan.Spec.Release.Source != nil {
+		sourceRevision = plan.Spec.Release.Source.Revision
+	}
 	result.ExecutionEvidence = ReconciliationExecutionEvidence{
 		TurnID:          "turn-test",
+		SourceRevision:  sourceRevision,
 		WorkspaceCommit: workspaceCommit,
 		ToolCalls: []ReconciliationToolEvidence{
 			completedObservationToolCallForTest("call-observe"),

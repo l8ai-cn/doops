@@ -18,6 +18,9 @@
 - `DeploymentPlan` 是唯一发布契约；已解析目标、制品、期望状态和验收条件不得被聊天上下文或默认值覆盖。
 - dry run 只允许观察和规划；apply 才允许在契约范围内改变状态。
 - 只有满足计划声明的全部验收证据，且证据来自本轮实际完成的观察工具调用时，才能返回 `converged`。
-- 每条 evidence 必须填写产生该观察事实的真实 `toolCallId`。doops-agent 只接受本轮匹配且已完成的观察调用，并注入 `toolDigest`、`traceDigest` 和 `executionEvidence`；不得猜测调用 ID 或自行编造 attestation 字段。
+- 每条 evidence 必须填写 `toolRef`，包含精确工具名和该工具在本轮终态 SSE
+  事件中的一基序号。doops-agent 只接受匹配且已完成的观察调用，并注入真实
+  `toolCallId`、`toolDigest`、`traceDigest` 和 `executionEvidence`；Agent
+  不得自行填写这些 attestation 字段。
 - 未满足验收时返回实际的 `blocked` 或 `failed` 证据。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。

@@ -32,7 +32,7 @@ type agenticDeploymentRunner struct {
 	server          Server
 	sourceDirectory string
 	sessionID       string
-	pushWorkspace   func(Server, string, string) (string, error)
+	pushWorkspace   func(Server, string, string, *CICDSourceRelease) (string, error)
 	ask             func(map[string]interface{}) (ReconciliationResult, error)
 }
 
@@ -181,8 +181,8 @@ func newAgenticDeploymentRunner(server Server, sourceDirectory, sessionID string
 		return nil, fmt.Errorf("deployment source directory, session ID, and Ask client are required")
 	}
 	return &agenticDeploymentRunner{server: server, sourceDirectory: sourceDirectory, sessionID: sessionID,
-		pushWorkspace: func(target Server, source, session string) (string, error) {
-			return pushWorkspaceSnapshot(target, source, "", false, nil, session)
+		pushWorkspace: func(target Server, source, session string, identity *CICDSourceRelease) (string, error) {
+			return pushWorkspaceSnapshotWithSource(target, source, "", false, nil, session, identity)
 		},
 		ask: func(arguments map[string]interface{}) (ReconciliationResult, error) {
 			var result ReconciliationResult
@@ -208,7 +208,12 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	if err != nil {
 		return CICDAgenticRun{}, err
 	}
-	workspaceCommit, err := r.pushWorkspace(r.server, r.sourceDirectory, r.sessionID)
+	workspaceCommit, err := r.pushWorkspace(
+		r.server,
+		r.sourceDirectory,
+		r.sessionID,
+		plan.Spec.Release.Source,
+	)
 	if err != nil {
 		return CICDAgenticRun{}, fmt.Errorf("push deployment workspace: %w", err)
 	}
@@ -262,13 +267,17 @@ func buildAgenticDeploymentArguments(plan DeploymentPlan, request CICDAgenticRun
 	if request.AllowMutate {
 		executionMode = "apply"
 	}
-	return map[string]interface{}{
+	arguments := map[string]interface{}{
 		"instruction":     instruction,
 		"response_format": "json",
 		"operation":       "reconcile",
 		"plan_digest":     plan.Digest,
 		"execution_mode":  executionMode,
-	}, nil
+	}
+	if plan.Spec.Release.Source != nil {
+		arguments["source_revision"] = plan.Spec.Release.Source.Revision
+	}
+	return arguments, nil
 }
 
 func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticRunRequest) (string, error) {

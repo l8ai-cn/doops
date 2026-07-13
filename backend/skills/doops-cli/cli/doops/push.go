@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -13,6 +14,14 @@ import (
 	"strings"
 	"time"
 )
+
+const workspaceSourceManifestPath = ".doops/source.json"
+
+type workspaceSourceManifest struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Source     CICDSourceRelease `json:"source"`
+}
 
 // 默认排除的目录/文件
 var defaultExcludes = []string{
@@ -46,6 +55,17 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 }
 
 func pushWorkspaceSnapshot(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) (string, error) {
+	return pushWorkspaceSnapshotWithSource(server, src, dest, dryRun, extraExcludes, sessionID, nil)
+}
+
+func pushWorkspaceSnapshotWithSource(
+	server Server,
+	src, dest string,
+	dryRun bool,
+	extraExcludes []string,
+	sessionID string,
+	source *CICDSourceRelease,
+) (string, error) {
 	// 1. 解析源目录
 	src, err := filepath.Abs(src)
 	if err != nil {
@@ -91,7 +111,7 @@ func pushWorkspaceSnapshot(server Server, src, dest string, dryRun bool, extraEx
 
 	start := time.Now()
 	fmt.Printf("🧊 正在构建本地隔离快照（大型仓库首次扫描可能较慢）...\n")
-	stagedFiles, err := stageSnapshot(src, tmpDir, extraExcludes, dryRun)
+	stagedFiles, err := stageWorkspaceSnapshot(src, tmpDir, extraExcludes, dryRun, source)
 	if err != nil {
 		return "", fmt.Errorf("本地缓存集结失败: %v", err)
 	}
@@ -175,6 +195,62 @@ func pushWorkspaceSnapshot(server Server, src, dest string, dryRun bool, extraEx
 	}
 	fmt.Printf("✅ 同步完成 (%s) 🎯 远端工作区已就绪: %s @ %s\n", elapsed.Round(time.Millisecond), workspacePath, shortCommit)
 	return localCommit, nil
+}
+
+func stageWorkspaceSnapshot(
+	src, tmpDir string,
+	extraExcludes []string,
+	dryRun bool,
+	source *CICDSourceRelease,
+) ([]string, error) {
+	stagedFiles, err := stageSnapshot(src, tmpDir, extraExcludes, dryRun)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil {
+		return stagedFiles, nil
+	}
+	if dryRun {
+		stagedFiles = append(stagedFiles, workspaceSourceManifestPath)
+	} else {
+		manifestPath, err := writeWorkspaceSourceManifest(tmpDir, source)
+		if err != nil {
+			return nil, fmt.Errorf("write source identity manifest: %w", err)
+		}
+		stagedFiles = append(stagedFiles, manifestPath)
+	}
+	sort.Strings(stagedFiles)
+	return stagedFiles, nil
+}
+
+func writeWorkspaceSourceManifest(root string, source *CICDSourceRelease) (string, error) {
+	if source == nil {
+		return "", fmt.Errorf("source identity is required")
+	}
+	if strings.TrimSpace(source.Repository) == "" {
+		return "", fmt.Errorf("source repository is required")
+	}
+	if !immutableGitCommitPattern.MatchString(strings.TrimSpace(source.Revision)) {
+		return "", fmt.Errorf("source revision must be an immutable Git commit")
+	}
+	manifest := workspaceSourceManifest{
+		APIVersion: deploymentAPIVersion,
+		Kind:       "WorkspaceSource",
+		Source:     *source,
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode source manifest: %w", err)
+	}
+	data = append(data, '\n')
+	path := filepath.Join(root, filepath.FromSlash(workspaceSourceManifestPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create source manifest directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("write source manifest: %w", err)
+	}
+	return workspaceSourceManifestPath, nil
 }
 
 func buildGitRemoteURL(host, port, sessionID, token string) string {

@@ -200,7 +200,7 @@ func TestAgentPromptAttestsReconciliationWithToolTrace(t *testing.T) {
 
 	prompted := make(chan struct{})
 	finalMessage := fmt.Sprintf(
-		`{"apiVersion":"doops.sh/v2","kind":"ReconciliationResult","planDigest":%q,"status":"converged","attempts":1,"noProgressAttempts":0,"evidence":[{"kind":"runtime-state","subject":"service","observedAt":"2026-07-13T00:00:00Z","value":"ready","toolCallId":"call-observe"}],"failureEvidence":[]}`,
+		`{"apiVersion":"doops.sh/v2","kind":"ReconciliationResult","planDigest":%q,"status":"converged","attempts":1,"noProgressAttempts":0,"evidence":[{"kind":"runtime-state","subject":"service","observedAt":"2026-07-13T00:00:00Z","value":"ready","toolRef":{"tool":"WebFetch","ordinal":1}}],"failureEvidence":[]}`,
 		planDigest,
 	)
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +225,19 @@ func TestAgentPromptAttestsReconciliationWithToolTrace(t *testing.T) {
 					"result":  map[string]interface{}{},
 				})
 			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				prompt, _ := params["prompt"].(string)
+				for _, required := range []string{
+					"toolRef",
+					"sourceRevision " + strings.Repeat("e", 40),
+					"workspaceCommit " + workspaceCommit,
+					".doops/source.json",
+					"do not compare the workspace Git HEAD with sourceRevision",
+				} {
+					if !strings.Contains(prompt, required) {
+						t.Errorf("reconciliation prompt is missing %q: %s", required, prompt)
+					}
+				}
 				resultPath := filepath.Join(root, sessionID, ".doops", "structured-result.json")
 				if err := os.WriteFile(resultPath, []byte(finalMessage), 0o600); err != nil {
 					t.Errorf("write structured result: %v", err)
@@ -269,12 +282,15 @@ func TestAgentPromptAttestsReconciliationWithToolTrace(t *testing.T) {
 		"operation":        "reconcile",
 		"plan_digest":      planDigest,
 		"execution_mode":   "apply",
+		"source_revision":  strings.Repeat("e", 40),
 		"workspace_commit": workspaceCommit,
 	})
 	toolResult, _ := result["result"].(map[string]interface{})
 	structured, _ := toolResult["structuredContent"].(map[string]interface{})
 	execution, _ := structured["executionEvidence"].(map[string]interface{})
-	if execution["turnId"] != "turn-attested" || execution["workspaceCommit"] != workspaceCommit {
+	if execution["turnId"] != "turn-attested" ||
+		execution["sourceRevision"] != strings.Repeat("e", 40) ||
+		execution["workspaceCommit"] != workspaceCommit {
 		t.Fatalf("missing bridge execution attestation: %#v", structured)
 	}
 	toolCalls, _ := execution["toolCalls"].([]interface{})
@@ -303,37 +319,106 @@ func TestAgentPromptAttestsReconciliationWithToolTrace(t *testing.T) {
 	if item["toolCallId"] != "call-observe" || item["toolDigest"] != observed["digest"] {
 		t.Fatalf("evidence must bind to its completed observation tool call: %#v", structured)
 	}
+	if _, exists := item["toolRef"]; exists {
+		t.Fatalf("bridge must replace the model-visible selector with runtime attestation: %#v", structured)
+	}
 	if item["traceDigest"] == "" || item["traceDigest"] != execution["traceDigest"] {
 		t.Fatalf("evidence must bind to the bridge trace: %#v", structured)
 	}
 }
 
-func TestAttestReconciliationResultRejectsInvalidEvidenceToolCallBindings(t *testing.T) {
+func TestAttestReconciliationResultRejectsInvalidEvidenceToolReferences(t *testing.T) {
 	execution := agentPromptExecutionContext{
 		PlanDigest:      "sha256:" + strings.Repeat("d", 64),
+		SourceRevision:  strings.Repeat("e", 40),
 		WorkspaceCommit: strings.Repeat("c", 40),
 	}
 	tests := []struct {
-		name       string
-		toolCallID string
-		updates    []map[string]interface{}
-		want       string
+		name    string
+		item    map[string]interface{}
+		updates []map[string]interface{}
+		want    string
 	}{
 		{
-			name: "missing toolCallId",
-			want: "toolCallId is required",
+			name: "missing toolRef",
+			item: map[string]interface{}{},
+			want: "toolRef is required",
 		},
 		{
-			name:       "nonexistent toolCallId",
-			toolCallID: "call-missing",
+			name: "model supplied toolCallId",
+			item: map[string]interface{}{
+				"toolCallId": "call-observe",
+				"toolRef": map[string]interface{}{
+					"tool":    "WebFetch",
+					"ordinal": float64(1),
+				},
+			},
 			updates: []map[string]interface{}{
 				completedObservationUpdate("call-observe"),
 			},
-			want: `toolCallId "call-missing" was not observed`,
+			want: "toolCallId is bridge-managed",
 		},
 		{
-			name:       "failed toolCallId",
-			toolCallID: "call-failed",
+			name: "out of range ordinal",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "WebFetch",
+					"ordinal": float64(2),
+				},
+			},
+			updates: []map[string]interface{}{
+				completedObservationUpdate("call-observe"),
+			},
+			want: `toolRef WebFetch#2 was not observed`,
+		},
+		{
+			name: "exact tool name is required",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "webfetch",
+					"ordinal": float64(1),
+				},
+			},
+			updates: []map[string]interface{}{
+				completedObservationUpdate("call-observe"),
+			},
+			want: `toolRef webfetch#1 was not observed`,
+		},
+		{
+			name: "toolRef whitespace is rejected",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    " WebFetch ",
+					"ordinal": float64(1),
+				},
+			},
+			updates: []map[string]interface{}{
+				completedObservationUpdate("call-observe"),
+			},
+			want: "toolRef.tool must match the exact runtime tool name",
+		},
+		{
+			name: "duplicate terminal call ID",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "WebFetch",
+					"ordinal": float64(1),
+				},
+			},
+			updates: []map[string]interface{}{
+				completedObservationUpdate("call-duplicate"),
+				completedObservationUpdate("call-duplicate"),
+			},
+			want: `terminal toolCallId "call-duplicate" was observed more than once`,
+		},
+		{
+			name: "failed referenced call",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "WebFetch",
+					"ordinal": float64(1),
+				},
+			},
 			updates: []map[string]interface{}{
 				{
 					"sessionUpdate": "tool_call_update",
@@ -344,28 +429,53 @@ func TestAttestReconciliationResultRejectsInvalidEvidenceToolCallBindings(t *tes
 					"content":       []interface{}{"connection refused"},
 				},
 			},
-			want: `toolCallId "call-failed" did not complete successfully`,
+			want: `toolRef WebFetch#1 did not complete successfully`,
 		},
 		{
-			name:       "unrelated Bash echo toolCallId",
-			toolCallID: "call-echo",
+			name: "non observation referenced call",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "ExecuteCode",
+					"ordinal": float64(1),
+				},
+			},
 			updates: []map[string]interface{}{
 				{
 					"sessionUpdate": "tool_call_update",
 					"toolCallId":    "call-echo",
-					"toolName":      "Bash",
+					"toolName":      "ExecuteCode",
 					"status":        "completed",
 					"input":         map[string]interface{}{"command": "echo ready"},
 					"content":       []interface{}{"ready"},
 				},
 			},
-			want: `toolCallId "call-echo" is not an observation call`,
+			want: `toolRef ExecuteCode#1 is not an observation call`,
+		},
+		{
+			name: "unknown tools fail closed",
+			item: map[string]interface{}{
+				"toolRef": map[string]interface{}{
+					"tool":    "UnknownMutator",
+					"ordinal": float64(1),
+				},
+			},
+			updates: []map[string]interface{}{
+				{
+					"sessionUpdate": "tool_call_update",
+					"toolCallId":    "call-unknown",
+					"toolName":      "UnknownMutator",
+					"status":        "completed",
+					"input":         map[string]interface{}{"mutate": true},
+					"content":       []interface{}{"done"},
+				},
+			},
+			want: `toolRef UnknownMutator#1 is not an observation call`,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			records := make(map[string]doagentToolTraceRecord, len(test.updates))
+			records := make([]doagentToolTraceRecord, 0, len(test.updates))
 			for _, update := range test.updates {
 				record, ok, err := doagentToolTraceRecordFromUpdate(update)
 				if err != nil {
@@ -374,18 +484,21 @@ func TestAttestReconciliationResultRejectsInvalidEvidenceToolCallBindings(t *tes
 				if !ok {
 					t.Fatalf("expected terminal tool update: %#v", update)
 				}
-				records[record.CallID] = record
+				records = append(records, record)
+			}
+			item := map[string]interface{}{
+				"kind":       "runtime-state",
+				"subject":    "service",
+				"observedAt": "2026-07-13T00:00:00Z",
+				"value":      "ready",
+			}
+			for key, value := range test.item {
+				item[key] = value
 			}
 			result := map[string]interface{}{
 				"status": "converged",
 				"evidence": []interface{}{
-					map[string]interface{}{
-						"kind":       "runtime-state",
-						"subject":    "service",
-						"observedAt": "2026-07-13T00:00:00Z",
-						"value":      "ready",
-						"toolCallId": test.toolCallID,
-					},
+					item,
 				},
 				"failureEvidence": []interface{}{},
 			}
@@ -395,6 +508,112 @@ func TestAttestReconciliationResultRejectsInvalidEvidenceToolCallBindings(t *tes
 				t.Fatalf("unexpected attestation error: %v", err)
 			}
 		})
+	}
+}
+
+func TestDoagentToolTraceRejectsNonExactRuntimeToolName(t *testing.T) {
+	_, _, err := doagentToolTraceRecordFromUpdate(map[string]interface{}{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "call-observe",
+		"toolName":      " WebFetch ",
+		"status":        "completed",
+	})
+	if err == nil || !strings.Contains(err.Error(), "toolName must be exact") {
+		t.Fatalf("runtime tool names with surrounding whitespace must be rejected: %v", err)
+	}
+}
+
+func TestDoagentObservationToolUsesFailClosedAllowlist(t *testing.T) {
+	for _, tool := range []string{"Read", "list_files", "glob", "grep", "search", "WebFetch", "WebSearch"} {
+		if !doagentObservationTool(tool) {
+			t.Fatalf("known read-only runtime tool must be observation-capable: %s", tool)
+		}
+	}
+	for _, tool := range []string{"ExecuteCode", "Bash", "Write", "UnknownMutator", "Read "} {
+		if doagentObservationTool(tool) {
+			t.Fatalf("unknown, mutating, or non-exact tool must fail closed: %s", tool)
+		}
+	}
+}
+
+func TestAttestReconciliationResultResolvesSameToolOrdinalFromSSEOrder(t *testing.T) {
+	execution := agentPromptExecutionContext{
+		PlanDigest:      "sha256:" + strings.Repeat("d", 64),
+		SourceRevision:  strings.Repeat("e", 40),
+		WorkspaceCommit: strings.Repeat("c", 40),
+	}
+	records := make([]doagentToolTraceRecord, 0, 3)
+	for _, update := range []map[string]interface{}{
+		completedObservationUpdate("call-z"),
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "call-a",
+			"toolName":      "Read",
+			"status":        "completed",
+			"input":         map[string]interface{}{"path": "/tmp/status"},
+			"content":       []interface{}{"ready"},
+		},
+		completedObservationUpdate("call-m"),
+	} {
+		record, ok, err := doagentToolTraceRecordFromUpdate(update)
+		if err != nil || !ok {
+			t.Fatalf("parse terminal update: ok=%v err=%v", ok, err)
+		}
+		records = append(records, record)
+	}
+	result := map[string]interface{}{
+		"evidence": []interface{}{
+			map[string]interface{}{
+				"kind":       "runtime-state",
+				"subject":    "service",
+				"observedAt": "2026-07-13T00:00:00Z",
+				"value":      "ready",
+				"toolRef": map[string]interface{}{
+					"tool":    "WebFetch",
+					"ordinal": float64(2),
+				},
+			},
+		},
+		"failureEvidence": []interface{}{},
+	}
+
+	if err := attestReconciliationResult(result, execution, "turn-test", records); err != nil {
+		t.Fatalf("attest result: %v", err)
+	}
+	evidence := result["evidence"].([]interface{})[0].(map[string]interface{})
+	if evidence["toolCallId"] != "call-m" {
+		t.Fatalf("ordinal must resolve against original same-tool terminal SSE order: %#v", evidence)
+	}
+	executionEvidence := result["executionEvidence"].(map[string]interface{})
+	toolCalls := executionEvidence["toolCalls"].([]doagentToolTraceRecord)
+	if len(toolCalls) != 3 ||
+		toolCalls[0].CallID != "call-z" ||
+		toolCalls[1].CallID != "call-a" ||
+		toolCalls[2].CallID != "call-m" {
+		t.Fatalf("execution evidence must preserve original terminal SSE order: %#v", toolCalls)
+	}
+}
+
+func TestAttestReconciliationResultRejectsAgentAuthoredExecutionEvidence(t *testing.T) {
+	result := map[string]interface{}{
+		"evidence":        []interface{}{},
+		"failureEvidence": []interface{}{},
+		"executionEvidence": map[string]interface{}{
+			"turnId": "forged-turn",
+		},
+	}
+	err := attestReconciliationResult(
+		result,
+		agentPromptExecutionContext{
+			PlanDigest:      "sha256:" + strings.Repeat("d", 64),
+			SourceRevision:  strings.Repeat("e", 40),
+			WorkspaceCommit: strings.Repeat("c", 40),
+		},
+		"turn-test",
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "executionEvidence is bridge-managed") {
+		t.Fatalf("Agent-authored execution evidence must be rejected: %v", err)
 	}
 }
 

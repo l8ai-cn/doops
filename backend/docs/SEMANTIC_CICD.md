@@ -165,12 +165,14 @@ authoritative `turn_finished` event; earlier `agent_message` and `usage_update`
 events cannot complete the operation. Admission errors are returned directly
 instead of being hidden behind an SSE timeout.
 
-For reconciliation, the bridge hashes the real terminal ACP tool events and
-injects an `executionEvidence` object containing the turn ID, exact workspace
-commit, tool summaries, and a trace digest. Every Agent-authored evidence item
-must name the exact `toolCallId` that produced the observation. The bridge
-accepts only matching completed observation calls and injects that call's
-`toolDigest`; the CLI recomputes the trace and cross-checks both bindings.
+For reconciliation, the bridge hashes the real terminal ACP tool events in
+their original SSE order and injects an `executionEvidence` object containing
+the turn ID, source revision, exact workspace commit, tool summaries, and a
+trace digest. Every Agent-authored evidence item supplies a `toolRef` with the
+exact tool name and its one-based ordinal among terminal events for that tool.
+The bridge resolves the reference, accepts only completed observation calls,
+and injects the real `toolCallId` and `toolDigest`; the CLI recomputes the trace
+and cross-checks both identities and bindings.
 
 The target image bundles the `semantic-deployment` Skill. Structured
 `DeploymentPlan` requests select that Skill, which defines the desired state,
@@ -195,28 +197,20 @@ The machine result artifact is one object:
       "subject": "service",
       "observedAt": "2026-07-13T00:00:00Z",
       "value": "ready",
-      "toolCallId": "call-observe",
-      "toolDigest": "sha256:...",
-      "traceDigest": "sha256:..."
+      "toolRef": {
+        "tool": "WebFetch",
+        "ordinal": 1
+      }
     }
   ],
-  "failureEvidence": [],
-  "executionEvidence": {
-    "turnId": "turn-...",
-    "workspaceCommit": "0123456789abcdef0123456789abcdef01234567",
-    "traceDigest": "sha256:...",
-    "toolCalls": [
-      {
-        "callId": "call-...",
-        "tool": "WebFetch",
-        "status": "completed",
-        "observation": true,
-        "digest": "sha256:..."
-      }
-    ]
-  }
+  "failureEvidence": []
 }
 ```
+
+After the authoritative `turn_finished`, the bridge replaces each `toolRef`
+with the observed `toolCallId`, `toolDigest`, and `traceDigest`, then adds
+`executionEvidence` containing `turnId`, `sourceRevision`, `workspaceCommit`,
+and the terminal tool events in original SSE order.
 
 `status` is one of `converged`, `blocked`, or `failed`.
 
@@ -224,9 +218,9 @@ The machine result artifact is one object:
 - `converged` also requires a completed observation tool call and a valid
   bridge-generated execution trace bound to the pushed workspace commit.
 - Each evidence item must bind to its own matching completed observation call.
-  Missing, nonexistent, failed, generic execution, write, and other
-  non-observation call IDs are rejected even if another observation call
-  completed in the same turn.
+  Missing, out-of-range, failed, generic execution, write, and other
+  non-observation tool references are rejected even if another observation
+  call completed in the same turn.
 - `blocked` and `failed` require actual observed `failureEvidence`; unavailable
   evidence must not be invented.
 - `rollback-state` is valid only when mutation occurred, the environment

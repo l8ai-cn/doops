@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,94 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestWriteWorkspaceSourceManifestBindsImmutableRevision(t *testing.T) {
+	root := t.TempDir()
+	source := &CICDSourceRelease{
+		Repository: "https://cnb.cool/l8ai/example.git",
+		Revision:   strings.Repeat("a", 40),
+		Branch:     "main",
+	}
+
+	rel, err := writeWorkspaceSourceManifest(root, source)
+	if err != nil {
+		t.Fatalf("write source manifest: %v", err)
+	}
+	if rel != ".doops/source.json" {
+		t.Fatalf("unexpected source manifest path %q", rel)
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("read source manifest: %v", err)
+	}
+	var manifest workspaceSourceManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode source manifest: %v", err)
+	}
+	if manifest.APIVersion != deploymentAPIVersion || manifest.Kind != "WorkspaceSource" {
+		t.Fatalf("unexpected source manifest type: %#v", manifest)
+	}
+	if manifest.Source != *source {
+		t.Fatalf("source manifest must preserve the declared immutable identity: %#v", manifest)
+	}
+}
+
+func TestStageWorkspaceSnapshotCommitsSourceManifestWithoutDirtyingSource(t *testing.T) {
+	sourceRoot := t.TempDir()
+	runTestGit(t, sourceRoot, "init", "-b", "main")
+	runTestGit(t, sourceRoot, "config", "user.name", "doops")
+	runTestGit(t, sourceRoot, "config", "user.email", "doops@localhost")
+	if err := os.WriteFile(filepath.Join(sourceRoot, "README.md"), []byte("release\n"), 0o644); err != nil {
+		t.Fatalf("write source fixture: %v", err)
+	}
+	runTestGit(t, sourceRoot, "add", "README.md")
+	runTestGit(t, sourceRoot, "commit", "-m", "release")
+	revisionBytes, err := exec.Command("git", "-C", sourceRoot, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve source revision: %v", err)
+	}
+	source := &CICDSourceRelease{
+		Repository: "https://cnb.cool/l8ai/example.git",
+		Revision:   strings.TrimSpace(string(revisionBytes)),
+		Branch:     "main",
+	}
+	snapshotRoot := t.TempDir()
+
+	files, err := stageWorkspaceSnapshot(sourceRoot, snapshotRoot, nil, false, source)
+	if err != nil {
+		t.Fatalf("stage workspace snapshot: %v", err)
+	}
+	if !containsString(files, workspaceSourceManifestPath) {
+		t.Fatalf("source manifest must be part of the staged snapshot: %#v", files)
+	}
+	runTestGit(t, snapshotRoot, "init", "-b", "master")
+	runTestGit(t, snapshotRoot, "config", "user.name", "doops")
+	runTestGit(t, snapshotRoot, "config", "user.email", "doops@localhost")
+	runTestGit(t, snapshotRoot, "add", ".")
+	runTestGit(t, snapshotRoot, "commit", "-m", "snapshot")
+	tree, err := exec.Command(
+		"git",
+		"-C",
+		snapshotRoot,
+		"ls-tree",
+		"--name-only",
+		"HEAD",
+		workspaceSourceManifestPath,
+	).Output()
+	if err != nil {
+		t.Fatalf("inspect snapshot commit: %v", err)
+	}
+	if strings.TrimSpace(string(tree)) != workspaceSourceManifestPath {
+		t.Fatalf("source manifest must be committed in the transport snapshot: %q", tree)
+	}
+	status, err := exec.Command("git", "-C", sourceRoot, "status", "--porcelain").Output()
+	if err != nil {
+		t.Fatalf("inspect source worktree: %v", err)
+	}
+	if strings.TrimSpace(string(status)) != "" {
+		t.Fatalf("snapshot metadata must not dirty the source worktree: %s", status)
+	}
+}
 
 func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 	root := t.TempDir()

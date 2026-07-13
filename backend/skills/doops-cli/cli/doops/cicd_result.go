@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -43,6 +42,7 @@ type ReconciliationEvidence struct {
 
 type ReconciliationExecutionEvidence struct {
 	TurnID          string                       `json:"turnId"`
+	SourceRevision  string                       `json:"sourceRevision,omitempty"`
 	WorkspaceCommit string                       `json:"workspaceCommit"`
 	TraceDigest     string                       `json:"traceDigest"`
 	ToolCalls       []ReconciliationToolEvidence `json:"toolCalls"`
@@ -69,7 +69,17 @@ func validateReconciliationResult(plan DeploymentPlan, workspaceCommit string, r
 	if result.NoProgressAttempts < 0 || result.NoProgressAttempts > result.Attempts {
 		return fmt.Errorf("reconciliation result noProgressAttempts must be between 0 and attempts")
 	}
-	if err := validateReconciliationExecutionEvidence(plan.Digest, workspaceCommit, result.ExecutionEvidence, result.Status); err != nil {
+	expectedSourceRevision := ""
+	if plan.Spec.Release.Source != nil {
+		expectedSourceRevision = plan.Spec.Release.Source.Revision
+	}
+	if err := validateReconciliationExecutionEvidence(
+		plan.Digest,
+		expectedSourceRevision,
+		workspaceCommit,
+		result.ExecutionEvidence,
+		result.Status,
+	); err != nil {
 		return fmt.Errorf("validate reconciliation execution evidence: %w", err)
 	}
 	if err := validateReconciliationEvidence(result.Evidence, result.ExecutionEvidence); err != nil {
@@ -94,12 +104,16 @@ func validateReconciliationResult(plan DeploymentPlan, workspaceCommit string, r
 
 func validateReconciliationExecutionEvidence(
 	planDigest string,
+	expectedSourceRevision string,
 	workspaceCommit string,
 	execution ReconciliationExecutionEvidence,
 	status ReconciliationStatus,
 ) error {
 	if strings.TrimSpace(execution.TurnID) == "" {
 		return fmt.Errorf("turnId is required")
+	}
+	if execution.SourceRevision != expectedSourceRevision {
+		return fmt.Errorf("sourceRevision does not match the declared release")
 	}
 	if !validWorkspaceCommit(workspaceCommit) || execution.WorkspaceCommit != workspaceCommit {
 		return fmt.Errorf("workspaceCommit does not match the pushed workspace")
@@ -137,20 +151,18 @@ func validateReconciliationExecutionEvidence(
 }
 
 func reconciliationTraceDigest(planDigest string, execution ReconciliationExecutionEvidence) string {
-	toolCalls := append([]ReconciliationToolEvidence(nil), execution.ToolCalls...)
-	sort.Slice(toolCalls, func(i, j int) bool {
-		return toolCalls[i].CallID < toolCalls[j].CallID
-	})
 	payload := struct {
 		PlanDigest      string                       `json:"planDigest"`
+		SourceRevision  string                       `json:"sourceRevision,omitempty"`
 		WorkspaceCommit string                       `json:"workspaceCommit"`
 		TurnID          string                       `json:"turnId"`
 		ToolCalls       []ReconciliationToolEvidence `json:"toolCalls"`
 	}{
 		PlanDigest:      planDigest,
+		SourceRevision:  execution.SourceRevision,
 		WorkspaceCommit: execution.WorkspaceCommit,
 		TurnID:          execution.TurnID,
-		ToolCalls:       toolCalls,
+		ToolCalls:       execution.ToolCalls,
 	}
 	encoded, _ := json.Marshal(payload)
 	digest := sha256.Sum256(encoded)

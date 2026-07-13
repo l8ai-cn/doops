@@ -1695,6 +1695,9 @@ func validateReconcileInvocation(args json.RawMessage) error {
 	default:
 		return fmt.Errorf("reconciliation execution_mode must be dry-run or apply")
 	}
+	if revision := extractStringArg(args, "source_revision"); revision != "" && !validAgentSourceRevision(revision) {
+		return fmt.Errorf("reconciliation source_revision must be an immutable Git commit")
+	}
 	if extractStringArg(args, "response_format") != "json" {
 		return fmt.Errorf("reconciliation response_format must be json")
 	}

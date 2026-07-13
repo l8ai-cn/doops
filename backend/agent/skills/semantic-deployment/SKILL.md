@@ -45,7 +45,9 @@ conflicts: []
 
 ## 协调语义
 
-- 对 source release，必须确认 source identity、不可变制品和目标状态引用一致。
+- 对 source release，必须读取 `.doops/source.json`，确认其中的 source revision 与
+  `DeploymentPlan` 一致。工作区 Git HEAD 是传输快照 commit，不是 source revision，
+  不得将两者直接比较。
 - 对 manifest release，只协调该 manifest 表达的目标状态，不得重新解释或替换其引用。
 - 只在请求明确授权 mutation 时改变真实状态。dry run 只能收集事实并报告是否仍需 mutation。
 - 每次协调后重新观察真实状态；`attempts` 与 `noProgressAttempts` 仅记录实际尝试，不代表宿主侧重试控制，不可虚构。
@@ -56,9 +58,13 @@ conflicts: []
 - `converged` 只能在每个 `requiredEvidence` 都有实际观察证据时返回。
 - 每条 evidence 都必须有 `kind`、`subject`、RFC3339 `observedAt` 和非空 `value`。
 - 运行态、端点、公网检查和发布后日志属于观察事实，不能用“已完成”之类文本代替。
-- 每条 evidence 必须填写产生该事实的真实 `toolCallId`，并且该调用必须是本轮已完成的观察调用。不得用失败调用、写入/执行调用或无关调用为观察事实背书。
-- doops-agent 会按 `toolCallId` 匹配 ACP 工具事件，注入对应的 `toolDigest`、整轮 `traceDigest` 和 `executionEvidence`。
-- 不得自行生成、猜测或复制 `toolCallId`、`executionEvidence`、`traceDigest`、tool call digest 或 `turnId`；这些字段必须来自本轮实际工具事件。
+- 每条 evidence 必须填写 `toolRef`：`tool` 是运行时显示的精确工具名，`ordinal`
+  是该工具在本轮终态 SSE 事件中的一基序号。不得用失败调用、写入/通用执行调用或
+  无关调用为观察事实背书。
+- doops-agent 会按原始 SSE 顺序解析 `toolRef`，注入真实 `toolCallId`、对应的
+  `toolDigest`、整轮 `traceDigest` 和 `executionEvidence`。
+- 不得自行生成、猜测或复制 `toolCallId`、`executionEvidence`、`traceDigest`、
+  tool call digest 或 `turnId`；这些字段必须来自本轮实际工具事件。
 - 在 mutation 前因能力、凭据或权限不足而阻塞时，报告实际 `failureEvidence`，不得伪造回滚。
 - 仅在实际发生 mutation、验收失败且目标环境明确声明可逆恢复能力时，才可使用该能力；恢复动作及其观察结果必须写入 `failureEvidence`。
 - 如果没有声明可逆恢复能力，或恢复能力不可用，不得编造兼容路径；按实际情况返回 `blocked` 或 `failed`。
@@ -87,16 +93,19 @@ Markdown 或解释性文本。最终回复必须与该文件表达同一个对�
       "subject": "release",
       "observedAt": "2026-07-12T00:00:00Z",
       "value": "immutable revision confirmed",
-      "toolCallId": "call-observe-source"
+      "toolRef": {
+        "tool": "<exact-runtime-tool-name>",
+        "ordinal": 1
+      }
     }
   ],
   "failureEvidence": []
 }
 ```
 
-上面的对象是 Agent 输出。doops-agent 在权威 `turn_finished` 后将真实工具 trace
-注入 `executionEvidence`，校验每条 `evidence` / `failureEvidence` 引用的
-`toolCallId`，并注入对应 `toolDigest` 和整轮 `traceDigest`。CLI 会再次校验该
-逐条绑定、workspace commit、turn 和工具事件摘要。
+上面的对象是 Agent 输出。doops-agent 在权威 `turn_finished` 后按原始 SSE
+终态顺序解析每条 `toolRef`，注入真实 `toolCallId`、`executionEvidence`、
+对应 `toolDigest` 和整轮 `traceDigest`。CLI 会再次校验 source revision、
+workspace commit、turn、逐条绑定和工具事件摘要。
 
 不得返回 Markdown、解释性文本、命令清单、阶段列表或额外 JSON 对象。

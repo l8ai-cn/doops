@@ -20,8 +20,11 @@ func TestAgenticDeploymentPushesBeforeStructuredAsk(t *testing.T) {
 		server:          Server{Name: "gw-oilan-node"},
 		sourceDirectory: t.TempDir(),
 		sessionID:       "agentic-release",
-		pushWorkspace: func(Server, string, string) (string, error) {
+		pushWorkspace: func(_ Server, _, _ string, source *CICDSourceRelease) (string, error) {
 			calls = append(calls, "push")
+			if source == nil || source.Revision != plan.Spec.Release.Source.Revision {
+				t.Fatalf("push must receive the immutable source identity: %#v", source)
+			}
 			return workspaceCommit, nil
 		},
 		ask: func(arguments map[string]interface{}) (ReconciliationResult, error) {
@@ -51,6 +54,9 @@ func TestAgenticDeploymentPushesBeforeStructuredAsk(t *testing.T) {
 	}
 	if askedArguments["workspace_commit"] != workspaceCommit {
 		t.Fatalf("reconciliation must bind the pushed workspace commit: %#v", askedArguments)
+	}
+	if askedArguments["source_revision"] != plan.Spec.Release.Source.Revision {
+		t.Fatalf("reconciliation must carry source revision separately from the workspace commit: %#v", askedArguments)
 	}
 	if run.Result.Status != ReconciliationConverged {
 		t.Fatalf("unexpected reconciliation result: %#v", run.Result)
@@ -110,7 +116,17 @@ func TestAgenticDeploymentInstructionIsMinimalSkillEnvelope(t *testing.T) {
 }
 
 func TestAgenticDeploymentArgumentsCarryMachineReadableAuthorization(t *testing.T) {
-	plan := DeploymentPlan{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	plan := DeploymentPlan{
+		Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Spec: DeploymentPlanSpec{
+			Release: CICDReleaseReference{
+				Source: &CICDSourceRelease{
+					Repository: "https://cnb.cool/l8ai/example.git",
+					Revision:   strings.Repeat("1", 40),
+				},
+			},
+		},
+	}
 	arguments, err := buildAgenticDeploymentArguments(
 		plan,
 		CICDAgenticRunRequest{DryRun: true},
@@ -131,6 +147,9 @@ func TestAgenticDeploymentArgumentsCarryMachineReadableAuthorization(t *testing.
 	if arguments["response_format"] != "json" {
 		t.Fatalf("reconciliation must require structured JSON: %#v", arguments)
 	}
+	if arguments["source_revision"] != plan.Spec.Release.Source.Revision {
+		t.Fatalf("source revision must be a separate machine-readable identity: %#v", arguments)
+	}
 }
 
 func TestAgenticDeploymentRejectsBlockedResult(t *testing.T) {
@@ -142,7 +161,7 @@ func TestAgenticDeploymentRejectsBlockedResult(t *testing.T) {
 		server:          Server{Name: "gw-oilan-node"},
 		sourceDirectory: t.TempDir(),
 		sessionID:       "blocked-release",
-		pushWorkspace:   func(Server, string, string) (string, error) { return workspaceCommit, nil },
+		pushWorkspace:   func(Server, string, string, *CICDSourceRelease) (string, error) { return workspaceCommit, nil },
 		ask: func(map[string]interface{}) (ReconciliationResult, error) {
 			result := ReconciliationResult{
 				APIVersion: deploymentAPIVersion,
@@ -177,7 +196,7 @@ func TestAgenticDeploymentRejectsResultWithoutRequiredEvidence(t *testing.T) {
 		server:          Server{Name: "gw-oilan-node"},
 		sourceDirectory: t.TempDir(),
 		sessionID:       "incomplete-release",
-		pushWorkspace:   func(Server, string, string) (string, error) { return workspaceCommit, nil },
+		pushWorkspace:   func(Server, string, string, *CICDSourceRelease) (string, error) { return workspaceCommit, nil },
 		ask: func(map[string]interface{}) (ReconciliationResult, error) {
 			result := ReconciliationResult{
 				APIVersion: deploymentAPIVersion,

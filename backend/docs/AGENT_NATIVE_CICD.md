@@ -55,7 +55,8 @@ DeploymentTemplate
 1. CLI 以严格 schema 读取模板和环境注册表，未知字段直接失败。
 2. CLI 生成带 canonical digest 的 `DeploymentPlan`。
 3. source release 要求本地仓库干净，且 `HEAD` 与声明的不可变 revision 一致。
-4. CLI 将仓库同步到指定 session，并取得精确 `workspace_commit`。
+4. CLI 在快照中生成 `.doops/source.json`，再同步到指定 session 并取得精确
+   `workspace_commit`。source revision 是发布身份，workspace commit 只是传输身份。
 5. Gateway 在同一个 workspace 锁内校验 `.doops-ready` 与请求 commit 一致。
 6. CLI 发送最小任务信封，不发送阶段、命令、回滚脚本或重试策略：
 
@@ -73,10 +74,11 @@ DeploymentTemplate
 
 7. doops-agent 在每次 prompt 前设置 doagent 原生模式，避免复用会话时继承上一次授权状态。
 8. doagent 自主选择 Skill、工具和多 Agent 协作方式，最终返回一个 `ReconciliationResult`。
-9. doops-agent 等待权威 `turn_finished`，将本轮真实完成的 ACP 工具事件哈希为
-   `executionEvidence`；每条 evidence 必须引用产生该事实的 `toolCallId`，bridge
-   只接受匹配且已完成的观察调用，并注入对应 tool digest 和整轮 trace digest。
-10. CLI 校验协议版本、plan digest、workspace commit、turn、工具 trace、状态、
+9. doops-agent 等待权威 `turn_finished`，将本轮真实 ACP 工具终态事件按原始
+   SSE 顺序哈希为 `executionEvidence`；每条 evidence 用精确工具名和同名终态事件
+   的一基序号组成 `toolRef`，bridge 严格解析后注入真实 `toolCallId`、tool digest
+   和整轮 trace digest。
+10. CLI 校验协议版本、plan digest、source revision、workspace commit、turn、工具 trace、状态、
     逐条工具绑定、证据完整性和计数一致性。文本成功和未绑定工具调用的 evidence
     都不算成功。
 
@@ -110,9 +112,9 @@ DeploymentTemplate
 - doops-agent 对每个 completed/failed 工具事件计算摘要，并生成 turn-level
   `executionEvidence`。
 - `converged` 至少需要一个实际完成的观察工具调用。
-- 每条 `evidence` 与 `failureEvidence` 都必须显式引用本轮真实 `toolCallId`。bridge
-  拒绝缺失、不存在、失败、写入/通用执行或其他非观察调用，并注入匹配的
-  `toolDigest` 与整轮 `traceDigest`。
+- 每条 `evidence` 与 `failureEvidence` 都必须提供 `toolRef`。bridge 按原始 SSE
+  同名终态事件顺序解析，拒绝缺失、越界、失败、写入/通用执行或其他非观察调用，
+  并注入真实 `toolCallId`、匹配的 `toolDigest` 与整轮 `traceDigest`。
 - CLI 重新计算 trace，核对本次 push 的 `workspace_commit`，并交叉检查 evidence
   的 `toolCallId`、`toolDigest` 和 trace。整轮存在另一条观察调用不能替代逐条绑定。
 - 通用执行工具仍可用于协调动作，但其输出不能作为观察 attestation；验收证据必须
@@ -187,7 +189,7 @@ DoOps 确定性边界；如果逻辑依赖现场观察和任务推理，它属�
 - 通过文本“部署成功”绕过 `ReconciliationResult` 和证据验证。
 - 在 `turn_finished` 前把 `agent_message` 或 `usage_update` 当作成功。
 - 接受未绑定 `executionEvidence` 的 Agent 自报 evidence。
-- 用不存在、失败、非观察或无关的 `toolCallId` 为 evidence 背书。
+- 用缺失、越界、失败、非观察或无关的 `toolRef` 为 evidence 背书。
 
 ## 代码位置
 

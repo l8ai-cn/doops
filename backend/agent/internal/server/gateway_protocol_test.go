@@ -1441,6 +1441,7 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 		"plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"execution_mode":"apply",
 		"response_format":"json",
+		"source_revision":"2222222222222222222222222222222222222222",
 		"workspace_commit":"1111111111111111111111111111111111111111"
 	}`)
 	if got := actionForTool("doops_agent_prompt", reconcileArgs); got != ActionReconcile {
@@ -1464,6 +1465,17 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 		"workspace_commit":"not-a-commit"
 	}`)); err == nil {
 		t.Fatal("reconciliation with invalid workspace commit must be rejected")
+	}
+	if err := validateReconcileInvocation(json.RawMessage(`{
+		"session_id":"deploy-a",
+		"operation":"reconcile",
+		"plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"execution_mode":"apply",
+		"response_format":"json",
+		"source_revision":"not-a-source-revision",
+		"workspace_commit":"1111111111111111111111111111111111111111"
+	}`)); err == nil {
+		t.Fatal("reconciliation with invalid source revision must be rejected")
 	}
 	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "workspace:push-a" {
 		t.Fatalf("push resource key mismatch: %q", got)
