@@ -123,10 +123,39 @@ type CICDDeploymentTarget struct {
 }
 
 type CICDDesiredState struct {
-	Application         string `json:"application" yaml:"application"`
-	Delivery            string `json:"delivery" yaml:"delivery"`
-	ConfigurationSource string `json:"configurationSource" yaml:"configurationSource"`
-	Authorization       string `json:"authorization" yaml:"authorization"`
+	Application         string                `json:"application" yaml:"application"`
+	Delivery            string                `json:"delivery" yaml:"delivery"`
+	ConfigurationSource string                `json:"configurationSource" yaml:"configurationSource"`
+	Authorization       string                `json:"authorization" yaml:"authorization"`
+	Security            *CICDDesiredSecurity  `json:"security,omitempty" yaml:"security,omitempty"`
+	Artifacts           *CICDDesiredArtifacts `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+	RetiredResources    string                `json:"retiredResources,omitempty" yaml:"retiredResources,omitempty"`
+}
+
+type CICDDesiredSecurity struct {
+	MachineOAuthClients *CICDMachineOAuthClientsState `json:"machineOauthClients,omitempty" yaml:"machineOauthClients,omitempty"`
+}
+
+type CICDMachineOAuthClientsState struct {
+	Manifest         string `json:"manifest" yaml:"manifest"`
+	ApplicationState string `json:"applicationState" yaml:"applicationState"`
+	SecretState      string `json:"secretState" yaml:"secretState"`
+}
+
+type CICDDesiredArtifacts struct {
+	Source *CICDDesiredSourceArtifact `json:"source,omitempty" yaml:"source,omitempty"`
+	Target *CICDDesiredTargetArtifact `json:"target,omitempty" yaml:"target,omitempty"`
+}
+
+type CICDDesiredSourceArtifact struct {
+	Kind                string `json:"kind" yaml:"kind"`
+	ReleaseID           string `json:"releaseId" yaml:"releaseId"`
+	CredentialReference string `json:"credentialReference" yaml:"credentialReference"`
+}
+
+type CICDDesiredTargetArtifact struct {
+	Mode                        string `json:"mode" yaml:"mode"`
+	RegistryCredentialReference string `json:"registryCredentialReference" yaml:"registryCredentialReference"`
 }
 
 type CICDAcceptance struct {
@@ -148,25 +177,60 @@ type CICDEnvironmentRegistry struct {
 }
 
 type CICDEnvironmentProfile struct {
-	DisplayName               string             `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Target                    string             `json:"target" yaml:"target"`
-	Cluster                   string             `json:"cluster" yaml:"cluster"`
-	Instance                  string             `json:"instance" yaml:"instance"`
-	Namespace                 string             `json:"namespace" yaml:"namespace"`
-	Release                   string             `json:"release" yaml:"release"`
-	Workload                  string             `json:"workload" yaml:"workload"`
-	Container                 string             `json:"container" yaml:"container"`
-	ModelRouting              *CICDModelRouting  `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
-	ModelSettings             *CICDModelSettings `json:"modelSettings,omitempty" yaml:"modelSettings,omitempty"`
-	Registry                  string             `json:"registry" yaml:"registry"`
-	ReleaseManifestRepository string             `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
-	Chart                     string             `json:"chart" yaml:"chart"`
-	Values                    string             `json:"values" yaml:"values"`
-	RuntimeFiles              string             `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
-	DeploymentMode            string             `json:"deploymentMode" yaml:"deploymentMode"`
-	PublicHosts               []string           `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
-	HealthChecks              CICDHealthChecks   `json:"healthChecks" yaml:"healthChecks"`
-	Authz                     map[string]string  `json:"authz,omitempty" yaml:"authz,omitempty"`
+	DisplayName               string                  `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Target                    string                  `json:"target" yaml:"target"`
+	Cluster                   string                  `json:"cluster" yaml:"cluster"`
+	Instance                  string                  `json:"instance" yaml:"instance"`
+	Namespace                 string                  `json:"namespace" yaml:"namespace"`
+	Release                   string                  `json:"release" yaml:"release"`
+	Workload                  string                  `json:"workload" yaml:"workload"`
+	Container                 string                  `json:"container" yaml:"container"`
+	ModelRouting              *CICDModelRouting       `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
+	ModelSettings             *CICDModelSettings      `json:"modelSettings,omitempty" yaml:"modelSettings,omitempty"`
+	Registry                  string                  `json:"registry" yaml:"registry"`
+	RegistryCredential        *CICDRegistryCredential `json:"registryCredential,omitempty" yaml:"registryCredential,omitempty"`
+	ReleaseManifestRepository string                  `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
+	Chart                     string                  `json:"chart" yaml:"chart"`
+	Values                    string                  `json:"values" yaml:"values"`
+	RuntimeFiles              string                  `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
+	DeploymentMode            string                  `json:"deploymentMode" yaml:"deploymentMode"`
+	ControlPlaneEnvironment   string                  `json:"controlPlaneEnvironment,omitempty" yaml:"controlPlaneEnvironment,omitempty"`
+	WorkloadNamespaces        map[string]string       `json:"workloadNamespaces,omitempty" yaml:"workloadNamespaces,omitempty"`
+	ArtifactSync              *CICDArtifactSync       `json:"artifactSync,omitempty" yaml:"artifactSync,omitempty"`
+	RetiredResources          []CICDRetiredResource   `json:"retiredResources,omitempty" yaml:"retiredResources,omitempty"`
+	PublicHosts               []string                `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
+	HealthChecks              CICDHealthChecks        `json:"healthChecks" yaml:"healthChecks"`
+	Authz                     map[string]string       `json:"authz,omitempty" yaml:"authz,omitempty"`
+}
+
+type CICDRegistryCredential struct {
+	Namespace  string `json:"namespace" yaml:"namespace"`
+	SecretName string `json:"secretName" yaml:"secretName"`
+	Key        string `json:"key" yaml:"key"`
+}
+
+type CICDArtifactSync struct {
+	SourceCredentialRef   *CICDKubernetesObjectReference `json:"sourceCredentialRef,omitempty" yaml:"sourceCredentialRef,omitempty"`
+	RegistryCredentialRef *CICDKubernetesObjectReference `json:"registryCredentialRef,omitempty" yaml:"registryCredentialRef,omitempty"`
+}
+
+type CICDKubernetesObjectReference struct {
+	Kind string `json:"kind" yaml:"kind"`
+	Name string `json:"name" yaml:"name"`
+}
+
+type CICDRetiredResource struct {
+	APIVersion     string                         `json:"apiVersion" yaml:"apiVersion"`
+	Kind           string                         `json:"kind" yaml:"kind"`
+	Name           string                         `json:"name" yaml:"name"`
+	DeletionPolicy string                         `json:"deletionPolicy" yaml:"deletionPolicy"`
+	Expected       CICDRetiredResourceExpectation `json:"expected" yaml:"expected"`
+}
+
+type CICDRetiredResourceExpectation struct {
+	Manager          string   `json:"manager" yaml:"manager"`
+	IngressClassName string   `json:"ingressClassName" yaml:"ingressClassName"`
+	Hosts            []string `json:"hosts" yaml:"hosts"`
 }
 
 type CICDModelRouting struct {
@@ -185,13 +249,27 @@ type CICDSecretReference struct {
 }
 
 type CICDArtifactContract struct {
-	SourceRepository     string                 `json:"sourceRepository,omitempty" yaml:"sourceRepository,omitempty"`
-	SourceBranch         string                 `json:"sourceBranch,omitempty" yaml:"sourceBranch,omitempty"`
-	Services             []string               `json:"services" yaml:"services"`
-	ImageTagPattern      string                 `json:"imageTagPattern,omitempty" yaml:"imageTagPattern,omitempty"`
-	ImageReferenceFormat string                 `json:"imageReferenceFormat,omitempty" yaml:"imageReferenceFormat,omitempty"`
-	HelmImageBindings    map[string]string      `json:"helmImageBindings,omitempty" yaml:"helmImageBindings,omitempty"`
-	Authz                map[string]interface{} `json:"authz,omitempty" yaml:"authz,omitempty"`
+	SourceRepository                 string                 `json:"sourceRepository,omitempty" yaml:"sourceRepository,omitempty"`
+	SourceBranch                     string                 `json:"sourceBranch,omitempty" yaml:"sourceBranch,omitempty"`
+	CNBRegistry                      string                 `json:"cnbRegistry,omitempty" yaml:"cnbRegistry,omitempty"`
+	SourceArtifactManifestRepository string                 `json:"sourceArtifactManifestRepository,omitempty" yaml:"sourceArtifactManifestRepository,omitempty"`
+	Build                            *CICDBuildContract     `json:"build,omitempty" yaml:"build,omitempty"`
+	ImageRegistry                    string                 `json:"imageRegistry,omitempty" yaml:"imageRegistry,omitempty"`
+	Services                         []string               `json:"services" yaml:"services"`
+	ImageTagPattern                  string                 `json:"imageTagPattern,omitempty" yaml:"imageTagPattern,omitempty"`
+	ImageTagTimeZone                 string                 `json:"imageTagTimeZone,omitempty" yaml:"imageTagTimeZone,omitempty"`
+	ImageReferenceFormat             string                 `json:"imageReferenceFormat,omitempty" yaml:"imageReferenceFormat,omitempty"`
+	HelmImageBindings                map[string]string      `json:"helmImageBindings,omitempty" yaml:"helmImageBindings,omitempty"`
+	TestEnvironment                  string                 `json:"testEnvironment,omitempty" yaml:"testEnvironment,omitempty"`
+	PromotionEnvironments            []string               `json:"promotionEnvironments,omitempty" yaml:"promotionEnvironments,omitempty"`
+	ManifestRepository               string                 `json:"manifestRepository,omitempty" yaml:"manifestRepository,omitempty"`
+	Authz                            map[string]interface{} `json:"authz,omitempty" yaml:"authz,omitempty"`
+}
+
+type CICDBuildContract struct {
+	Provider string `json:"provider" yaml:"provider"`
+	Branch   string `json:"branch" yaml:"branch"`
+	Event    string `json:"event" yaml:"event"`
 }
 
 type CICDHealthChecks struct {
@@ -405,6 +483,9 @@ func validateDeploymentPlanSpec(spec DeploymentPlanSpec, allowTemplates bool) er
 	if strings.TrimSpace(spec.DesiredState.Authorization) == "" {
 		return fmt.Errorf("spec.plan.desiredState.authorization is required")
 	}
+	if err := validateCICDDesiredStateExtensions(spec.DesiredState); err != nil {
+		return err
+	}
 	if len(normalizeEvidenceKinds(spec.Acceptance.RequiredEvidence)) == 0 {
 		return fmt.Errorf("spec.plan.acceptance.requiredEvidence is required")
 	}
@@ -495,6 +576,33 @@ func renderDeploymentPlanSpec(spec DeploymentPlanSpec, inputs map[string]string)
 	spec.DesiredState.Delivery = renderCICDTemplate(spec.DesiredState.Delivery, inputs)
 	spec.DesiredState.ConfigurationSource = renderCICDTemplate(spec.DesiredState.ConfigurationSource, inputs)
 	spec.DesiredState.Authorization = renderCICDTemplate(spec.DesiredState.Authorization, inputs)
+	if spec.DesiredState.Security != nil && spec.DesiredState.Security.MachineOAuthClients != nil {
+		machineOAuthClients := *spec.DesiredState.Security.MachineOAuthClients
+		machineOAuthClients.Manifest = renderCICDTemplate(machineOAuthClients.Manifest, inputs)
+		machineOAuthClients.ApplicationState = renderCICDTemplate(machineOAuthClients.ApplicationState, inputs)
+		machineOAuthClients.SecretState = renderCICDTemplate(machineOAuthClients.SecretState, inputs)
+		security := *spec.DesiredState.Security
+		security.MachineOAuthClients = &machineOAuthClients
+		spec.DesiredState.Security = &security
+	}
+	if spec.DesiredState.Artifacts != nil {
+		artifacts := *spec.DesiredState.Artifacts
+		if artifacts.Source != nil {
+			source := *artifacts.Source
+			source.Kind = renderCICDTemplate(source.Kind, inputs)
+			source.ReleaseID = renderCICDTemplate(source.ReleaseID, inputs)
+			source.CredentialReference = renderCICDTemplate(source.CredentialReference, inputs)
+			artifacts.Source = &source
+		}
+		if artifacts.Target != nil {
+			target := *artifacts.Target
+			target.Mode = renderCICDTemplate(target.Mode, inputs)
+			target.RegistryCredentialReference = renderCICDTemplate(target.RegistryCredentialReference, inputs)
+			artifacts.Target = &target
+		}
+		spec.DesiredState.Artifacts = &artifacts
+	}
+	spec.DesiredState.RetiredResources = renderCICDTemplate(spec.DesiredState.RetiredResources, inputs)
 	for i := range spec.Acceptance.RequiredEvidence {
 		spec.Acceptance.RequiredEvidence[i] = renderCICDTemplate(spec.Acceptance.RequiredEvidence[i], inputs)
 	}
@@ -553,26 +661,102 @@ func validateCICDArtifactContract(artifact CICDArtifactContract) error {
 	return nil
 }
 
+func validateCICDDesiredStateExtensions(desiredState CICDDesiredState) error {
+	if desiredState.Security != nil {
+		machineOAuthClients := desiredState.Security.MachineOAuthClients
+		if machineOAuthClients == nil {
+			return fmt.Errorf("spec.plan.desiredState.security.machineOauthClients is required")
+		}
+		if strings.TrimSpace(machineOAuthClients.Manifest) == "" ||
+			strings.TrimSpace(machineOAuthClients.ApplicationState) == "" ||
+			strings.TrimSpace(machineOAuthClients.SecretState) == "" {
+			return fmt.Errorf("spec.plan.desiredState.security.machineOauthClients requires manifest, applicationState, and secretState")
+		}
+	}
+	if desiredState.Artifacts != nil {
+		if desiredState.Artifacts.Source == nil || desiredState.Artifacts.Target == nil {
+			return fmt.Errorf("spec.plan.desiredState.artifacts requires source and target")
+		}
+		source := desiredState.Artifacts.Source
+		if strings.TrimSpace(source.Kind) == "" ||
+			strings.TrimSpace(source.ReleaseID) == "" ||
+			strings.TrimSpace(source.CredentialReference) == "" {
+			return fmt.Errorf("spec.plan.desiredState.artifacts.source requires kind, releaseId, and credentialReference")
+		}
+		target := desiredState.Artifacts.Target
+		if strings.TrimSpace(target.Mode) == "" ||
+			strings.TrimSpace(target.RegistryCredentialReference) == "" {
+			return fmt.Errorf("spec.plan.desiredState.artifacts.target requires mode and registryCredentialReference")
+		}
+	}
+	return nil
+}
+
 func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile) error {
 	required := map[string]string{
-		"target":                    profile.Target,
-		"cluster":                   profile.Cluster,
-		"instance":                  profile.Instance,
-		"namespace":                 profile.Namespace,
-		"release":                   profile.Release,
-		"workload":                  profile.Workload,
-		"container":                 profile.Container,
-		"registry":                  profile.Registry,
-		"releaseManifestRepository": profile.ReleaseManifestRepository,
-		"chart":                     profile.Chart,
-		"values":                    profile.Values,
-		"deploymentMode":            profile.DeploymentMode,
+		"target":         profile.Target,
+		"cluster":        profile.Cluster,
+		"instance":       profile.Instance,
+		"deploymentMode": profile.DeploymentMode,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("environment %q %s is required", name, field)
 		}
 	}
+
+	switch profile.DeploymentMode {
+	case "control-plane":
+		if err := requireCICDEnvironmentFields(name, map[string]string{
+			"namespace":                 profile.Namespace,
+			"release":                   profile.Release,
+			"workload":                  profile.Workload,
+			"container":                 profile.Container,
+			"registry":                  profile.Registry,
+			"releaseManifestRepository": profile.ReleaseManifestRepository,
+			"chart":                     profile.Chart,
+			"values":                    profile.Values,
+		}); err != nil {
+			return err
+		}
+	case "application":
+		if err := requireCICDEnvironmentFields(name, map[string]string{
+			"namespace":                 profile.Namespace,
+			"release":                   profile.Release,
+			"registry":                  profile.Registry,
+			"releaseManifestRepository": profile.ReleaseManifestRepository,
+			"chart":                     profile.Chart,
+			"values":                    profile.Values,
+			"runtimeFiles":              profile.RuntimeFiles,
+		}); err != nil {
+			return err
+		}
+	case "carrier-site":
+		if err := requireCICDEnvironmentFields(name, map[string]string{
+			"namespace":                 profile.Namespace,
+			"release":                   profile.Release,
+			"registry":                  profile.Registry,
+			"releaseManifestRepository": profile.ReleaseManifestRepository,
+			"chart":                     profile.Chart,
+			"values":                    profile.Values,
+		}); err != nil {
+			return err
+		}
+	case "external-control-plane":
+		if err := requireCICDEnvironmentFields(name, map[string]string{
+			"controlPlaneEnvironment": profile.ControlPlaneEnvironment,
+			"values":                  profile.Values,
+		}); err != nil {
+			return err
+		}
+		if len(profile.PublicHosts) == 0 {
+			return fmt.Errorf("external-control-plane environment %q publicHosts are required", name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("environment %q deploymentMode %q is unsupported", name, profile.DeploymentMode)
+	}
+
 	if len(profile.HealthChecks.Public) == 0 {
 		return fmt.Errorf("environment %q public health checks are required", name)
 	}
@@ -592,6 +776,53 @@ func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile)
 			if strings.TrimSpace(check.Service) == "" || check.MinReadyReplicas < 1 || !check.RequireEndpoints {
 				return fmt.Errorf("application environment %q workload health checks must require service readiness and endpoints", name)
 			}
+		}
+	}
+	if profile.RegistryCredential != nil {
+		if strings.TrimSpace(profile.RegistryCredential.Namespace) == "" ||
+			strings.TrimSpace(profile.RegistryCredential.SecretName) == "" ||
+			strings.TrimSpace(profile.RegistryCredential.Key) == "" {
+			return fmt.Errorf("environment %q registryCredential requires namespace, secretName, and key", name)
+		}
+	}
+	for service, namespace := range profile.WorkloadNamespaces {
+		if strings.TrimSpace(service) == "" || strings.TrimSpace(namespace) == "" {
+			return fmt.Errorf("environment %q workloadNamespaces requires non-empty service and namespace", name)
+		}
+	}
+	if profile.ArtifactSync != nil {
+		for field, ref := range map[string]*CICDKubernetesObjectReference{
+			"sourceCredentialRef":   profile.ArtifactSync.SourceCredentialRef,
+			"registryCredentialRef": profile.ArtifactSync.RegistryCredentialRef,
+		} {
+			if ref == nil {
+				continue
+			}
+			if ref.Kind != "KubernetesSecret" || strings.TrimSpace(ref.Name) == "" {
+				return fmt.Errorf("environment %q artifactSync.%s must reference a KubernetesSecret", name, field)
+			}
+		}
+	}
+	for _, resource := range profile.RetiredResources {
+		if strings.TrimSpace(resource.APIVersion) == "" ||
+			strings.TrimSpace(resource.Kind) == "" ||
+			strings.TrimSpace(resource.Name) == "" ||
+			strings.TrimSpace(resource.DeletionPolicy) == "" {
+			return fmt.Errorf("environment %q retiredResources entries require apiVersion, kind, name, and deletionPolicy", name)
+		}
+		if strings.TrimSpace(resource.Expected.Manager) == "" ||
+			strings.TrimSpace(resource.Expected.IngressClassName) == "" ||
+			len(resource.Expected.Hosts) == 0 {
+			return fmt.Errorf("environment %q retiredResources expected state is incomplete", name)
+		}
+	}
+	return nil
+}
+
+func requireCICDEnvironmentFields(name string, fields map[string]string) error {
+	for field, value := range fields {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("environment %q %s is required", name, field)
 		}
 	}
 	return nil

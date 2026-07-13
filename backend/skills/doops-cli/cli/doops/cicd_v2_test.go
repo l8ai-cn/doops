@@ -35,6 +35,20 @@ spec:
       delivery: build-immutable-release
       configurationSource: deploy/environments.yaml
       authorization: reconcile
+      security:
+        machineOauthClients:
+          manifest: deploy/security/machine-oauth-clients.yaml
+          applicationState: require-exact
+          secretState: require-present
+      artifacts:
+        source:
+          kind: SourceArtifactManifest
+          releaseId: ${inputs.releaseId}
+          credentialReference: environment.artifactSync.sourceCredentialRef
+        target:
+          mode: mirror-by-digest
+          registryCredentialReference: environment.artifactSync.registryCredentialRef
+      retiredResources: environment.retiredResources
     acceptance:
       requiredEvidence:
         - source-identity
@@ -113,6 +127,21 @@ spec:
 	}
 	if plan.Spec.Target.Profile.ReleaseManifestRepository != "registry.example.test/oilan-system/zhiyong-release-manifest-test" {
 		t.Fatalf("plan must retain the environment-owned manifest repository: %#v", plan.Spec.Target.Profile)
+	}
+	if plan.Spec.DesiredState.Security == nil ||
+		plan.Spec.DesiredState.Security.MachineOAuthClients == nil ||
+		plan.Spec.DesiredState.Security.MachineOAuthClients.Manifest != "deploy/security/machine-oauth-clients.yaml" {
+		t.Fatalf("plan must preserve machine OAuth desired state: %#v", plan.Spec.DesiredState)
+	}
+	if plan.Spec.DesiredState.Artifacts == nil ||
+		plan.Spec.DesiredState.Artifacts.Source == nil ||
+		plan.Spec.DesiredState.Artifacts.Source.ReleaseID != "0123456789abcdef0123456789abcdef01234567" ||
+		plan.Spec.DesiredState.Artifacts.Target == nil ||
+		plan.Spec.DesiredState.Artifacts.Target.Mode != "mirror-by-digest" {
+		t.Fatalf("plan must preserve and render artifact desired state: %#v", plan.Spec.DesiredState)
+	}
+	if plan.Spec.DesiredState.RetiredResources != "environment.retiredResources" {
+		t.Fatalf("plan must preserve retired resource binding: %#v", plan.Spec.DesiredState)
 	}
 	encoded, err := json.Marshal(plan)
 	if err != nil {
@@ -431,6 +460,61 @@ func TestDeploymentPlanRequiresDeclaredWorkload(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "workload") {
 		t.Fatalf("expected missing workload rejection, got %v", err)
+	}
+}
+
+func TestDeploymentPlanAcceptsApplicationProfileWithoutSingletonWorkload(t *testing.T) {
+	profile := CICDEnvironmentProfile{
+		Target:                    "gw-oilan-node",
+		Cluster:                   "doops-oilan",
+		Instance:                  "oilan-node",
+		Namespace:                 "oilan",
+		Release:                   "ecp",
+		Registry:                  "docker.cnb.cool/l8ai/ecp",
+		ReleaseManifestRepository: "docker.cnb.cool/l8ai/ecp/ecp-release-manifest",
+		RegistryCredential: &CICDRegistryCredential{
+			Namespace:  "oilan",
+			SecretName: "cnb-regcred",
+			Key:        ".dockerconfigjson",
+		},
+		Chart:          "deploy/chart",
+		Values:         "deploy/environments/test/values.yaml",
+		RuntimeFiles:   "deploy/environments/test",
+		DeploymentMode: "application",
+		WorkloadNamespaces: map[string]string{
+			"ecp-backend":        "oilan",
+			"ecp-frontend-react": "oilan",
+			"ecp-gateway":        "test",
+		},
+		HealthChecks: CICDHealthChecks{
+			Public: []CICDPublicHealthCheck{{
+				ID:             "gateway-health",
+				URL:            "https://ecp.example.test/healthz",
+				ExpectedStatus: 200,
+			}},
+			Workloads: []CICDWorkloadHealthCheck{
+				{Service: "ecp-backend", MinReadyReplicas: 1, RequireEndpoints: true},
+				{Service: "ecp-frontend-react", MinReadyReplicas: 1, RequireEndpoints: true},
+				{Service: "ecp-gateway", MinReadyReplicas: 1, RequireEndpoints: true},
+			},
+		},
+	}
+
+	if err := validateCICDEnvironmentProfile("test", profile); err != nil {
+		t.Fatalf("application profile must not require a singleton workload: %v", err)
+	}
+	encoded, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatalf("encode application profile: %v", err)
+	}
+	for _, want := range []string{
+		`"registryCredential"`,
+		`"workloadNamespaces"`,
+		`"ecp-gateway":"test"`,
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("application profile must preserve %s: %s", want, encoded)
+		}
 	}
 }
 
