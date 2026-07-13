@@ -1,20 +1,28 @@
 # doops Model & Deployment Standards
 
-This document defines the model configuration used by `doops ask` through the embedded doagent runtime.
+This document defines the model configuration used by `doops ask` through the
+embedded doagent runtime.
 
 ## Runtime Configuration
 
-`doops-agent` starts doagent as an ACP HTTP service on `127.0.0.1:9000`. doagent reads its model configuration from:
+`doops-agent` starts doagent as an ACP HTTP service on `127.0.0.1:9000`. The
+effective runtime settings are stored at:
 
 ```text
-/root/.agent/settings.json
+/root/.agent/runtime-settings.json
 ```
 
-Kubernetes deployments mount this file from the `doagent-config` ConfigMap. The public `doops.sh` repository keeps only a placeholder template; environment-specific deployments should generate the real ConfigMap from the private secret repository, for example `https://cnb.cool/l8ai/l8ai-secret`. Do not commit real API keys to the public `doops.sh` repository.
+Kubernetes mounts `/opt/doagent_config/settings.json` from the
+`doagent-model-settings` Secret. The entrypoint materializes that mounted
+Secret into the runtime path without modifying the Secret. The public
+`doops.sh` repository keeps only a placeholder Secret template;
+environment-specific deployments must generate the real Secret from their
+private secret store. Do not commit real API keys to the public repository.
 
-## Kubernetes ConfigMap Deployment
+## Kubernetes Secret Deployment
 
-`doagent-config` is the standard configuration object for `doops ask`. It must exist before the `doops-agent` Pod starts:
+`doagent-model-settings` is the required model configuration object for
+`doops ask`. It must exist before the `doops-agent` Pod starts:
 
 ```bash
 kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
@@ -22,47 +30,34 @@ kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -
 # Public template, suitable only after replacing the placeholder apiKey.
 kubectl -n doops-system apply -f agent/agent-config.yaml
 
-# Or, in production, apply the environment-specific ConfigMap generated from l8ai-secret.
-# Example shape:
-# kubectl -n doops-system apply -f /path/to/l8ai-secret/doops/doagent-config.yaml
+# In production, apply the environment-specific Secret from the private store.
+# kubectl -n doops-system apply -f /path/to/private/doagent-model-settings.yaml
 
 kubectl -n doops-system apply -f agent/agent.yaml
 kubectl -n doops-system rollout status ds/doops-agent --timeout=180s
 ```
 
-The ConfigMap must provide:
+The Secret must provide:
 
 ```text
 data.settings.json
 ```
 
-with a non-empty `provider.openai.options.apiKey`.
+with a configured `provider.minimax.options.apiKey`. The image must not supply
+a second provider, infer a credential, or reset the selected model during an
+upgrade.
 
 ## Standard Endpoint
 
-Use the token gateway without an explicit port:
-
 ```text
-https://api.example.com
-https://api.example.com/v1
+https://api.minimaxi.com/anthropic
 ```
 
-## Standard Models
+## Standard Model
 
 | Task Type | Model ID |
 |-----------|----------|
-| Default / Coding | `openai/gpt-5.4` |
-| Lightweight summary | `openai/gpt-5.4-mini` |
-
-## Standalone Fallback Environment Variables
-
-The recommended Kubernetes deployment path is the `doagent-config` ConfigMap. The entrypoint still supports generating a minimal `settings.json` from environment variables for standalone Docker or emergency repair:
-
-| Variable | Meaning |
-|----------|---------|
-| `OPENAI_API_KEY` | API key for the `openai` provider |
-| `API_BASE_URL` | OpenAI-compatible base URL, default `https://api.example.com/v1` |
-| `DO_AGENT_MODEL` | Default model, default `openai/gpt-5.4` |
+| Default / Coding / Summary | `minimax/MiniMax-M3` |
 
 ## Troubleshooting
 
@@ -70,5 +65,7 @@ If `doops ask` fails:
 
 1. Check `DO_AGENT_URL`, default `http://127.0.0.1:9000`.
 2. Verify `/usr/local/bin/do-agent --help` works inside the final image.
-3. Verify `/root/.agent/settings.json` contains a configured provider and non-empty API key.
-4. Run `doops exec` against the same target to confirm the gateway fast path is healthy.
+3. Verify the mounted `doagent-model-settings/settings.json` has a configured
+   provider and non-empty API key without printing it.
+4. Run `doops exec` against the same target to confirm the gateway fast path is
+   healthy.

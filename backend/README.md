@@ -124,7 +124,7 @@ bash scripts/build-gateway.sh
 - 公网 gateway：生产标准应使用 TLS 域名；`203.0.113.10:42222` 仅保留作受控实验 smoke，客户端需显式允许不安全 gateway 才能连
 - 已接入 target：`doops-114/vm-114`、`doops-jm/jm-228`
 - 已验证：`targets`、`exec`、`write/read`、`push`、高危 action 未授权拒绝、90 秒以上 heartbeat 保活
-- `ask` 链路已实测到 `doops-agent -> doagent ACP HTTP`：当前 JM 失败原因是 `doagent-config` 里的 `settings.json` 没有有效 `apiKey`，不是 gateway 或 WebSocket 问题
+- `ask` 链路通过 `doops-agent -> doagent ACP HTTP`；模型配置必须来自 `doagent-model-settings` Secret，Agent 镜像升级不得覆盖该 Secret
 - 89/114/JM 的运行容器命名已统一为标准 `doops-agent`；JM 通过 89 内网路径接入 gateway。
 
 ## Agent 双镜像发布
@@ -328,13 +328,6 @@ ss -lntp | grep ':42222' || true
 
 ```bash
 kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system create secret generic doops-registry-auth \
-  --from-file=config.json="$DOCKER_CONFIG_JSON" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system create secret generic doops-registry-pull \
-  --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson="$DOCKER_CONFIG_JSON" \
-  --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n doops-system apply -f agent/agent-config.yaml
 kubectl -n doops-system apply -f agent/agent.yaml
 ```
@@ -350,7 +343,7 @@ docker run -d --name doops-agent \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
-  -e DO_AGENT_MODEL='openai/gpt-5.4' \
+  -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   -port 42222 \
   -gateway-url https://gateway.example.com \

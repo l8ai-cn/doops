@@ -9,6 +9,10 @@ workload:
 modelRouting:
   policy: ""
 
+doagentSettings:
+  secretName: ""
+  key: ""
+
 imagePullSecrets: []
 
 gateway:

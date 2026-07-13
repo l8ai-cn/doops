@@ -23,6 +23,12 @@ environments:
     container: doops-agent
     modelRouting:
       policy: single-model
+    modelSettings:
+      provider: minimax
+      model: minimax/MiniMax-M3
+      secretRef:
+        name: doagent-model-settings
+        key: settings.json
     registry: docker.cnb.cool/l8ai/ai
     releaseManifestRepository: https://github.com/l8ai-cn/doops.git
     chart: backend/deploy/helm/doops-agent

@@ -15,11 +15,12 @@ historical cluster alias.
 # Model Routing
 
 The Oilan declaration records `modelRouting.policy: single-model`. The mounted
-`doagent-config` ConfigMap remains the source of the model identifier and
-provider configuration. At startup the Agent materializes a separate runtime
-settings file without `model_tiers`, because this policy intentionally routes
-every task class to the one declared model. No mounted configuration object is
-rewritten.
+`modelSettings` declares the `minimax/MiniMax-M3` model and references only
+`doagent-model-settings/settings.json`. The Secret is the source of provider
+configuration and credentials. At startup the Agent materializes a separate
+runtime settings file without `model_tiers`, because this policy intentionally
+routes every task class to the one declared model. An image upgrade cannot
+replace, synthesize, or persist model credentials.
 
 # Registry Credentials
 

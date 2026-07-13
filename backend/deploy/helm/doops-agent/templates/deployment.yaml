@@ -75,4 +75,10 @@ spec:
           volumeMounts:
 {{ toYaml .Values.volumeMounts | indent 12 }}
       volumes:
+        - name: doagent-config
+          secret:
+            secretName: {{ required "doagentSettings.secretName is required" .Values.doagentSettings.secretName }}
+            items:
+              - key: {{ required "doagentSettings.key is required" .Values.doagentSettings.key }}
+                path: settings.json
 {{ toYaml .Values.volumes | indent 8 }}

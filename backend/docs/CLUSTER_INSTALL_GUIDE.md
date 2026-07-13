@@ -19,18 +19,19 @@
   否则会出现“`pull` 成功但 `run` 失败”的 overlay/FIFO/name-store 问题。
 - **升级原则**: 镜像升级应替换容器内 `/app/doops-agent`，不要再把宿主二进制
   bind mount 到 `/app/doops-agent`。宿主二进制覆盖镜像会让换镜像失去意义。
-- **镜像仓库认证**: 必须在 Agent 所在 namespace 从同一个标准 Docker 配置创建
-  `doops-registry-auth` 和 `doops-registry-pull`：前者的 `config.json` 供 Agent
-  构建和推送，后者必须是 `kubernetes.io/dockerconfigjson` 供 kubelet 拉取 Agent
-  镜像。两者都必须包含 `docker.cnb.cool`。不得在 Deployment 中设置
-  `REGISTRY_URL`、`REGISTRY_USER` 或 `REGISTRY_PASS`。
+- **镜像仓库认证**: 公共 Agent 镜像不得要求 `doops-registry-pull` 或
+  `doops-registry-auth` 才能启动。只有某个环境明确使用私有镜像或要求 Agent
+  构建、推送私有制品时，才在该环境声明对应的 Secret 引用；不得在 Deployment
+  中设置 `REGISTRY_URL`、`REGISTRY_USER` 或 `REGISTRY_PASS`。
 
 > [!NOTE]
 > `doops-agent` 启动时会自动检测容器引擎 (nerdctl > docker > podman) 供运行时巡检使用；镜像构建则统一走内置 BuildKit，不依赖宿主机 `nerdctl build`。
 
-### 1.1 配置 doagent 的 ConfigMap
+### 1.1 配置 doagent 的 Secret
 
-`doops ask` 依赖 `doagent-config` ConfigMap，里面放 `settings.json`。公开仓库里保留的是模板，生产环境应由私有仓库 `l8ai-secret` 生成后再 apply。
+`doops ask` 依赖 `doagent-model-settings` Secret，里面放
+`settings.json`。公开仓库里保留的是模板，生产环境应由私有仓库
+`l8ai-secret` 生成后再 apply。
 
 ```bash
 kubectl -n ai apply -f agent/agent-config.yaml
@@ -39,7 +40,7 @@ kubectl -n ai apply -f agent/agent-config.yaml
 如果你已经在私有仓库里生成了正式配置，优先使用那个版本覆盖模板：
 
 ```bash
-kubectl -n ai apply -f /path/to/doagent-config.yaml
+kubectl -n ai apply -f /path/to/doagent-model-settings.yaml
 ```
 
 ### 2. 部署到集群
@@ -47,11 +48,6 @@ kubectl -n ai apply -f /path/to/doagent-config.yaml
 ```bash
 # 推荐创建命名空间并部署
 kubectl create namespace doops-system
-kubectl -n doops-system create secret generic doops-registry-auth \
-  --from-file=config.json="$DOCKER_CONFIG_JSON"
-kubectl -n doops-system create secret generic doops-registry-pull \
-  --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson="$DOCKER_CONFIG_JSON"
 kubectl apply -f agent/agent.yaml -n doops-system
 ```
 
@@ -79,7 +75,7 @@ docker run -d \
   -v /var/lib/containerd:/var/lib/containerd \
   -v /var/lib/nerdctl:/var/lib/nerdctl \
   -v /root/.kube/config:/root/.kube/config:ro \
-  -v /path/to/doagent-config.json:/opt/doagent_config/settings.json:ro \
+  -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1
 ```
 

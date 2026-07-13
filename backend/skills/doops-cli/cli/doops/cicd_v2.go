@@ -148,28 +148,40 @@ type CICDEnvironmentRegistry struct {
 }
 
 type CICDEnvironmentProfile struct {
-	DisplayName               string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Target                    string            `json:"target" yaml:"target"`
-	Cluster                   string            `json:"cluster" yaml:"cluster"`
-	Instance                  string            `json:"instance" yaml:"instance"`
-	Namespace                 string            `json:"namespace" yaml:"namespace"`
-	Release                   string            `json:"release" yaml:"release"`
-	Workload                  string            `json:"workload" yaml:"workload"`
-	Container                 string            `json:"container" yaml:"container"`
-	ModelRouting              *CICDModelRouting `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
-	Registry                  string            `json:"registry" yaml:"registry"`
-	ReleaseManifestRepository string            `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
-	Chart                     string            `json:"chart" yaml:"chart"`
-	Values                    string            `json:"values" yaml:"values"`
-	RuntimeFiles              string            `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
-	DeploymentMode            string            `json:"deploymentMode" yaml:"deploymentMode"`
-	PublicHosts               []string          `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
-	HealthChecks              CICDHealthChecks  `json:"healthChecks" yaml:"healthChecks"`
-	Authz                     map[string]string `json:"authz,omitempty" yaml:"authz,omitempty"`
+	DisplayName               string             `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Target                    string             `json:"target" yaml:"target"`
+	Cluster                   string             `json:"cluster" yaml:"cluster"`
+	Instance                  string             `json:"instance" yaml:"instance"`
+	Namespace                 string             `json:"namespace" yaml:"namespace"`
+	Release                   string             `json:"release" yaml:"release"`
+	Workload                  string             `json:"workload" yaml:"workload"`
+	Container                 string             `json:"container" yaml:"container"`
+	ModelRouting              *CICDModelRouting  `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
+	ModelSettings             *CICDModelSettings `json:"modelSettings,omitempty" yaml:"modelSettings,omitempty"`
+	Registry                  string             `json:"registry" yaml:"registry"`
+	ReleaseManifestRepository string             `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
+	Chart                     string             `json:"chart" yaml:"chart"`
+	Values                    string             `json:"values" yaml:"values"`
+	RuntimeFiles              string             `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
+	DeploymentMode            string             `json:"deploymentMode" yaml:"deploymentMode"`
+	PublicHosts               []string           `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
+	HealthChecks              CICDHealthChecks   `json:"healthChecks" yaml:"healthChecks"`
+	Authz                     map[string]string  `json:"authz,omitempty" yaml:"authz,omitempty"`
 }
 
 type CICDModelRouting struct {
 	Policy string `json:"policy" yaml:"policy"`
+}
+
+type CICDModelSettings struct {
+	Provider  string              `json:"provider" yaml:"provider"`
+	Model     string              `json:"model" yaml:"model"`
+	SecretRef CICDSecretReference `json:"secretRef" yaml:"secretRef"`
+}
+
+type CICDSecretReference struct {
+	Name string `json:"name" yaml:"name"`
+	Key  string `json:"key" yaml:"key"`
 }
 
 type CICDArtifactContract struct {
@@ -265,6 +277,9 @@ func compileDeploymentPlan(template DeploymentTemplate, overrides map[string]str
 		return DeploymentPlan{}, err
 	}
 	if err := validateCICDModelRouting(spec.DesiredState.Application, profile.ModelRouting); err != nil {
+		return DeploymentPlan{}, err
+	}
+	if err := validateCICDModelSettings(spec.DesiredState.Application, profile.ModelSettings); err != nil {
 		return DeploymentPlan{}, err
 	}
 	if err := validateCICDArtifactContract(registry.ArtifactContract); err != nil {
@@ -597,6 +612,27 @@ func validateCICDModelRouting(application string, routing *CICDModelRouting) err
 	}
 }
 
+func validateCICDModelSettings(application string, settings *CICDModelSettings) error {
+	if application != "doops-agent" {
+		return nil
+	}
+	if settings == nil {
+		return fmt.Errorf("doops-agent environment modelSettings are required")
+	}
+	provider := strings.TrimSpace(settings.Provider)
+	model := strings.TrimSpace(settings.Model)
+	if provider == "" || model == "" {
+		return fmt.Errorf("doops-agent modelSettings.provider and model are required")
+	}
+	if !strings.HasPrefix(model, provider+"/") {
+		return fmt.Errorf("doops-agent modelSettings.model must use the declared provider prefix")
+	}
+	if strings.TrimSpace(settings.SecretRef.Name) == "" || strings.TrimSpace(settings.SecretRef.Key) == "" {
+		return fmt.Errorf("doops-agent modelSettings.secretRef.name and key are required")
+	}
+	return nil
+}
+
 func normalizeEvidenceKinds(kinds []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(kinds))
@@ -664,6 +700,9 @@ func validateDeploymentPlan(plan DeploymentPlan) error {
 		return err
 	}
 	if err := validateCICDModelRouting(plan.Spec.DesiredState.Application, plan.Spec.Target.Profile.ModelRouting); err != nil {
+		return err
+	}
+	if err := validateCICDModelSettings(plan.Spec.DesiredState.Application, plan.Spec.Target.Profile.ModelSettings); err != nil {
 		return err
 	}
 	profileDigest, err := digestDeploymentValue(*plan.Spec.Target.Profile)
