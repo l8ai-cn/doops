@@ -18,7 +18,10 @@ import (
 	"github.com/user/doops/agent/internal/server"
 )
 
-const defaultAgentTokenPath = "/root/.doops/agent-token"
+const (
+	defaultAgentTokenPath     = "/root/.doops/agent-token"
+	defaultAgentListenAddress = "0.0.0.0"
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "token" {
@@ -31,7 +34,7 @@ func main() {
 	}
 
 	port := flag.String("port", "42222", "Agent port")
-	listen := flag.String("listen", "127.0.0.1", "Bind address for the agent HTTP/WS listener (host or IP). CI/CD uses the reverse gateway tunnel; expose a non-loopback listener only with an explicit operational requirement")
+	listen := flag.String("listen", defaultAgentListenAddress, "Bind address for the agent HTTP/WS listener (host or IP). Kubernetes host-network deployments expose the declared agent port by default; use 127.0.0.1 when loopback-only access is explicitly required")
 	tokenFlag := flag.String("token", "", "Agent authentication token")
 	gatewayURL := flag.String("gateway-url", "", "Public doops-gateway URL for reverse tunnel mode")
 	cluster := flag.String("cluster", "", "Cluster name registered in reverse tunnel mode")

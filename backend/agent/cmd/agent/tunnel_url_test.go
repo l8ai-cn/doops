@@ -2,6 +2,12 @@ package main
 
 import "testing"
 
+func TestAgentDefaultsToHostNetworkCompatibleListener(t *testing.T) {
+	if got, want := defaultAgentListenAddress, "0.0.0.0"; got != want {
+		t.Fatalf("default listener mismatch: got %q want %q", got, want)
+	}
+}
+
 func TestBuildGatewayAgentURLUsesVersionedEndpoint(t *testing.T) {
 	got, err := buildGatewayAgentURL("https://gateway.example.com", "dev", "local")
 	if err != nil {
