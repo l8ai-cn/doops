@@ -197,12 +197,19 @@ func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticR
 	return fmt.Sprintf(
 		"You own reconciliation for this DeploymentPlan. The synchronized workspace is /root/ws/%s. "+
 			"Treat the resolved environment profile, desired state, acceptance criteria, and policy in the declaration as authoritative. "+
+			"The Gateway has already routed this executor to the declared executionTarget %q. "+
+			"Validate Gateway target identity from DOOPS_GATEWAY_CLUSTER and DOOPS_GATEWAY_INSTANCE when those variables are present. "+
+			"Kubernetes node hostname is not target identity and must not be compared with executionTarget or used alone to return Blocked. "+
 			"Use your available tools to inspect the workspace and actual target, then reconcile the declared desired state until it converges or the declared policy requires Blocked or Failed. "+
 			"Never infer a different target or replace the declaration with a script, stage list, command list, or textual success claim. "+
 			"Dry run: %t. Mutation is authorized: %t. "+
 			"Return exactly one JSON object with apiVersion, kind=ReconciliationResult, planDigest, status, attempts, noProgressAttempts, evidence, and failureEvidence. "+
 			"For converged, include every requiredEvidence item. For blocked or failed, include every requiredFailureEvidence item.\nDeploymentPlan:\n%s",
-		request.SessionID, request.DryRun, request.AllowMutate, string(encodedPlan),
+		request.SessionID,
+		plan.Spec.Target.ExecutionTarget,
+		request.DryRun,
+		request.AllowMutate,
+		string(encodedPlan),
 	), nil
 }
 

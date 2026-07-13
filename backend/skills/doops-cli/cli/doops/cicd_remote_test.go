@@ -66,6 +66,9 @@ func TestAgenticDeploymentInstructionCarriesGoalAndAcceptance(t *testing.T) {
 		"requiredEvidence",
 		"ReconciliationResult",
 		"exactly one JSON object",
+		"DOOPS_GATEWAY_CLUSTER",
+		"DOOPS_GATEWAY_INSTANCE",
+		"Kubernetes node hostname is not target identity",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Fatalf("Ask instruction must contain %q:\n%s", want, instruction)
