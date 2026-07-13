@@ -89,7 +89,7 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 发布后必须验证：
 
 1. `/app/doops-agent -help` 可运行。
-2. `/usr/local/bin/do-agent --help` 可运行。
+2. `/usr/local/bin/do-agent --version` 与发布声明的 doAgent 版本完全一致。
 3. `buildctl --version` 可运行。
 4. `python3 -c 'import yaml'` 可运行。
 5. `helm version --short` 可运行。

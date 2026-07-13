@@ -66,7 +66,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 轻量基础镜像：do
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # 轻更新镜像：doops-agent / skills / docs / entrypoint
 ```
 
-本地或远端手工构建 `Dockerfile` / `agent/Dockerfile` 时，默认基线也是 `base-light:latest`；正式发布工作流会用固定的 `DOOPS_AGENT_BASE_IMAGE` 构建本次不可变 release。
+`Dockerfile` / `agent/Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
@@ -79,12 +79,13 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 镜像构成：
 
 - 基础镜像源码：`Dockerfile.base.light`
+- doAgent 版本基线：`runtime-versions.env`
 - 更新镜像源码：`Dockerfile` / `agent/Dockerfile`
-- 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，默认使用保留的 doops-agent 基线镜像
+- 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，固定到 doAgent 版本标签和 OCI digest
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
-- 构建闸门：基础镜像必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`；两个 Dockerfile 都会执行 `/usr/local/bin/do-agent --help`
-- 发布原则：仅允许 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 由已注册的 DoOps Agent 构建和发布 Agent。模板先构建并校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --help`、`buildctl --version`、Python/PyYAML 与 Helm。CNB 只运行 PR/push 测试，不构建、推送或部署发布镜像。
+- 构建闸门：基础镜像和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像还必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`
+- 发布原则：候选镜像构建必须先校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。环境部署仍由 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 完成。
 
 协议与端点：
 
@@ -95,7 +96,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 本轮维护已清理的技术债：
 
 - 修复 `agent-entrypoint.sh` 把 `-port/-token` 透传给 WebIDE 启动脚本导致的 `Unknown option -port`
-- 将 doagent 依赖镜像改为可覆盖的固定 `DO_AGENT_IMAGE`，默认使用 Harbor 中可拉取的 doops-agent 基线，避免历史 `oilan-system/do-agent:*` tag 缺失阻断构建
+- 将 doagent 依赖镜像固定为公开 doAgent 的版本标签和 OCI digest，并在每层镜像中校验二进制版本
 - 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
 - 统一发布脚本与 DaemonSet 默认更新镜像为 `docker.cnb.cool/l8ai/ai/doops.sh:v1.1`
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
@@ -390,7 +391,7 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一发布入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，使用完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。DoOps Agent 会校验 source commit，并以该 SHA 构建不可变候选镜像；一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 只运行 PR/push 测试，不再发布镜像或触发部署。
+唯一部署入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，CNB 构建并推送带日期和 commit SHA 的不可变候选镜像；随后使用完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。DoOps Agent 会校验 source commit，一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 不直接操作环境或触发部署。
 
 `doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
 

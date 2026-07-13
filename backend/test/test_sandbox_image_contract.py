@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -11,6 +12,14 @@ def read(path: str) -> str:
 
 def read_repo(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def read_env(path: str) -> dict[str, str]:
+    values = {}
+    for line in read(path).splitlines():
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
 
 
 def top_level_block(text: str, key: str) -> str:
@@ -77,15 +86,34 @@ def test_agent_entrypoints_do_not_require_registry_auth_for_public_images():
 
 def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     dockerfile = read("Dockerfile.base.light")
+    baseline = read_env("runtime-versions.env")
 
-    assert "docker.cnb.cool/l8ai/ai/doops.sh:v1.1-metadata-20260704" in dockerfile
+    assert dockerfile.startswith(
+        "ARG DO_AGENT_VERSION\n"
+        "ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified\n"
+    )
+    assert re.fullmatch(r"\d+\.\d+\.\d+", baseline["DO_AGENT_VERSION"])
+    assert baseline["DO_AGENT_IMAGE"].startswith(
+        f"docker.cnb.cool/l8ai/ai/doagent:v{baseline['DO_AGENT_VERSION']}@sha256:"
+    )
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", baseline["DO_AGENT_IMAGE"].split("@", 1)[1])
+    assert (
+        'test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}"'
+        in dockerfile
+    )
     assert "kubectl version --client=true" in dockerfile
     assert "buildctl --version" in dockerfile
     assert "python3 python3-yaml" in dockerfile
     assert "python3 py3-yaml" in dockerfile
     assert "python3 -c 'import yaml'" in dockerfile
     assert "ARG HELM_VERSION=v3.14.4" in dockerfile
-    assert "FROM ${DO_AGENT_IMAGE}\n\nARG KUBECTL_VERSION\nARG HELM_VERSION\n\nUSER root" in dockerfile
+    assert (
+        "FROM ${DO_AGENT_IMAGE}\n\n"
+        "ARG DO_AGENT_VERSION\n"
+        "ARG KUBECTL_VERSION\n"
+        "ARG HELM_VERSION\n\n"
+        "USER root"
+    ) in dockerfile
     assert "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" in dockerfile
     assert "helm version --short" in dockerfile
     assert "&& { apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo || true; }" in dockerfile
@@ -96,17 +124,28 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
 
 
 def test_agent_update_dockerfiles_default_to_base_light_runtime():
-    expected_arg = "ARG DOOPS_AGENT_BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light:latest"
+    required_arg = (
+        "ARG DOOPS_AGENT_BASE_IMAGE="
+        "invalid.invalid/doops-agent-base-image-must-be-specified\n"
+    )
     old_heavy_base = "ARG DOOPS_AGENT_BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base:v1"
 
     for path in ("Dockerfile", "agent/Dockerfile", "agent/Dockerfile.sandbox"):
         dockerfile = read(path)
 
-        assert expected_arg in dockerfile
+        assert dockerfile.startswith(required_arg)
+        assert "base-light:latest" not in dockerfile
         assert old_heavy_base not in dockerfile
+        assert "ARG DO_AGENT_VERSION\n" in dockerfile
         assert 'LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"' in dockerfile
-        assert "/usr/local/bin/do-agent --help >/dev/null" in dockerfile
+        assert (
+            'test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}"'
+            in dockerfile
+        )
+        assert "/app/doops-agent -help >/dev/null" in dockerfile
         assert "buildctl --version" in dockerfile
+        assert "python3 -c 'import yaml'" in dockerfile
+        assert "helm version --short" in dockerfile
 
 
 def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
@@ -134,11 +173,32 @@ def test_cnb_main_builds_date_and_revision_tagged_agent_images_after_checks():
 
     assert "services:\n        - docker" in push_block
     assert "docker-cli" in push_block
+    assert "set -euo pipefail" in push_block
     assert 'RELEASE_DATE="$(date -u +%Y%m%d)"' in push_block
     assert 'RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"' in push_block
+    assert "source backend/runtime-versions.env" in push_block
     assert "backend/Dockerfile.base.light" in push_block
     assert "backend/Dockerfile" in push_block
+    assert push_block.count("--platform linux/amd64") == 2
+    assert '--build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}"' in push_block
+    assert '--build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}"' in push_block
     assert '--build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}"' in push_block
+    assert push_block.count("ACTUAL_DOAGENT_VERSION=") == 2
+    assert (
+        push_block.count('test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"')
+        == 2
+    )
+    base_build, app_build = push_block.split('docker push "${BASE_IMAGE}"', 1)
+    assert "ACTUAL_DOAGENT_VERSION=" in base_build
+    assert 'test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"' in base_build
+    assert "ACTUAL_BASE_IMAGE=" in app_build
+    assert 'test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"' in app_build
+    assert 'docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help' in app_build
+    assert "ACTUAL_DOAGENT_VERSION=" in app_build
+    assert 'test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"' in app_build
+    assert '--entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version' in app_build
+    assert '--entrypoint /usr/bin/python3 "${APP_IMAGE}" -c \'import yaml\'' in app_build
+    assert '--entrypoint /usr/local/bin/helm "${APP_IMAGE}" version --short' in app_build
     assert "docker push" in push_block
     for forbidden in ("kubectl ", "helm upgrade", "doops -session", "cicd submit"):
         assert forbidden not in push_block

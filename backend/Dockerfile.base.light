@@ -1,4 +1,5 @@
-ARG DO_AGENT_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh:v1.1-metadata-20260704
+ARG DO_AGENT_VERSION
+ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG KUBECTL_VERSION=v1.33.1
 ARG HELM_VERSION=v3.14.4
 
@@ -11,12 +12,16 @@ ARG HELM_VERSION=v3.14.4
 # - avoid inheriting legacy WebIDE/SSH startup behavior as a default runtime
 FROM ${DO_AGENT_IMAGE}
 
+ARG DO_AGENT_VERSION
 ARG KUBECTL_VERSION
 ARG HELM_VERSION
 
 USER root
 
-RUN /usr/local/bin/do-agent --help >/dev/null \
+LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
+
+RUN test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
+    && /usr/local/bin/do-agent --help >/dev/null \
     && if command -v apt-get >/dev/null 2>&1; then \
         apt-get update \
         && apt-get install -y --no-install-recommends bash ca-certificates curl git tini procps psmisc python3 python3-yaml \

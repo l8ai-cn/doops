@@ -51,24 +51,41 @@ main:
             pnpm build
         - name: build immutable agent images
           script: |
+            set -euo pipefail
             RELEASE_DATE="$(date -u +%Y%m%d)"
             RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"
+            source backend/runtime-versions.env
             BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_TAG}"
             APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"
             docker build \
+              --platform linux/amd64 \
+              --build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}" \
+              --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
               --label org.opencontainers.image.revision="${CNB_COMMIT}" \
               --label org.opencontainers.image.version="${RELEASE_TAG}" \
               -f backend/Dockerfile.base.light \
               -t "${BASE_IMAGE}" \
               backend
+            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${BASE_IMAGE}" --version | awk '{print $NF}')"
+            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
             docker push "${BASE_IMAGE}"
             docker build \
+              --platform linux/amd64 \
               --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
+              --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
               --label org.opencontainers.image.revision="${CNB_COMMIT}" \
               --label org.opencontainers.image.version="${RELEASE_TAG}" \
               -f backend/Dockerfile \
               -t "${APP_IMAGE}" \
               backend
+            ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
+            test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
+            docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
+            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
+            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
+            docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version
+            docker run --rm --entrypoint /usr/bin/python3 "${APP_IMAGE}" -c 'import yaml'
+            docker run --rm --entrypoint /usr/local/bin/helm "${APP_IMAGE}" version --short
             docker push "${APP_IMAGE}"
 
 master:
