@@ -2,6 +2,8 @@ ARG DO_AGENT_VERSION
 ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG KUBECTL_VERSION=v1.33.1
 ARG HELM_VERSION=v3.14.4
+ARG BUILDKIT_VERSION=v0.21.1
+ARG BUILDKIT_AMD64_SHA256=e0d83a631a48f13232fcee71cbd913e6b11dbde0a45985fa1b99af27ab97086e
 
 # Lightweight base image for doops-agent runtime.
 #
@@ -15,6 +17,8 @@ FROM ${DO_AGENT_IMAGE}
 ARG DO_AGENT_VERSION
 ARG KUBECTL_VERSION
 ARG HELM_VERSION
+ARG BUILDKIT_VERSION
+ARG BUILDKIT_AMD64_SHA256
 
 USER root
 
@@ -37,10 +41,15 @@ RUN test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}"
         && chmod +x /usr/local/bin/kubectl; \
       fi \
     && if ! command -v buildctl >/dev/null 2>&1 || ! command -v buildkitd >/dev/null 2>&1; then \
-        BUILDKIT_VERSION=v0.21.1; \
         ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
-        curl -sSL "https://ghproxy.net/https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-${ARCH}.tar.gz" \
-          | tar -xzC /usr/local; \
+        test "${ARCH}" = "amd64"; \
+        curl --fail --location --silent --show-error --http1.1 \
+          --retry 5 --retry-all-errors --retry-delay 2 \
+          "https://ghproxy.net/https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-${ARCH}.tar.gz" \
+          -o /tmp/buildkit.tar.gz \
+        && echo "${BUILDKIT_AMD64_SHA256}  /tmp/buildkit.tar.gz" | sha256sum --check --status \
+        && tar -xzf /tmp/buildkit.tar.gz -C /usr/local \
+        && rm -f /tmp/buildkit.tar.gz; \
       fi \
     && ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
       curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz \
