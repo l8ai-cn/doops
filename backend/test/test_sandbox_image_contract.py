@@ -110,21 +110,37 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     assert "FROM ${BUILDKIT_IMAGE} AS buildkit" in dockerfile
     assert "COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl" in dockerfile
     assert "COPY --from=buildkit /usr/bin/buildkit* /usr/local/bin/" in dockerfile
+    assert re.search(
+        r"ARG KUBECTL_IMAGE=registry\.k8s\.io/kubectl:v1\.33\.1@sha256:[0-9a-f]{64}",
+        dockerfile,
+    )
+    assert "FROM ${KUBECTL_IMAGE} AS kubectl" in dockerfile
+    assert "COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl" in dockerfile
+    assert 'LABEL org.l8ai.kubectl.image="${KUBECTL_IMAGE}"' in dockerfile
     assert "ghproxy.net" not in dockerfile
     assert "| tar -xzC /usr/local" not in dockerfile
     assert "python3 python3-yaml" in dockerfile
     assert "python3 py3-yaml" in dockerfile
     assert "python3 -c 'import yaml'" in dockerfile
-    assert "ARG HELM_VERSION=v3.14.4" in dockerfile
+    assert re.search(
+        r"ARG HELM_IMAGE=alpine/helm:3\.14\.4@sha256:[0-9a-f]{64}",
+        dockerfile,
+    )
+    assert "FROM ${HELM_IMAGE} AS helm" in dockerfile
+    assert "COPY --from=helm /usr/bin/helm /usr/local/bin/helm" in dockerfile
+    assert 'LABEL org.l8ai.helm.image="${HELM_IMAGE}"' in dockerfile
     assert (
         "FROM ${DO_AGENT_IMAGE}\n\n"
         "ARG DO_AGENT_VERSION\n"
         "ARG BUILDKIT_IMAGE\n"
-        "ARG KUBECTL_VERSION\n"
-        "ARG HELM_VERSION\n\n"
+        "ARG HELM_IMAGE\n"
+        "ARG KUBECTL_IMAGE\n"
+        "\n"
         "USER root"
     ) in dockerfile
-    assert "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" in dockerfile
+    assert "dl.k8s.io" not in dockerfile
+    assert "get.helm.sh" not in dockerfile
+    assert "helm.tar.gz" not in dockerfile
     assert "helm version --short" in dockerfile
     assert "&& { apt-get purge -y --auto-remove openssh-server openssh-client rsync sudo || true; }" in dockerfile
     assert "&& { apk del openssh-server openssh-client rsync sudo 2>/dev/null || true; }" in dockerfile

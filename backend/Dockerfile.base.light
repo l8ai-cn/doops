@@ -1,8 +1,8 @@
 ARG DO_AGENT_VERSION
 ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG BUILDKIT_IMAGE=moby/buildkit:v0.21.1@sha256:c3d76ba1fddb719901873a54cee941fb6c794b431ed36c71c6506ea401e78fdb
-ARG KUBECTL_VERSION=v1.33.1
-ARG HELM_VERSION=v3.14.4
+ARG HELM_IMAGE=alpine/helm:3.14.4@sha256:599abc4bc6fc6a7aae894fa726008d78061e8d109f0cc49e16445757d0034cfa
+ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.33.1@sha256:59fa8a78cd3173280fa8a3a4cf6128bf1a5e5fb03b51c63656b5a9843207d256
 
 # Lightweight base image for doops-agent runtime.
 #
@@ -12,21 +12,27 @@ ARG HELM_VERSION=v3.14.4
 # - keep tini/bash/git/curl/ca-certificates/procps/psmisc
 # - avoid inheriting legacy WebIDE/SSH startup behavior as a default runtime
 FROM ${BUILDKIT_IMAGE} AS buildkit
+FROM ${HELM_IMAGE} AS helm
+FROM ${KUBECTL_IMAGE} AS kubectl
 
 FROM ${DO_AGENT_IMAGE}
 
 ARG DO_AGENT_VERSION
 ARG BUILDKIT_IMAGE
-ARG KUBECTL_VERSION
-ARG HELM_VERSION
+ARG HELM_IMAGE
+ARG KUBECTL_IMAGE
 
 USER root
 
 LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
 LABEL org.l8ai.buildkit.image="${BUILDKIT_IMAGE}"
+LABEL org.l8ai.helm.image="${HELM_IMAGE}"
+LABEL org.l8ai.kubectl.image="${KUBECTL_IMAGE}"
 
 COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl
 COPY --from=buildkit /usr/bin/buildkit* /usr/local/bin/
+COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 
 RUN test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
     && /usr/local/bin/do-agent --help >/dev/null \
@@ -39,17 +45,6 @@ RUN test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}"
         apk add --no-cache bash ca-certificates curl git tini procps psmisc python3 py3-yaml \
         && { apk del openssh-server openssh-client rsync sudo 2>/dev/null || true; }; \
       fi \
-    && if ! command -v kubectl >/dev/null 2>&1; then \
-        ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
-        curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl \
-        && chmod +x /usr/local/bin/kubectl; \
-      fi \
-    && ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
-      curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tar.gz \
-      && tar -xzf /tmp/helm.tar.gz -C /tmp \
-      && mv "/tmp/linux-${ARCH}/helm" /usr/local/bin/helm \
-      && chmod +x /usr/local/bin/helm \
-      && rm -rf /tmp/helm.tar.gz "/tmp/linux-${ARCH}" \
     && kubectl version --client=true \
     && buildctl --version \
     && python3 --version \
