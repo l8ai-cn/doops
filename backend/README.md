@@ -84,7 +84,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 基础镜像来源：由 `Dockerfile.base.light` 的 `DO_AGENT_IMAGE` 指定，固定到 doAgent 版本标签和 OCI digest
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
-- 构建闸门：基础镜像和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；BuildKit 压缩包必须落盘并通过固定 SHA256 后才允许解压；基础镜像还必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`
+- 构建闸门：基础镜像和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；BuildKit 必须从固定版本和 OCI manifest digest 的官方镜像复制；基础镜像还必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`
 - 发布原则：候选镜像构建必须先校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。环境部署仍由 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 完成。
 
 协议与端点：

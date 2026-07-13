@@ -103,12 +103,14 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     )
     assert "kubectl version --client=true" in dockerfile
     assert "buildctl --version" in dockerfile
-    assert "ARG BUILDKIT_VERSION=v0.21.1" in dockerfile
-    assert re.search(r"ARG BUILDKIT_AMD64_SHA256=[0-9a-f]{64}", dockerfile)
-    assert "--retry 5 --retry-all-errors --retry-delay 2" in dockerfile
-    assert "sha256sum --check --status" in dockerfile
-    assert "-o /tmp/buildkit.tar.gz" in dockerfile
-    assert "tar -xzf /tmp/buildkit.tar.gz -C /usr/local" in dockerfile
+    assert re.search(
+        r"ARG BUILDKIT_IMAGE=moby/buildkit:v0\.21\.1@sha256:[0-9a-f]{64}",
+        dockerfile,
+    )
+    assert "FROM ${BUILDKIT_IMAGE} AS buildkit" in dockerfile
+    assert "COPY --from=buildkit /usr/bin/buildctl /usr/local/bin/buildctl" in dockerfile
+    assert "COPY --from=buildkit /usr/bin/buildkit* /usr/local/bin/" in dockerfile
+    assert "ghproxy.net" not in dockerfile
     assert "| tar -xzC /usr/local" not in dockerfile
     assert "python3 python3-yaml" in dockerfile
     assert "python3 py3-yaml" in dockerfile
@@ -117,10 +119,9 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     assert (
         "FROM ${DO_AGENT_IMAGE}\n\n"
         "ARG DO_AGENT_VERSION\n"
+        "ARG BUILDKIT_IMAGE\n"
         "ARG KUBECTL_VERSION\n"
-        "ARG HELM_VERSION\n"
-        "ARG BUILDKIT_VERSION\n"
-        "ARG BUILDKIT_AMD64_SHA256\n\n"
+        "ARG HELM_VERSION\n\n"
         "USER root"
     ) in dockerfile
     assert "helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" in dockerfile
