@@ -1,6 +1,6 @@
 image:
   repository: ""
-  tag: ""
+  digest: ""
   pullPolicy: Always
 
 workload:

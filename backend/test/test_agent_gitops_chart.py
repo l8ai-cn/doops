@@ -10,6 +10,7 @@ OILAN_VALUES = ROOT / "deploy" / "environments" / "oilan-values.yaml"
 WORKFLOW = ROOT / "deploy" / "workflows" / "oilan-agent-bootstrap.yaml"
 REGISTRY = ROOT / "deploy" / "environments.yaml"
 RELEASE_ID = "a" * 40
+IMAGE_DIGEST = "sha256:" + ("b" * 64)
 
 
 def load_yaml(path: Path):
@@ -35,13 +36,29 @@ def render_oilan_chart():
             "--values",
             str(OILAN_VALUES),
             "--set-string",
-            f"image.tag={RELEASE_ID}",
+            f"image.digest={IMAGE_DIGEST}",
         ],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
     return [item for item in yaml.safe_load_all(output) if item]
+
+
+def render_oilan_chart_with(*overrides):
+    command = [
+        "helm",
+        "template",
+        "doops-agent-live",
+        str(CHART),
+        "--namespace",
+        "kz-ops",
+        "--values",
+        str(OILAN_VALUES),
+    ]
+    for override in overrides:
+        command.extend(["--set-string", override])
+    return subprocess.run(command, capture_output=True, text=True)
 
 
 def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
@@ -58,7 +75,7 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"] == "192.168.0.24"
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == []
-    assert container["image"].endswith(f":{RELEASE_ID}")
+    assert container["image"] == f"docker.cnb.cool/l8ai/ai/doops.sh@{IMAGE_DIGEST}"
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {item["name"] for item in container["env"]}
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
     assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
@@ -89,6 +106,18 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert volumes["containerd-socket"] == "/run/containerd/containerd.sock"
     assert volumes["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert volumes["crictl-bin"] == "/usr/bin/crictl"
+
+
+def test_oilan_agent_chart_rejects_invalid_image_references():
+    invalid_overrides = (
+        ("image.digest=latest",),
+        (f"image.digest={IMAGE_DIGEST}", "image.repository="),
+        (f"image.tag={RELEASE_ID}",),
+    )
+
+    for overrides in invalid_overrides:
+        result = render_oilan_chart_with(*overrides)
+        assert result.returncode != 0, result.stdout
 
 
 def test_legacy_bootstrap_job_is_removed():

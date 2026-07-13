@@ -14,6 +14,8 @@ skills/doops-cli/doops
 **/doops-agent-*
 **/agent-mcp-linux-*
 /agent/agent
+!backend/deploy/helm/doops-agent/
+!backend/deploy/helm/doops-agent/**
 
 # 打包发行物
 dist/*

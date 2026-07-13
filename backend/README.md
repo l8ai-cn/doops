@@ -391,7 +391,7 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一部署入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，CNB 构建并推送带日期和 commit SHA 的不可变候选镜像；随后使用完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。DoOps Agent 会校验 source commit，一次性 Helm bootstrap Job 会使用同一 SHA 更新 Deployment，随后等待 Job、Helm release 与 Kubernetes rollout 完成。CNB 不直接操作环境或触发部署。
+唯一部署入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，CNB 构建并推送以完整 commit SHA 为标签的不可变候选镜像；随后使用同一完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。控制面必须将该候选解析为 registry digest，并以 `repository@digest` 更新 Deployment，随后等待 Helm release 与 Kubernetes rollout 完成。CNB 不直接操作环境或触发部署。
 
 `doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
 

@@ -52,8 +52,7 @@ main:
         - name: build immutable agent images
           script: |
             set -euo pipefail
-            RELEASE_DATE="$(date -u +%Y%m%d)"
-            RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"
+            RELEASE_TAG="${CNB_COMMIT}"
             source backend/runtime-versions.env
             BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_TAG}"
             APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"

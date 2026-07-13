@@ -25,7 +25,7 @@ spec:
 {{ toYaml .Values.imagePullSecrets | indent 8 }}
       containers:
         - name: doops-agent
-          image: {{ printf "%s:%s" .Values.image.repository (required "image.tag is required" .Values.image.tag) | quote }}
+          image: {{ printf "%s@%s" (required "image.repository is required" .Values.image.repository) (required "image.digest is required" .Values.image.digest) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             privileged: true

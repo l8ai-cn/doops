@@ -22,7 +22,7 @@ def render_oilan_chart():
             "--values",
             str(VALUES),
             "--set-string",
-            "image.tag=0123456789abcdef0123456789abcdef01234567",
+            f"image.digest=sha256:{'a' * 64}",
         ],
         check=True,
         capture_output=True,

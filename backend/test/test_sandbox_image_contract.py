@@ -176,7 +176,7 @@ def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
         assert " helm" in push_block
 
 
-def test_cnb_main_builds_date_and_revision_tagged_agent_images_after_checks():
+def test_cnb_main_builds_full_revision_tagged_agent_images_after_checks():
     cnb = read_repo(".cnb.yml")
     main = top_level_block(cnb, "main")
     _, push_block = main.split("  push:", 1)
@@ -184,8 +184,9 @@ def test_cnb_main_builds_date_and_revision_tagged_agent_images_after_checks():
     assert "services:\n        - docker" in push_block
     assert "docker-cli" in push_block
     assert "set -euo pipefail" in push_block
-    assert 'RELEASE_DATE="$(date -u +%Y%m%d)"' in push_block
-    assert 'RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"' in push_block
+    assert 'RELEASE_TAG="${CNB_COMMIT}"' in push_block
+    assert "CNB_COMMIT_SHORT" not in push_block
+    assert 'date -u +%Y%m%d' not in push_block
     assert "source backend/runtime-versions.env" in push_block
     assert "backend/Dockerfile.base.light" in push_block
     assert "backend/Dockerfile" in push_block
@@ -212,6 +213,14 @@ def test_cnb_main_builds_date_and_revision_tagged_agent_images_after_checks():
     assert "docker push" in push_block
     for forbidden in ("kubectl ", "helm upgrade", "doops -session", "cicd submit"):
         assert forbidden not in push_block
+
+
+def test_root_readme_matches_cnb_build_responsibility():
+    readme = read_repo("README.md")
+
+    assert "no CI/CD" not in readme
+    assert "CNB is a source mirror only" not in readme
+    assert "CNB CI builds, verifies, and publishes immutable agent images" in readme
 
 
 def test_doops_cicd_is_the_only_agent_release_definition():
