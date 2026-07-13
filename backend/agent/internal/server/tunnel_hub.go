@@ -47,12 +47,17 @@ type GatewayHub struct {
 	activeOps   map[string]*gatewayActiveOperation
 	activeSeq   uint64
 
-	scheduler *Scheduler
+	scheduler          *Scheduler
+	releaseCoordinator *ReleaseCoordinator
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
 func (h *GatewayHub) AttachScheduler(sched *Scheduler) {
 	h.scheduler = sched
+}
+
+func (h *GatewayHub) AttachReleaseCoordinator(coordinator *ReleaseCoordinator) {
+	h.releaseCoordinator = coordinator
 }
 
 var errGatewayClientDisconnected = errors.New("gateway client disconnected")
@@ -232,6 +237,8 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/agent/connect", h.HandleAgentConnect)
 	mux.HandleFunc("/v1/rpc", h.HandleClientRPC)
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
+	mux.HandleFunc("/v1/cicd/releases", h.HandleReleases)
+	mux.HandleFunc("/v1/cicd/releases/", h.HandleReleases)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
@@ -1633,9 +1640,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
 	case ActionReconcile:
-		if sessionID := extractSession(args); sessionID != "" {
-			return "workspace:" + sessionID
-		}
+		return "deployment:" + tunnelKey(cluster, instance)
 	case ActionExec, ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
@@ -1676,6 +1681,22 @@ func extractStringArg(args json.RawMessage, key string) string {
 	return strings.TrimSpace(v)
 }
 
+func extractStringSliceArg(args json.RawMessage, key string) []string {
+	var m map[string]interface{}
+	if json.Unmarshal(args, &m) != nil {
+		return nil
+	}
+	raw, _ := m[key].([]interface{})
+	values := make([]string, 0, len(raw))
+	for _, item := range raw {
+		value, _ := item.(string)
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func validateReconcileInvocation(args json.RawMessage) error {
 	if extractStringArg(args, "operation") != "reconcile" {
 		return fmt.Errorf("reconciliation operation is required")
@@ -1703,6 +1724,9 @@ func validateReconcileInvocation(args json.RawMessage) error {
 	}
 	if _, err := normalizeWorkspaceCommit(extractStringArg(args, "workspace_commit")); err != nil {
 		return fmt.Errorf("reconciliation workspace_commit is required and must be a Git object ID")
+	}
+	if len(normalizeRequiredEvidence(extractStringSliceArg(args, "required_evidence"))) == 0 {
+		return fmt.Errorf("reconciliation required_evidence contract is required")
 	}
 	return nil
 }

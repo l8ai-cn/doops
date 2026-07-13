@@ -67,6 +67,12 @@ func serve(args []string) {
 		TargetQueueTimeout:      *targetQueueTimeout,
 		MaxQueuedPerTarget:      *maxQueuedPerTarget,
 	})
+	releaseCoordinator := server.NewReleaseCoordinator(hub, store, time.Second)
+	hub.AttachReleaseCoordinator(releaseCoordinator)
+	if err := releaseCoordinator.Start(); err != nil {
+		log.Fatal(err)
+	}
+	defer releaseCoordinator.Stop()
 	if *schedulerTick > 0 {
 		scheduler := server.NewScheduler(hub, store, *schedulerTick)
 		hub.AttachScheduler(scheduler)

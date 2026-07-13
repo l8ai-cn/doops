@@ -17,10 +17,10 @@ type CICDAgenticRunRequest struct {
 	AllowMutate bool
 }
 type CICDAgenticRun struct {
-	PlanDigest string               `json:"planDigest"`
-	Target     string               `json:"target"`
-	Workspace  string               `json:"workspace"`
-	Result     ReconciliationResult `json:"result"`
+	PlanDigest string            `json:"planDigest"`
+	Target     string            `json:"target"`
+	Workspace  string            `json:"workspace"`
+	Ticket     CICDReleaseTicket `json:"ticket"`
 }
 type deploymentAgenticExecutor interface {
 	Run(context.Context, DeploymentPlan, CICDAgenticRunRequest) (CICDAgenticRun, error)
@@ -33,7 +33,7 @@ type agenticDeploymentRunner struct {
 	sourceDirectory string
 	sessionID       string
 	pushWorkspace   func(Server, string, string, *CICDSourceRelease) (string, error)
-	ask             func(map[string]interface{}) (ReconciliationResult, error)
+	enqueue         func(CICDReleaseCreateRequest) (CICDReleaseTicket, error)
 }
 
 type cicdSetFlags map[string]string
@@ -176,18 +176,19 @@ func writeCICDJSON(value interface{}) error {
 	return encoder.Encode(value)
 }
 
-func newAgenticDeploymentRunner(server Server, sourceDirectory, sessionID string, client *MCPClient) (*agenticDeploymentRunner, error) {
-	if strings.TrimSpace(sourceDirectory) == "" || strings.TrimSpace(sessionID) == "" || client == nil {
-		return nil, fmt.Errorf("deployment source directory, session ID, and Ask client are required")
+func newAgenticDeploymentRunner(server Server, sourceDirectory, sessionID, token string) (*agenticDeploymentRunner, error) {
+	if strings.TrimSpace(sourceDirectory) == "" || strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("deployment source directory and session ID are required")
+	}
+	if strings.TrimSpace(server.Gateway) == "" {
+		return nil, fmt.Errorf("deployment target must use a configured DoOps gateway")
 	}
 	return &agenticDeploymentRunner{server: server, sourceDirectory: sourceDirectory, sessionID: sessionID,
 		pushWorkspace: func(target Server, source, session string, identity *CICDSourceRelease) (string, error) {
 			return pushWorkspaceSnapshotWithSource(target, source, "", false, nil, session, identity)
 		},
-		ask: func(arguments map[string]interface{}) (ReconciliationResult, error) {
-			var result ReconciliationResult
-			err := client.CallStructured("doops_agent_prompt", arguments, &result)
-			return result, err
+		enqueue: func(request CICDReleaseCreateRequest) (CICDReleaseTicket, error) {
+			return gatewayCICDReleaseCreate(server, token, request)
 		},
 	}, nil
 }
@@ -196,15 +197,11 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	if err := ctx.Err(); err != nil {
 		return CICDAgenticRun{}, err
 	}
-	if r.pushWorkspace == nil || r.ask == nil {
+	if r.pushWorkspace == nil || r.enqueue == nil {
 		return CICDAgenticRun{}, fmt.Errorf("agentic deployment runner is incomplete")
 	}
 	request.SessionID = r.sessionID
 	instruction, err := buildAgenticDeploymentInstruction(plan, request)
-	if err != nil {
-		return CICDAgenticRun{}, err
-	}
-	arguments, err := buildAgenticDeploymentArguments(plan, request, instruction)
 	if err != nil {
 		return CICDAgenticRun{}, err
 	}
@@ -220,24 +217,20 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	if !validWorkspaceCommit(workspaceCommit) {
 		return CICDAgenticRun{}, fmt.Errorf("push deployment workspace returned an invalid commit")
 	}
-	arguments["workspace_commit"] = workspaceCommit
-	result, err := r.ask(arguments)
+	create, err := buildCICDReleaseCreateRequest(plan, r.server, request, instruction, workspaceCommit)
 	if err != nil {
-		return CICDAgenticRun{}, fmt.Errorf("ask deployment agent: %w", err)
+		return CICDAgenticRun{}, err
 	}
-	run := CICDAgenticRun{
+	ticket, err := r.enqueue(create)
+	if err != nil {
+		return CICDAgenticRun{}, fmt.Errorf("register release ticket: %w", err)
+	}
+	return CICDAgenticRun{
 		PlanDigest: plan.Digest,
 		Target:     plan.Spec.Target.ExecutionTarget,
 		Workspace:  "/root/ws/" + r.sessionID,
-		Result:     result,
-	}
-	if err := validateReconciliationResult(plan, workspaceCommit, result); err != nil {
-		return run, err
-	}
-	if result.Status != ReconciliationConverged {
-		return run, fmt.Errorf("deployment did not converge: %s", result.Status)
-	}
-	return run, nil
+		Ticket:     ticket,
+	}, nil
 }
 
 func validWorkspaceCommit(value string) bool {
@@ -253,31 +246,62 @@ func validWorkspaceCommit(value string) bool {
 	return true
 }
 
-func buildAgenticDeploymentArguments(plan DeploymentPlan, request CICDAgenticRunRequest, instruction string) (map[string]interface{}, error) {
+func buildCICDReleaseCreateRequest(
+	plan DeploymentPlan,
+	server Server,
+	request CICDAgenticRunRequest,
+	instruction, workspaceCommit string,
+) (CICDReleaseCreateRequest, error) {
 	if request.DryRun == request.AllowMutate {
-		return nil, fmt.Errorf("deployment execution requires exactly one of dry-run or mutation authorization")
+		return CICDReleaseCreateRequest{}, fmt.Errorf("deployment execution requires exactly one of dry-run or mutation authorization")
 	}
 	if !ociDigestPattern.MatchString(plan.Digest) {
-		return nil, fmt.Errorf("deployment plan digest must be a sha256 digest")
+		return CICDReleaseCreateRequest{}, fmt.Errorf("deployment plan digest must be a sha256 digest")
 	}
 	if strings.TrimSpace(instruction) == "" {
-		return nil, fmt.Errorf("deployment instruction is required")
+		return CICDReleaseCreateRequest{}, fmt.Errorf("deployment instruction is required")
+	}
+	if !validWorkspaceCommit(workspaceCommit) {
+		return CICDReleaseCreateRequest{}, fmt.Errorf("workspace commit must be a Git object ID")
+	}
+	requiredEvidence := normalizeEvidenceKinds(plan.Spec.Acceptance.RequiredEvidence)
+	if len(requiredEvidence) == 0 {
+		return CICDReleaseCreateRequest{}, fmt.Errorf("required evidence contract is empty")
 	}
 	executionMode := "dry-run"
 	if request.AllowMutate {
 		executionMode = "apply"
 	}
-	arguments := map[string]interface{}{
-		"instruction":     instruction,
-		"response_format": "json",
-		"operation":       "reconcile",
-		"plan_digest":     plan.Digest,
-		"execution_mode":  executionMode,
-	}
+	sourceRevision := ""
 	if plan.Spec.Release.Source != nil {
-		arguments["source_revision"] = plan.Spec.Release.Source.Revision
+		sourceRevision = plan.Spec.Release.Source.Revision
 	}
-	return arguments, nil
+	namespace := ""
+	releaseName := ""
+	if plan.Spec.Target.Profile != nil {
+		namespace = plan.Spec.Target.Profile.Executor.Config.Namespace
+		releaseName = plan.Spec.Target.Profile.Executor.Config.Release
+	}
+	requirement := strings.TrimSpace(plan.Metadata.Name)
+	if requirement == "" {
+		requirement = strings.TrimSpace(plan.Spec.DesiredState.Application)
+	}
+	return CICDReleaseCreateRequest{
+		SessionID:        request.SessionID,
+		Requirement:      requirement,
+		Cluster:          server.Cluster,
+		Instance:         server.Instance,
+		Application:      plan.Spec.DesiredState.Application,
+		Environment:      plan.Spec.Target.Environment,
+		Namespace:        namespace,
+		ReleaseName:      releaseName,
+		PlanDigest:       plan.Digest,
+		SourceRevision:   sourceRevision,
+		WorkspaceCommit:  workspaceCommit,
+		ExecutionMode:    executionMode,
+		Instruction:      instruction,
+		RequiredEvidence: requiredEvidence,
+	}, nil
 }
 
 func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticRunRequest) (string, error) {

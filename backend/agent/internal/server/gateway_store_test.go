@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -48,6 +49,13 @@ func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
 	}
 	if _, err := store.VerifyAgentToken(userToken.Plaintext); err == nil {
 		t.Fatal("user token must not authorize agent registration")
+	}
+	var agentUserID sql.NullString
+	if err := store.db.QueryRow(`SELECT user_id FROM tokens WHERE id = ?`, agentToken.ID).Scan(&agentUserID); err != nil {
+		t.Fatalf("read stored agent token owner: %v", err)
+	}
+	if agentUserID.Valid {
+		t.Fatalf("agent token must store no user foreign key, got %#v", agentUserID)
 	}
 
 	if err := store.GrantUser(user.ID, ScopeGrant{

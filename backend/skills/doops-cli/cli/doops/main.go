@@ -37,7 +37,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 运维入口 (get/logs/rollout/scale/deploy-image/plan/apply-plan)
-  cicd        声明式 CI/CD workflow 入口 (lint/plan/run)
+  cicd        声明式 CI/CD workflow 入口 (lint/plan/run/status)
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -57,11 +57,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 声明式 CI/CD 闭环示例:
-  # run 先把当前仓库同步到 /root/ws/<session>，再通过 Ask 交给 doagent 执行和核验。
+  # run 同步不可变快照并返回 release 编号；Gateway 按编号顺序调度原生 Agent。
   doops cicd lint -f deploy/workflows/test.yaml
   doops cicd plan -f deploy/workflows/test.yaml --set version=release-YYYYMMDD --set reason=<change-reference>
   doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set version=release-YYYYMMDD --set reason=<change-reference>
   doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set version=release-YYYYMMDD --set reason=<change-reference>
+  doops cicd status 123 --target gw-oilan-node
 `)
 	}
 	flag.Parse()
@@ -318,6 +319,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
 	case "cicd":
+		if len(cmdArgs) > 0 && cmdArgs[0] == "status" {
+			if err := runCICDStatusCommand(cmdArgs[1:], servers, configErr); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		newRunner := func(plan DeploymentPlan, sourceDirectory string) (deploymentAgenticExecutor, func(), error) {
 			requireConfig(configErr)
 			server := findServer(servers, plan.Spec.Target.ExecutionTarget)
@@ -333,14 +341,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			if strings.TrimSpace(server.Gateway) == "" {
 				return nil, nil, fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
 			}
-			client := NewMCPClient(*server, ss, *sessionName, *verbose)
-			client.Token = ResolveToken(server.Name, server.Token)
-			runner, err := newAgenticDeploymentRunner(*server, sourceDirectory, *sessionName, client)
-			if err != nil {
-				client.Close()
-				return nil, nil, err
-			}
-			return runner, func() { client.Close() }, nil
+			token := ResolveToken(server.Name, server.Token)
+			runner, err := newAgenticDeploymentRunner(*server, sourceDirectory, *sessionName, token)
+			return runner, nil, err
 		}
 		if err := runCICDCommand(context.Background(), cmdArgs, newRunner); err != nil {
 			fmt.Printf("Error: %v\n", err)

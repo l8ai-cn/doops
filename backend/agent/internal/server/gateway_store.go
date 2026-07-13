@@ -188,6 +188,7 @@ func (s *GatewayStore) migrate() error {
 	stmts := []string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA busy_timeout=5000`,
+		`PRAGMA foreign_keys=ON`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE,
@@ -210,6 +211,7 @@ func (s *GatewayStore) migrate() error {
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tokens_kind ON tokens(kind)`,
+		`UPDATE tokens SET user_id = NULL WHERE kind = 'agent' AND user_id = ''`,
 		`CREATE TABLE IF NOT EXISTS grants (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id TEXT NOT NULL,
@@ -293,6 +295,49 @@ func (s *GatewayStore) migrate() error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_git_repos_created ON git_repos(created_at)`,
+		`CREATE TABLE IF NOT EXISTS release_tickets (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL DEFAULT '',
+			token_id TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			requirement TEXT NOT NULL,
+			cluster TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT '',
+			application TEXT NOT NULL DEFAULT '',
+			environment TEXT NOT NULL DEFAULT '',
+			namespace TEXT NOT NULL DEFAULT '',
+			release_name TEXT NOT NULL DEFAULT '',
+			plan_digest TEXT NOT NULL DEFAULT '',
+			source_revision TEXT NOT NULL DEFAULT '',
+			workspace_commit TEXT NOT NULL DEFAULT '',
+			execution_mode TEXT NOT NULL DEFAULT '',
+			instruction TEXT NOT NULL DEFAULT '',
+			required_evidence_json TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'queued',
+			stage TEXT NOT NULL DEFAULT '',
+			superseded_by INTEGER,
+			result_json TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			started_at TEXT NOT NULL DEFAULT '',
+			finished_at TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_tickets_status ON release_tickets(status, number)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_tickets_scope_status ON release_tickets(scope, status, number)`,
+		`CREATE TABLE IF NOT EXISTS release_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			release_number INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT '',
+			stage TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL DEFAULT '',
+			data_json TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(release_number) REFERENCES release_tickets(number)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_events_ticket ON release_events(release_number, id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -410,8 +455,8 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 	}
 	_, err = s.db.Exec(`INSERT INTO tokens
 		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, string(req.Kind), req.UserID, name, prefix, string(hash),
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)`,
+		id, string(req.Kind), strings.TrimSpace(req.UserID), name, prefix, string(hash),
 		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(time.Now().UTC()))
 	if err != nil {
 		return CreatedToken{}, err
@@ -443,7 +488,7 @@ func (s *GatewayStore) verifyToken(token string, kind TokenKind) (TokenAuth, err
 	if tokenID := tokenIDFromPlaintext(token); tokenID != "" {
 		return s.verifyTokenByID(token, kind, tokenID)
 	}
-	rows, err := s.db.Query(`SELECT id, user_id, hash, cluster, instance, expires_at
+	rows, err := s.db.Query(`SELECT id, COALESCE(user_id, ''), hash, cluster, instance, expires_at
 		FROM tokens WHERE kind = ? AND revoked_at = ''`, string(kind))
 	if err != nil {
 		return TokenAuth{}, err
@@ -473,7 +518,7 @@ func (s *GatewayStore) verifyToken(token string, kind TokenKind) (TokenAuth, err
 
 func (s *GatewayStore) verifyTokenByID(token string, kind TokenKind, tokenID string) (TokenAuth, error) {
 	var id, userID, hash, cluster, instance, expires string
-	err := s.db.QueryRow(`SELECT id, user_id, hash, cluster, instance, expires_at
+	err := s.db.QueryRow(`SELECT id, COALESCE(user_id, ''), hash, cluster, instance, expires_at
 		FROM tokens WHERE id = ? AND kind = ? AND revoked_at = ''`, tokenID, string(kind)).
 		Scan(&id, &userID, &hash, &cluster, &instance, &expires)
 	if err != nil {

@@ -15,6 +15,19 @@ import (
 //
 // 注意：这是受信任的内部路径，不做 user RBAC 校验；调用方需自行保证来源可信。
 func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (string, error) {
+	return h.runInternalToolCall(ctx, cluster, instance, tool, args, true)
+}
+
+func (h *GatewayHub) RunInternalToolCallFinal(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (string, error) {
+	return h.runInternalToolCall(ctx, cluster, instance, tool, args, false)
+}
+
+func (h *GatewayHub) runInternalToolCall(
+	ctx context.Context,
+	cluster, instance, tool string,
+	args map[string]interface{},
+	includeNotifications bool,
+) (string, error) {
 	agent := h.getAgent(cluster, instance)
 	if agent == nil {
 		return "", fmt.Errorf("target offline: %s/%s", cluster, instance)
@@ -37,6 +50,9 @@ func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance,
 	var out strings.Builder
 	relayErr := agent.relayToolCall(ctx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
+			if !includeNotifications {
+				return nil
+			}
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
 				if chunk, ok := p["data"].(string); ok {
 					out.WriteString(chunk)

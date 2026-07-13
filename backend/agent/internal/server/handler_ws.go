@@ -736,11 +736,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode:      nativeMode,
-				Operation:       operation,
-				PlanDigest:      strings.TrimSpace(args.PlanDigest),
-				SourceRevision:  strings.ToLower(strings.TrimSpace(args.SourceRevision)),
-				WorkspaceCommit: strings.ToLower(strings.TrimSpace(args.WorkspaceCommit)),
+				NativeMode:       nativeMode,
+				Operation:        operation,
+				PlanDigest:       strings.TrimSpace(args.PlanDigest),
+				SourceRevision:   strings.ToLower(strings.TrimSpace(args.SourceRevision)),
+				WorkspaceCommit:  strings.ToLower(strings.TrimSpace(args.WorkspaceCommit)),
+				RequiredEvidence: normalizeRequiredEvidence(args.RequiredEvidence),
 			},
 			pushProgress,
 			writeJSON,
@@ -865,11 +866,12 @@ func validAgentSourceRevision(value string) bool {
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode      string
-	Operation       string
-	PlanDigest      string
-	SourceRevision  string
-	WorkspaceCommit string
+	NativeMode       string
+	Operation        string
+	PlanDigest       string
+	SourceRevision   string
+	WorkspaceCommit  string
+	RequiredEvidence []string
 }
 
 type doagentToolTraceRecord struct {
@@ -1078,6 +1080,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 				toolTrace,
 			); err != nil {
 				writeJSON(buildToolErrorResponse(reqID, "doagent reconciliation attestation failed: "+err.Error()))
+				return
+			}
+			if err := validateAttestedReconciliationResult(structuredContent, execution); err != nil {
+				writeJSON(buildToolErrorResponse(reqID, "doagent reconciliation result failed validation: "+err.Error()))
 				return
 			}
 		}
@@ -1717,6 +1723,10 @@ func appendDoagentStructuredResultContract(
 			" is the immutable release identity. workspaceCommit " + execution.WorkspaceCommit +
 			" is only the transport snapshot identity. Verify source identity from .doops/source.json; " +
 			"do not compare the workspace Git HEAD with sourceRevision."
+	}
+	if len(execution.RequiredEvidence) > 0 {
+		contract += "\nCompletion evidence contract: a converged result must include these evidence kinds: " +
+			strings.Join(execution.RequiredEvidence, ", ") + "."
 	}
 	return contract
 }

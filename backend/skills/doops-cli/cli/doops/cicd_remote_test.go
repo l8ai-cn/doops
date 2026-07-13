@@ -3,21 +3,30 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestAgenticDeploymentPushesBeforeStructuredAsk(t *testing.T) {
+func TestAgenticDeploymentPushesBeforeTicketRegistration(t *testing.T) {
 	calls := make([]string, 0, 2)
-	var askedArguments map[string]interface{}
+	var registered CICDReleaseCreateRequest
 	workspaceCommit := strings.Repeat("1", 40)
 	plan := reconciliationResultTestPlan()
 	plan.Digest = "sha256:" + strings.Repeat("a", 64)
 	plan.Spec.Target.ExecutionTarget = "gw-oilan-node"
+	plan.Spec.Target.Environment = "production"
+	plan.Spec.Target.Profile = &CICDEnvironmentProfile{
+		Executor: CICDEnvironmentExecutor{Config: CICDHelmExecutorConfig{
+			Namespace: "oilan",
+			Release:   "zhiyong",
+		}},
+	}
+	plan.Spec.DesiredState.Application = "zhiyong"
 	runner := agenticDeploymentRunner{
-		server:          Server{Name: "gw-oilan-node"},
+		server:          Server{Name: "gw-oilan-node", Gateway: "https://gateway.example", Cluster: "doops-oilan", Instance: "oilan-node"},
 		sourceDirectory: t.TempDir(),
 		sessionID:       "agentic-release",
 		pushWorkspace: func(_ Server, _, _ string, source *CICDSourceRelease) (string, error) {
@@ -27,39 +36,86 @@ func TestAgenticDeploymentPushesBeforeStructuredAsk(t *testing.T) {
 			}
 			return workspaceCommit, nil
 		},
-		ask: func(arguments map[string]interface{}) (ReconciliationResult, error) {
-			calls = append(calls, "ask")
-			askedArguments = arguments
-			result := ReconciliationResult{
-				APIVersion: deploymentAPIVersion,
-				Kind:       reconciliationResultKind,
-				PlanDigest: plan.Digest,
-				Status:     ReconciliationConverged,
-				Attempts:   1,
-				Evidence: []ReconciliationEvidence{
-					reconciliationResultTestEvidence("source-identity"),
-					reconciliationResultTestEvidence("runtime-state"),
-				},
-			}
-			attestReconciliationResultForTest(plan, workspaceCommit, &result)
-			return result, nil
+		enqueue: func(request CICDReleaseCreateRequest) (CICDReleaseTicket, error) {
+			calls = append(calls, "enqueue")
+			registered = request
+			return CICDReleaseTicket{Number: 41, Status: "queued"}, nil
 		},
 	}
 	run, err := runner.Run(context.Background(), plan, CICDAgenticRunRequest{DryRun: true})
 	if err != nil {
 		t.Fatalf("run agentic deployment: %v", err)
 	}
-	if len(calls) != 2 || calls[0] != "push" || calls[1] != "ask" {
-		t.Fatalf("CI/CD must push before Ask, got %#v", calls)
+	if len(calls) != 2 || calls[0] != "push" || calls[1] != "enqueue" {
+		t.Fatalf("CI/CD must push before ticket registration, got %#v", calls)
 	}
-	if askedArguments["workspace_commit"] != workspaceCommit {
-		t.Fatalf("reconciliation must bind the pushed workspace commit: %#v", askedArguments)
+	if registered.WorkspaceCommit != workspaceCommit {
+		t.Fatalf("release ticket must bind the pushed workspace commit: %#v", registered)
 	}
-	if askedArguments["source_revision"] != plan.Spec.Release.Source.Revision {
-		t.Fatalf("reconciliation must carry source revision separately from the workspace commit: %#v", askedArguments)
+	if registered.SourceRevision != plan.Spec.Release.Source.Revision {
+		t.Fatalf("release ticket must carry source revision separately from the workspace commit: %#v", registered)
 	}
-	if run.Result.Status != ReconciliationConverged {
-		t.Fatalf("unexpected reconciliation result: %#v", run.Result)
+	if registered.SessionID != "agentic-release" || registered.Cluster != "doops-oilan" ||
+		registered.Instance != "oilan-node" || registered.Application != "zhiyong" {
+		t.Fatalf("release ticket lost session or deployment identity: %#v", registered)
+	}
+	if run.Ticket.Number != 41 || run.Ticket.Status != "queued" {
+		t.Fatalf("run must return the registered ticket: %#v", run)
+	}
+}
+
+func TestAgenticDeploymentSeparatesWorkspaceSnapshotFromSourceRevision(t *testing.T) {
+	workspaceCommit := strings.Repeat("1", 40)
+	sourceRevision := strings.Repeat("2", 40)
+	plan := reconciliationResultTestPlan()
+	plan.Digest = "sha256:" + strings.Repeat("a", 64)
+	plan.Spec.Target.ExecutionTarget = "gw-oilan-node"
+	plan.Spec.Target.Environment = "production"
+	plan.Spec.DesiredState.Application = "zhiyong"
+	plan.Spec.Release.Source = &CICDSourceRelease{
+		Repository: "https://example.test/zhiyong.git",
+		Revision:   sourceRevision,
+	}
+	var pushedSource *CICDSourceRelease
+	var registered CICDReleaseCreateRequest
+	runner := agenticDeploymentRunner{
+		server:          Server{Name: "gw-oilan-node", Gateway: "https://gateway.example", Cluster: "doops-oilan", Instance: "oilan-node"},
+		sourceDirectory: t.TempDir(),
+		sessionID:       "identity-release",
+		pushWorkspace: func(_ Server, _, _ string, source *CICDSourceRelease) (string, error) {
+			if source != nil {
+				copied := *source
+				pushedSource = &copied
+			}
+			return workspaceCommit, nil
+		},
+		enqueue: func(request CICDReleaseCreateRequest) (CICDReleaseTicket, error) {
+			registered = request
+			return CICDReleaseTicket{Number: 42, Status: "queued"}, nil
+		},
+	}
+
+	if _, err := runner.Run(context.Background(), plan, CICDAgenticRunRequest{DryRun: true}); err != nil {
+		t.Fatalf("run deployment with distinct identities: %v", err)
+	}
+	if pushedSource == nil || pushedSource.Revision != sourceRevision {
+		t.Fatalf("snapshot source manifest did not preserve immutable source revision: %#v", pushedSource)
+	}
+	if registered.WorkspaceCommit != workspaceCommit {
+		t.Fatalf("transport commit missing from request: %#v", registered)
+	}
+	if registered.SourceRevision != sourceRevision {
+		t.Fatalf("source revision missing from request: %#v", registered)
+	}
+	if registered.WorkspaceCommit == registered.SourceRevision {
+		t.Fatalf("transport and source identities must remain separate: %#v", registered)
+	}
+	instruction := registered.Instruction
+	if !strings.Contains(instruction, `"revision":"`+sourceRevision+`"`) {
+		t.Fatalf("Agent envelope must preserve the immutable source revision: %s", instruction)
+	}
+	if strings.Contains(instruction, workspaceCommit) {
+		t.Fatalf("pre-push Agent envelope cannot contain the later snapshot commit: %s", instruction)
 	}
 }
 
@@ -115,7 +171,7 @@ func TestAgenticDeploymentInstructionIsMinimalSkillEnvelope(t *testing.T) {
 	}
 }
 
-func TestAgenticDeploymentArgumentsCarryMachineReadableAuthorization(t *testing.T) {
+func TestBuildCICDReleaseCreateRequestCarriesMachineReadableAuthorization(t *testing.T) {
 	plan := DeploymentPlan{
 		Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Spec: DeploymentPlanSpec{
@@ -125,97 +181,81 @@ func TestAgenticDeploymentArgumentsCarryMachineReadableAuthorization(t *testing.
 					Revision:   strings.Repeat("1", 40),
 				},
 			},
+			Target: CICDDeploymentTarget{
+				Environment: "production",
+				Profile: &CICDEnvironmentProfile{
+					Executor: CICDEnvironmentExecutor{Config: CICDHelmExecutorConfig{
+						Namespace: "oilan",
+						Release:   "zhiyong",
+					}},
+				},
+			},
+			DesiredState: CICDDesiredState{Application: "zhiyong"},
+			Acceptance:   CICDAcceptance{RequiredEvidence: []string{"source-identity", "runtime-state"}},
 		},
 	}
-	arguments, err := buildAgenticDeploymentArguments(
+	request, err := buildCICDReleaseCreateRequest(
 		plan,
+		Server{Cluster: "doops-oilan", Instance: "oilan-node"},
 		CICDAgenticRunRequest{DryRun: true},
 		"reconcile this plan",
+		strings.Repeat("2", 40),
 	)
 	if err != nil {
-		t.Fatalf("build deployment arguments: %v", err)
+		t.Fatalf("build release request: %v", err)
 	}
-	if arguments["operation"] != "reconcile" {
-		t.Fatalf("deployment operation must be machine-readable: %#v", arguments)
+	if request.PlanDigest != plan.Digest {
+		t.Fatalf("plan digest must be machine-readable: %#v", request)
 	}
-	if arguments["plan_digest"] != plan.Digest {
-		t.Fatalf("plan digest must be machine-readable: %#v", arguments)
+	if request.ExecutionMode != "dry-run" {
+		t.Fatalf("dry-run mode must be machine-readable: %#v", request)
 	}
-	if arguments["execution_mode"] != "dry-run" {
-		t.Fatalf("dry-run mode must be machine-readable: %#v", arguments)
+	if request.SourceRevision != plan.Spec.Release.Source.Revision {
+		t.Fatalf("source revision must be a separate machine-readable identity: %#v", request)
 	}
-	if arguments["response_format"] != "json" {
-		t.Fatalf("reconciliation must require structured JSON: %#v", arguments)
-	}
-	if arguments["source_revision"] != plan.Spec.Release.Source.Revision {
-		t.Fatalf("source revision must be a separate machine-readable identity: %#v", arguments)
+	if len(request.RequiredEvidence) != 2 {
+		t.Fatalf("required evidence contract missing: %#v", request)
 	}
 }
 
-func TestAgenticDeploymentRejectsBlockedResult(t *testing.T) {
+func TestAgenticDeploymentReturnsTicketRegistrationFailure(t *testing.T) {
 	workspaceCommit := strings.Repeat("2", 40)
 	plan := reconciliationResultTestPlan()
 	plan.Digest = "sha256:" + strings.Repeat("b", 64)
 	plan.Spec.Target.ExecutionTarget = "gw-oilan-node"
+	plan.Spec.Target.Environment = "production"
+	plan.Spec.DesiredState.Application = "zhiyong"
 	runner := agenticDeploymentRunner{
-		server:          Server{Name: "gw-oilan-node"},
+		server:          Server{Name: "gw-oilan-node", Gateway: "https://gateway.example", Cluster: "doops-oilan", Instance: "oilan-node"},
 		sourceDirectory: t.TempDir(),
 		sessionID:       "blocked-release",
 		pushWorkspace:   func(Server, string, string, *CICDSourceRelease) (string, error) { return workspaceCommit, nil },
-		ask: func(map[string]interface{}) (ReconciliationResult, error) {
-			result := ReconciliationResult{
-				APIVersion: deploymentAPIVersion,
-				Kind:       reconciliationResultKind,
-				PlanDigest: plan.Digest,
-				Status:     ReconciliationBlocked,
-				Attempts:   1,
-				FailureEvidence: []ReconciliationEvidence{
-					reconciliationResultTestEvidence("rollback-state"),
-				},
-			}
-			attestReconciliationResultForTest(plan, workspaceCommit, &result)
-			return result, nil
-		},
-	}
-
-	run, err := runner.Run(context.Background(), plan, CICDAgenticRunRequest{DryRun: true})
-	if err == nil || !strings.Contains(err.Error(), "did not converge") {
-		t.Fatalf("blocked result must fail command, got run=%#v err=%v", run, err)
-	}
-	if run.Result.Status != ReconciliationBlocked {
-		t.Fatalf("blocked result must remain observable: %#v", run)
-	}
-}
-
-func TestAgenticDeploymentRejectsResultWithoutRequiredEvidence(t *testing.T) {
-	workspaceCommit := strings.Repeat("3", 40)
-	plan := reconciliationResultTestPlan()
-	plan.Digest = "sha256:" + strings.Repeat("c", 64)
-	plan.Spec.Target.ExecutionTarget = "gw-oilan-node"
-	runner := agenticDeploymentRunner{
-		server:          Server{Name: "gw-oilan-node"},
-		sourceDirectory: t.TempDir(),
-		sessionID:       "incomplete-release",
-		pushWorkspace:   func(Server, string, string, *CICDSourceRelease) (string, error) { return workspaceCommit, nil },
-		ask: func(map[string]interface{}) (ReconciliationResult, error) {
-			result := ReconciliationResult{
-				APIVersion: deploymentAPIVersion,
-				Kind:       reconciliationResultKind,
-				PlanDigest: plan.Digest,
-				Status:     ReconciliationConverged,
-				Attempts:   1,
-				Evidence: []ReconciliationEvidence{
-					reconciliationResultTestEvidence("source-identity"),
-				},
-			}
-			attestReconciliationResultForTest(plan, workspaceCommit, &result)
-			return result, nil
+		enqueue: func(CICDReleaseCreateRequest) (CICDReleaseTicket, error) {
+			return CICDReleaseTicket{}, errors.New("gateway unavailable")
 		},
 	}
 
 	_, err := runner.Run(context.Background(), plan, CICDAgenticRunRequest{DryRun: true})
-	if err == nil || !strings.Contains(err.Error(), "required reconciliation evidence") {
-		t.Fatalf("missing evidence must fail command, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "register release ticket") {
+		t.Fatalf("registration failure must fail command, got %v", err)
+	}
+}
+
+func TestBuildCICDReleaseCreateRequestRejectsMissingRequiredEvidence(t *testing.T) {
+	plan := reconciliationResultTestPlan()
+	plan.Digest = "sha256:" + strings.Repeat("c", 64)
+	plan.Spec.Target.Environment = "production"
+	plan.Spec.DesiredState.Application = "zhiyong"
+	plan.Spec.Acceptance.RequiredEvidence = nil
+	_, err := buildCICDReleaseCreateRequest(
+		plan,
+		Server{Cluster: "doops-oilan", Instance: "oilan-node"},
+		CICDAgenticRunRequest{DryRun: true},
+		"reconcile this plan",
+		strings.Repeat("3", 40),
+	)
+	if err == nil || !strings.Contains(err.Error(), "required evidence") {
+		t.Fatalf("missing evidence contract must fail ticket creation, got %v", err)
 	}
 }
 

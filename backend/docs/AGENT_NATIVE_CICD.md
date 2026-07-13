@@ -13,28 +13,34 @@ DoOps 不维护第二套 planner、任务图、子 Agent 拓扑、重试循环�
 
 ```mermaid
 flowchart LR
-    CLI["doops CLI\n声明编译 / 工作区同步 / 结果校验"]
+    CLI["doops CLI\n声明编译 / 工作区同步 / 票据查询"]
+    STORE["SQLite release store\n票据 / 状态 / 事件"]
+    COORD["release coordinator\n串行准入 / latest-wins"]
     GW["doops-gateway\n鉴权 / 路由 / 锁 / 审计"]
     EDGE["doops-agent\nACP 适配 / 工作区绑定 / 事件转发"]
     ENGINE["doagent 原生 Agent 引擎\n上下文 / 规划 / 多 Agent / Skill / 工具"]
     TARGET["目标环境与外部系统"]
 
-    CLI -->|"DeploymentPlan + 执行授权"| GW
+    CLI -->|"workspace snapshot + release ticket"| GW
+    GW --> STORE
+    STORE --> COORD
+    COORD -->|"已准入的 DeploymentPlan"| GW
     GW --> EDGE
     EDGE -->|"session/new + session/setMode + session/prompt"| ENGINE
     ENGINE -->|"原生工具调用与证据观察"| TARGET
     TARGET --> ENGINE
     ENGINE -->|"ReconciliationResult"| EDGE
-    EDGE --> GW
-    GW --> CLI
+    EDGE --> COORD
+    COORD --> STORE
+    CLI -->|"status <number>"| STORE
 ```
 
 ## 组件职责
 
 | 组件 | 必须负责 | 明确不负责 |
 | :--- | :--- | :--- |
-| `doops` CLI | 严格解析 `DeploymentTemplate`、生成唯一 `DeploymentPlan`、同步精确工作区、传递授权、校验结果 | 规划执行步骤、选择命令、创建子 Agent、自动修复 |
-| `doops-gateway` | 身份鉴权、target 授权、并发队列、资源锁、审计、消息路由 | 理解部署语义、执行发布、替 Agent 做决策 |
+| `doops` CLI | 严格解析 `DeploymentTemplate`、生成唯一 `DeploymentPlan`、同步精确工作区、登记和查询发布票据 | 规划执行步骤、选择命令、创建子 Agent、自动修复 |
+| `doops-gateway` | 身份鉴权、target 授权、发布票据、串行准入、资源锁、审计、消息路由 | 理解部署语义、执行发布、替 Agent 做决策 |
 | `doops-agent` | 将会话绑定到工作区，通过 ACP 调用 doagent，转发事件和结构化结果 | 自建 Agent loop、自动批准权限、编排 Skill 或工具 |
 | doagent | 原生上下文、模式、规划、多 Agent、Skill 和工具执行 | 修改 `DeploymentPlan`、绕过授权或伪造证据 |
 | Skill | 定义目标、输入边界、不变量、授权边界、证据和输出契约 | 固定命令序列、Agent 拓扑、宿主侧循环、环境猜测 |
@@ -46,10 +52,12 @@ flowchart LR
 DeploymentTemplate
   -> DeploymentPlan
   -> workspace push
+  -> release ticket
+  -> serialized admission
   -> doops_agent_prompt
   -> doagent
   -> ReconciliationResult
-  -> CLI validation
+  -> durable ticket status
 ```
 
 1. CLI 以严格 schema 读取模板和环境注册表，未知字段直接失败。
@@ -58,7 +66,7 @@ DeploymentTemplate
 4. CLI 在快照中生成 `.doops/source.json`，再同步到指定 session 并取得精确
    `workspace_commit`。source revision 是发布身份，workspace commit 只是传输身份。
 5. Gateway 在同一个 workspace 锁内校验 `.doops-ready` 与请求 commit 一致。
-6. CLI 发送最小任务信封，不发送阶段、命令、回滚脚本或重试策略：
+6. CLI 将最小任务信封登记为发布票据，不发送阶段、命令、回滚脚本或重试策略：
 
 ```json
 {
@@ -72,15 +80,53 @@ DeploymentTemplate
 }
 ```
 
-7. doops-agent 在每次 prompt 前设置 doagent 原生模式，避免复用会话时继承上一次授权状态。
-8. doagent 自主选择 Skill、工具和多 Agent 协作方式，最终返回一个 `ReconciliationResult`。
-9. doops-agent 等待权威 `turn_finished`，将本轮真实 ACP 工具终态事件按原始
+7. Gateway 将票据、原始 `session_id`、用户需求和状态事件持久化。协调器一次只准入
+   一张票，不并发执行多个发布。
+8. doops-agent 在每次 prompt 前设置 doagent 原生模式，避免复用会话时继承上一次授权状态。
+9. doagent 自主选择 Skill、工具和多 Agent 协作方式，最终返回一个 `ReconciliationResult`。
+10. doops-agent 等待权威 `turn_finished`，将本轮真实 ACP 工具终态事件按原始
    SSE 顺序哈希为 `executionEvidence`；每条 evidence 用精确工具名和同名终态事件
    的一基序号组成 `toolRef`，bridge 严格解析后注入真实 `toolCallId`、tool digest
    和整轮 trace digest。
-10. CLI 校验协议版本、plan digest、source revision、workspace commit、turn、工具 trace、状态、
-    逐条工具绑定、证据完整性和计数一致性。文本成功和未绑定工具调用的 evidence
-    都不算成功。
+11. bridge 校验协议版本、plan digest、source revision、workspace commit、turn、工具 trace、
+    状态、逐条工具绑定、证据完整性和计数一致性。协调器只接受校验后的结构化结果，
+    再把票据更新为终态。文本成功和未绑定工具调用的 evidence 都不算成功。
+
+## 多会话发布协调
+
+`doops cicd run` 的成功含义是“工作区已同步且发布票据已登记”，不是“部署已完成”。
+返回对象中的 `ticket.number` 是该 Gateway 数据库内的查询编号。调用方使用：
+
+```text
+doops cicd status <number> --target <gateway-target>
+```
+
+查询权威状态、原始会话、用户需求和事件时间线。创建票据即注册持久化回执；原会话可以
+由旁支 Agent 按编号查询，不需要让提交发布的会话一直占用同步连接。当前协议的可靠通知
+是票据状态和事件日志，不宣称不存在的 webhook 或离线 WebSocket 推送。
+
+状态机只有：
+
+```text
+queued -> running -> completed
+                  -> failed
+queued -> superseded
+```
+
+- scope 由 Gateway 根据 `cluster / instance / environment / namespace / application /
+  release` 生成，客户端不能自定义。
+- 同 scope 只合并仍在 `queued` 的请求，最新票据胜出；正在 `running` 的票据永不抢占。
+- 不同会话和不同 scope 共享一个协调器，按票据顺序逐张执行。
+- 目标离线时票据保持 `queued`，不会为了越过离线目标而伪造失败。
+- `blocked`、`failed` 或无效终态结果直接进入 `failed`，不自动重试，也不切换发布路径。
+- Agent 连接中断、执行超时或其他不能证明远端 turn 已终止的传输错误，以
+  `outcome=unknown` 失败并使协调器进入 halted；后续票据不再准入，新登记返回
+  `503`。必须先人工确认远端状态，再重启协调器。
+- Gateway 启动时如果发现先前的 `running` 票据，也以 `outcome=unknown` 恢复为
+  `failed` 并保持 halted。不能把进程中断后的实际部署状态猜成成功。
+- 协调器停止时会请求取消正在进行的 Agent 调用并停止后续准入。远端 turn 的权威
+  取消必须由 doagent `session/cancel` 终态确认；确认能力完成前不能把本地 context
+  cancellation 当作远端 mutation 已停止。
 
 ## 原生模式
 
@@ -200,6 +246,10 @@ DoOps 确定性边界；如果逻辑依赖现场观察和任务推理，它属�
 | Agent 请求协议 | `agent/api/mcp.go` |
 | ACP 会话、模式和事件适配 | `agent/internal/server/handler_ws.go` |
 | 工作区 commit 绑定 | `agent/internal/server/workspace_upload.go` |
+| 发布票据与事件 | `agent/internal/server/release_store.go` |
+| 串行准入与 Agent 调用 | `agent/internal/server/release_coordinator.go` |
+| 发布 HTTP API | `agent/internal/server/release_http.go` |
+| CLI 票据登记与查询 | `skills/doops-cli/cli/doops/cicd_release.go` |
 | CI/CD Skill | `agent/skills/semantic-deployment/SKILL.md` |
 | Agent 全局边界 | `agent/skills/system_prompt.md` |
 
@@ -210,6 +260,8 @@ DoOps 确定性边界；如果逻辑依赖现场观察和任务推理，它属�
 - 是否仍只有 `doops.sh/v2` 一个协议；
 - 是否把新的 Agent 规划逻辑塞进了 CLI、Gateway 或脚本；
 - 是否保持 workspace commit、target、授权和结果校验的确定性；
+- 是否保持同 scope latest-wins、running 不抢占、全局单 worker 和持久化恢复语义；
+- 是否能通过票据编号查到原始 session、用户需求、状态和事件；
 - 是否为每次 prompt 设置正确原生模式；
 - 是否存在自动权限批准、fallback 或静默降级；
 - 是否用实际工具证据验证主要成功和失败路径；

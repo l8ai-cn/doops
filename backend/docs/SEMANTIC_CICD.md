@@ -7,14 +7,14 @@ The architecture and ownership boundary are defined in
 DoOps CI/CD has one declarative reconciliation loop:
 
 ```text
-DeploymentTemplate -> DeploymentPlan -> Push -> Ask -> ReconciliationResult
+DeploymentTemplate -> DeploymentPlan -> Push -> Ticket -> Serialized Reconciliation -> Status
 ```
 
 The template describes intent. `deploy/environments.yaml` resolves the physical
 environment profile. The plan is the immutable execution contract. `doops push`
-creates the session workspace, and `doops_agent_prompt` asks doagent to
-reconcile that plan. The CLI accepts completion only after it validates the
-structured result against the same plan.
+creates the session workspace, `cicd run` registers a durable release ticket,
+and the Gateway coordinator later asks doagent to reconcile the plan. Completion
+is represented by the persisted ticket terminal state after bridge validation.
 
 ## Declaration
 
@@ -117,18 +117,48 @@ declared immutable revision. It then resolves the plan target, checks the
 configured Gateway binding, and:
 
 1. calls `doops push` for the repository root and session;
-2. calls `doops_agent_prompt` with a minimal JSON task envelope containing the
-   selected `semantic-deployment` Skill, execution mode, and complete plan,
-   plus machine-readable `operation=reconcile`, the plan digest, and the exact
-   workspace commit produced by that push;
-3. validates the returned `ReconciliationResult`.
+2. posts a release request containing the original session and requirement,
+   selected `semantic-deployment` Skill envelope, execution mode, complete plan,
+   plan digest, source revision, and exact workspace commit;
+3. prints the accepted ticket and returns without claiming deployment success.
+
+The authoritative follow-up command is:
+
+```text
+doops cicd status <number> --target <gateway-target>
+```
+
+It returns the linked user requirement, original session, target identity,
+current state, supersession link, result or error, timestamps, and durable event
+timeline. Ticket numbers are local to the selected Gateway, so the target is
+required for lookup.
 
 The Gateway is transport-neutral: `response_format=json` assigns one
 session-scoped result artifact under the synchronized workspace. It removes any
 stale artifact before prompting, requires doagent to write exactly one JSON
 object atomically, and returns that object as MCP `structuredContent`. Terminal
-text is never parsed as the machine result. The Gateway does not interpret
-CI/CD fields or implement a second release controller.
+text is never parsed as the machine result. The release coordinator controls
+only deterministic admission, lifecycle and persistence; it does not interpret
+deployment semantics or implement another Agent engine.
+
+The Gateway derives the deployment scope from cluster, instance, environment,
+namespace, application, and release name. A newer queued ticket supersedes only
+older queued tickets in the same scope. A running ticket is never preempted.
+One coordinator executes one ticket at a time across sessions. Offline targets
+remain queued, but an offline backlog does not hide later online tickets.
+Terminal failures are not retried automatically.
+
+Transport errors and timeouts that cannot prove the remote turn terminated are
+recorded as `outcome=unknown` and halt further admission. New registrations
+receive HTTP 503 while the coordinator is halted. On restart, tickets that were
+running are also marked failed with `outcome=unknown` and the coordinator stays
+halted. An operator must inspect the target and restart the coordinator only
+after resolving that uncertainty.
+
+Stopping the coordinator requests cancellation and prevents another ticket
+from starting. A local context cancellation is not treated as proof that remote
+mutation stopped; authoritative doagent `session/cancel` terminal confirmation
+remains the required platform-level cancellation contract.
 
 The prompt does not duplicate the Skill with stages, commands, retries, recovery
 instructions, or tool names. The doops-agent maps each request to a native
@@ -211,6 +241,11 @@ After the authoritative `turn_finished`, the bridge replaces each `toolRef`
 with the observed `toolCallId`, `toolDigest`, and `traceDigest`, then adds
 `executionEvidence` containing `turnId`, `sourceRevision`, `workspaceCommit`,
 and the terminal tool events in original SSE order.
+
+The coordinator persists the validated object and changes the ticket to
+`completed` only for `converged`. `blocked`, `failed`, malformed output,
+execution errors, cancellation, and validation failures produce a terminal
+`failed` ticket. A superseded queued ticket never reaches doagent.
 
 `status` is one of `converged`, `blocked`, or `failed`.
 
