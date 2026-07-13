@@ -12,6 +12,10 @@ declared workload, values, and health checks. This document must not repeat that
 mapping, and it must not be inferred from the Oilan name, a domain, or a
 historical cluster alias.
 
+The Deployment reads the gateway registration token from the declared
+`gateway.agentTokenSecret` reference and passes it to `doops-agent`. The token
+is bound to the declared gateway cluster and instance.
+
 # Model Routing
 
 The Oilan declaration records `modelRouting.policy: single-model`. The mounted

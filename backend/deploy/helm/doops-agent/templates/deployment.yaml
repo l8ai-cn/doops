@@ -34,9 +34,11 @@ spec:
             - -lc
             - >-
               exec /app/sandbox-entrypoint.sh
+              -listen "0.0.0.0"
               -gateway-url "$DOOPS_GATEWAY_URL"
               -cluster "$DOOPS_GATEWAY_CLUSTER"
               -instance "$DOOPS_GATEWAY_INSTANCE"
+              -agent-token "$DOOPS_GATEWAY_AGENT_TOKEN"
           env:
             - name: DOOPS_GATEWAY_URL
               value: {{ .Values.gateway.url | quote }}

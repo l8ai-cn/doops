@@ -68,13 +68,17 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
         "name": "doops-agent-runtime",
         "key": "agent-token",
     }
-    assert "agent-token" not in container["command"][-1]
+    assert '-listen "0.0.0.0"' in container["command"][-1]
+    assert '-agent-token "$DOOPS_GATEWAY_AGENT_TOKEN"' in container["command"][-1]
     doagent_config = next(
         item
         for item in deployment["spec"]["template"]["spec"]["volumes"]
         if item["name"] == "doagent-config"
     )
-    assert doagent_config["configMap"]["name"] == "doagent-config"
+    assert doagent_config["secret"]["secretName"] == "doagent-model-settings"
+    assert doagent_config["secret"]["items"] == [
+        {"key": "settings.json", "path": "settings.json"}
+    ]
     volumes = {
         item["name"]: item["hostPath"]["path"]
         for item in deployment["spec"]["template"]["spec"]["volumes"]

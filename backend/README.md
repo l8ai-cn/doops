@@ -40,7 +40,7 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 不需要 token，只需要 `gateway-url`、`cluster` 和 `instance`
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 使用绑定 `cluster/instance` 的 agent registration token 注册 gateway
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
@@ -250,7 +250,9 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token 和授权。agent 注册 gateway 不需要预签发 token；业务侧配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
+gateway 由管理员维护用户、user token、agent registration token 和授权。agent
+部署通过 Secret 消费绑定 `cluster/instance` 的 registration token；业务侧
+CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
 
@@ -452,6 +454,7 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent 注册 gateway 不需要 token；`doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
+- agent registration token 只进入 agent 运行时 Secret，不写入标准 target 配置。
+- `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

@@ -43,7 +43,7 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 第一版是 SQLite + 单活可靠部署：
 
 - SQLite WAL 数据库：用户、token、权限、审计。
-- agent 注册 gateway 不需要 token；注册身份由 `cluster/instance` 决定，访问控制由用户侧 token 和权限决定。
+- agent 使用绑定 `cluster/instance` 的 registration token 注册 gateway；用户操作继续由 user token 和权限控制。
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
@@ -64,7 +64,9 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## Start Gateway
 
-用户、user token 和授权由管理员维护。agent 注册 gateway 不需要预签发 token。产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
+用户、user token、agent registration token 和授权由管理员维护。agent
+部署从运行时 Secret 读取绑定 `cluster/instance` 的 registration token。
+产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
 
 gateway 是独立发布包，不登记为 doops target，也不通过任何 target 发布自己。
 

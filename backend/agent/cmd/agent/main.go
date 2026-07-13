@@ -39,7 +39,7 @@ func main() {
 	gatewayURL := flag.String("gateway-url", "", "Public doops-gateway URL for reverse tunnel mode")
 	cluster := flag.String("cluster", "", "Cluster name registered in reverse tunnel mode")
 	instance := flag.String("instance", "", "Agent instance name registered in reverse tunnel mode")
-	agentToken := flag.String("agent-token", "", "Legacy doops-gateway agent registration token; current gateways do not require it")
+	agentToken := flag.String("agent-token", "", "doops-gateway agent registration token")
 	reconnectDelay := flag.Duration("reconnect-delay", time.Second, "Reverse tunnel reconnect delay")
 	insecureGit := flag.Bool("insecure-git", false, "Allow anonymous git push/pull when no token is configured (default-deny otherwise)")
 	flag.Parse()

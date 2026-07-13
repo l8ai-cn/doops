@@ -29,8 +29,8 @@ description: |
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
-  - agent 注册 gateway 不需要 agent token；只需要 gateway URL、cluster 和 instance。
-  - 直连 agent token 只属于遗留直连路径，不写入标准 target 配置。
+  - agent 注册 gateway 使用绑定 cluster/instance 的 registration token，只从运行时 Secret 注入。
+  - registration token 和遗留直连 agent token 都不写入标准 target 配置。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 遇到 `user operation limit exceeded` 时，先用 `doops admin operations list --target <gateway-target>` 查占槽操作；确认 stale 后再用 `doops admin operations cancel --target <gateway-target> --id <operation-id>` 取消。升级后的 agent 会按进程组终止 shell 类命令；`ask` 需要额外核查 doagent session 是否仍在工作。
