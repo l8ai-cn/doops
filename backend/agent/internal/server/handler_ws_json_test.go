@@ -120,7 +120,6 @@ func TestAgentPromptJSONRejectsUnsupportedResponseFormat(t *testing.T) {
 
 func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt func(string)) *httptest.Server {
 	t.Helper()
-	t.Setenv("DOOPS_AGENT_AUTO_APPROVE", "")
 	prompted := make(chan struct{})
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -142,6 +141,16 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 					"id":      req["id"],
 					"result":  map[string]interface{}{"sessionId": "doagent-json"},
 				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "auto" {
+					t.Fatalf("generic prompt must use native auto mode: %#v", req)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
 			case "session/prompt":
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
@@ -155,8 +164,13 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 			}
 		case "/events":
 			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 			<-prompted
 			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-json","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
 		default:
 			http.NotFound(w, r)
 		}

@@ -1,94 +1,104 @@
-# 业务项目如何编写和插拔 Skill 指南
+# 业务 Skill 编写与接入
 
-Doops 的 AI 调度能力完全是由 `Skills` 驱动的。
-业务项目（如 `exam-lab-api`、`training-hub` 等）如果希望将他们的构建、发布、故障排查经验自动化，**不需要修改 Doops 核心代码**，只需要提供 `.agent/skills/` 配置文件即可。
+Agent 原生职责边界见
+[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md)。
 
-本文档将指导你如何从零编写并为一个业务项目插拔一项专属 Skill。
+Skill 是交给 doagent 原生 Agent 引擎的领域契约。Skill 不执行命令，也不实现 Agent
+框架；doagent 负责上下文、规划、多 Agent 委派、Skill 组合和工具调用。
 
----
+## 何时创建 Skill
 
-## 核心机制：Skill 的自动发现
+只有以下内容稳定且会重复使用时才创建：
 
-当在含有 `.agent/skills/` 的工程目录（例如 `webide-gpu-workspace/` 的根目录）唤起 上位 Agent 时，它会自动扫描所有子目录并组装 Skill。
-如果你希望为你的特定业务项目加一个部署能力，你只需要在现有的 `.agent/skills/` 下新建一个文件夹。
+- 业务目标和术语；
+- 不可变约束和安全边界；
+- 输入对象与权威配置来源；
+- 成功、阻塞和失败所需的实际证据；
+- 允许使用的能力范围和禁止行为；
+- 结构化输出契约。
 
----
+一次性命令、环境临时值、凭据、完整日志和罕见边角案例不应写进 Skill。
 
-## 实例：为一个项目编写专有的发布 SOP
+## 文件结构
 
-假设你要为 `labelU` 项目编写一个从代码合并到上线的标准化运维动作。
-
-### 1. 创建目录
-在工作区根目录执行：
-```bash
-mkdir -p .agent/skills/deploy-labelu
-```
-
-### 2. 编写 `SKILL.md`
-在这个目录内创建 `SKILL.md`，它由**YAML Frontmatter**（元数据）和**Markdown Content**（行动指令）两部分组成。
+Skill 使用带 frontmatter 的 `SKILL.md`。安装位置由 doagent runtime 的 Skill root
+配置决定；不要在 DoOps Gateway 中增加自定义扫描、匹配或拼装逻辑。
 
 ```yaml
 ---
-name: LabelU 专用发布流程
-description: 处理 labelU 标注系统的自动化代码同步和 K8s 发布
+name: labelu-release
+description: 验证并协调 LabelU 发布目标
 triggers:
-  keywords: ["发布 labelu", "更新标注系统", "deploy labelU"]
-phase: translate
-priority: 50
+  keywords: [LabelU, 发布, DeploymentPlan]
+  regex: "LabelU.*发布|DeploymentPlan"
+phase: [analyze, translate, cleanup]
+priority: 100
+max_tokens: 1200
+requires: []
+conflicts: []
 ---
 
-# LabelU 发布规范
+# LabelU 发布
 
-当用户要求部署或更新 `labelU` 服务时，必须严格遵守以下动作序列执行。
+## 目标
 
-## 第一性原理
-1. 代码推流：必须使用 `doops push` 将本地源码送到沙盒 `/root/ws/$SESSION/`
-2. 环境隔绝：禁止在宿主机使用 docker，所有的编译构建必须通过 `doops exec` 在 Agent 容器内部搞定。
-3. 镜像构建：Agent 内部统一使用 `buildctl + buildkitd`，不要再用 `nerdctl build`。
+将输入计划声明的 LabelU release 协调到目标环境，并返回可复查的运行状态证据。
 
-## 标准工作流
-```bash
-# 1. 确保在正确的项目目录
-cd platform-tools/labelU
+## 输入边界
 
-# 2. 推送代码至目标计算节点 (默认 gpu-master 节点)
-doops -session prod push --target gpu-master --src ./ --dest /root/ws/prod/labelu
+- 只接受计划中已经解析的 target、artifact、desired state 和 acceptance。
+- 不根据项目名、域名、目录或历史环境补全目标。
+- 未声明的凭据、环境和 mutation 授权都视为阻塞事实。
 
-# 3. 在 Agent 沙盒内用 BuildKit 执行远程构建
-doops -session prod exec --target gpu-master --cmd \
-  "cd /root/ws/prod/labelu && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
-     --progress=plain \
-     --frontend dockerfile.v0 \
-     --local context=. \
-     --local dockerfile=. \
-     --opt filename=k8s/Dockerfile \
-     --opt platform=linux/amd64 \
-     --output type=image,name=registry.example.com/library/labelu:latest,push=true,registry.insecure=true"
+## 不变量
 
-# 4. 执行远端重启
-doops -session prod exec --target gpu-master --cmd \
-  "kubectl rollout restart deployment/labelu -n ai"
+- 工作区与不可变 release identity 一致。
+- 运行制品与计划引用一致。
+- 未授权时不得改变真实环境。
+
+## Agent 原生执行
+
+- doagent 可以组合其他已安装 Skill、工具和多 Agent。
+- 只能使用运行时实际暴露且当前权限允许的能力。
+- 本 Skill 不规定固定命令序列、工具名称、子 Agent 数量或重试拓扑。
+
+## 验收
+
+- 只有全部 required evidence 都来自实际观察时才能报告 converged。
+- 每条 evidence 必须引用产生该观察事实的真实 `toolCallId`；bridge 只接受匹配且已完成的观察调用，并注入对应工具摘要。
+- 缺能力或权限时报告 blocked，并记录具体缺失事实。
+- mutation 后验收失败时，只能使用环境明确声明的可逆恢复能力。
+
+## 输出
+
+返回调用契约要求的单个结构化对象，不返回 Markdown、命令清单或文本成功声明。
 ```
 
-## 异常处理红线（绝对不可修改的防线）
-如果远端 K8s 响应超时、或者镜像构建发生依赖错误，**立即停止一切动作并使用 notify_user 寻求人类审核**。禁止 AI 擅自主张修改底层 Docker 配置。
-```
+## 编写规则
 
-*(注意在 markdown 文件的最开头必须闭合 yaml 围栏 `---`)*
+1. 写目标和事实，不写“第一步、第二步”的固定命令序列。
+2. 写允许和禁止的能力边界，不假设某个二进制或工具一定存在。
+3. 写完成证据，不把 Agent 自报完成当证据。
+4. 写 mutation 授权，不在 Skill 中自动批准权限。
+5. 写恢复条件，不写死某个部署技术或历史版本。
+6. 允许 doagent 自主使用多 Agent 和其他 Skill，不在 Skill 中设计子 Agent 框架。
+7. 遇到真实问题直接 `blocked` 或 `failed`，不添加 fallback、静默降级或兼容分支。
 
----
+## 脚本边界
 
-## 3. 验证加载生效
+Skill 可以引用运行时已经暴露的原子工具，但不应内嵌大段 shell。业务确实需要脚本时：
 
-只要这个 `.agent/skills/deploy-labelu/SKILL.md` 文件存在于项目目录的规则树内，下次在对话框里对 Agent 喊出：
-> "帮我部署 LabelU 标注系统"
+- 脚本只完成一个原子能力；
+- 输入、输出、退出码和副作用必须明确；
+- mutation 必须有显式授权，尽量支持 dry run 和幂等执行；
+- 失败必须非零退出并保留根因；
+- 不包含凭据、环境猜测、Skill 路由、多 Agent 调度或自动修复 loop；
+- 是否调用该脚本仍由 doagent 根据现场能力和任务决定。
 
-Agent 的智能核心就会匹配到关键词 `deploy labelU`，加载该 Skill 的全部内容作为系统提示词的上下文，然后根据你定义的工作流按部就班安全地执行构建逻辑。
+## 验证
 
----
-
-## 最佳实践与建议
-
-1. **内聚原则**：一个子业务的特性 SOP 就写在一个独立的 Skill 目录里，不要混杂。
-2. **避免重复造轮子**：如果你只是希望用到现成的通用部署能力，优先依靠通用的 `deploy/SKILL.md`，没必要为每个项目写专有指引，除非它的部署逻辑很特殊。
-3. **安全第一**：Skill 编写务必遵循 Doops 的沙盒纪律，所有远端操作都要在 `/root/ws/$SESSION/` 下收敛，绝对禁止引用旧的 SCP / SSH 手工交互手段。
+- 检查 frontmatter 可被 doagent 原生 Skill 机制读取。
+- 用一个成功场景和至少一个缺权限或缺能力场景验证行为。
+- 确认输出证据来自真实工具观察。
+- 确认 Skill 中没有具体环境坐标、凭据、固定命令序列和隐藏 fallback。
+- CI/CD Skill 还必须通过 `test/test_semantic_cicd_contract.py`。

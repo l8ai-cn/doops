@@ -56,7 +56,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 type Provider = "curl" | "github" | "gitlab"
 
 const PROVIDERS: { id: Provider; label: string }[] = [
-  { id: "curl", label: "curl / Shell" },
+  { id: "curl", label: "DoOps CLI" },
   { id: "github", label: "GitHub Actions" },
   { id: "gitlab", label: "GitLab CI" },
 ]
@@ -80,20 +80,26 @@ export function CicdGuide({ session }: { session: Session }) {
     if (provider === "curl") {
       return {
         lang: "bash",
-        code: `# 在 CI 环境变量中配置 DOOPS_API_KEY / DOOPS_GATEWAY
+        code: `# target / cluster / instance 必须与 deploy/environments.yaml 完全一致
 export DOOPS_GATEWAY="${gw}"
 export DOOPS_API_KEY="${keyDisplay}"
 
-# 在指定实例上执行一条部署命令
-curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-  -H "Authorization: Bearer $DOOPS_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "cluster": "prod-cn",
-    "instance": "web-01",
-    "tool": "doops_shell",
-    "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-  }'`,
+doops add \\
+  --name <ENVIRONMENT_TARGET> \\
+  --gateway "$DOOPS_GATEWAY" \\
+  --cluster <CLUSTER> \\
+  --instance <INSTANCE> \\
+  --token "$DOOPS_API_KEY"
+
+doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
+  -f <DEPLOYMENT_TEMPLATE> \\
+  --dry-run \\
+  --set releaseId="$(git rev-parse HEAD)"
+
+doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
+  -f <DEPLOYMENT_TEMPLATE> \\
+  --allow-mutate \\
+  --set releaseId="$(git rev-parse HEAD)"`,
       }
     }
     if (provider === "github") {
@@ -113,15 +119,15 @@ jobs:
           DOOPS_GATEWAY: ${gw}
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
         run: |
-          curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-            -H "Authorization: Bearer $DOOPS_API_KEY" \\
-            -H "Content-Type: application/json" \\
-            -d '{
-              "cluster": "prod-cn",
-              "instance": "web-01",
-              "tool": "doops_shell",
-              "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-            }'`,
+          doops add --name <ENVIRONMENT_TARGET> \\
+            --gateway "$DOOPS_GATEWAY" \\
+            --cluster <CLUSTER> \\
+            --instance <INSTANCE> \\
+            --token "$DOOPS_API_KEY"
+          doops -session "release-\${GITHUB_SHA::12}" cicd run \\
+            -f <DEPLOYMENT_TEMPLATE> \\
+            --allow-mutate \\
+            --set releaseId="$GITHUB_SHA"`,
       }
     }
     return {
@@ -133,15 +139,15 @@ jobs:
     DOOPS_GATEWAY: "${gw}"
   script:
     - |
-      curl -fsS "$DOOPS_GATEWAY/api/rpc" \\
-        -H "Authorization: Bearer $DOOPS_API_KEY" \\
-        -H "Content-Type: application/json" \\
-        -d '{
-          "cluster": "prod-cn",
-          "instance": "web-01",
-          "tool": "doops_shell",
-          "arguments": { "command": "cd /root/ws/app && ./deploy.sh" }
-        }'
+      doops add --name <ENVIRONMENT_TARGET> \\
+        --gateway "$DOOPS_GATEWAY" \\
+        --cluster <CLUSTER> \\
+        --instance <INSTANCE> \\
+        --token "$DOOPS_API_KEY"
+      doops -session "release-$CI_COMMIT_SHORT_SHA" cicd run \\
+        -f <DEPLOYMENT_TEMPLATE> \\
+        --allow-mutate \\
+        --set releaseId="$CI_COMMIT_SHA"
   only:
     - main`,
     }
@@ -157,8 +163,8 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          配置一枚 API Key，即可在 GitHub Actions、GitLab CI 等流水线中调用 Doops，
-          在目标实例上执行构建、部署、巡检等操作，把发布流程完全自动化。
+          流水线只调用 DoOps v2 声明式发布入口。目标环境、执行器、制品和验收条件由
+          DeploymentTemplate 与环境注册表解析，不能在流水线中另写部署命令。
         </p>
       </div>
 
@@ -257,7 +263,7 @@ jobs:
           3. 在流水线中调用
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          选择你的平台，复制下面的示例。示例已自动填入你配置的网关地址。
+          选择你的平台，复制下面的示例。先执行 dry-run，确认计划后再授权正式变更。
         </p>
 
         {/* 平台切换 */}
@@ -280,11 +286,11 @@ jobs:
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 
         <p className="mt-2 text-xs text-muted-foreground text-pretty leading-relaxed">
-          把示例中的 <code className="rounded bg-muted px-1">cluster</code> /{" "}
-          <code className="rounded bg-muted px-1">instance</code> 改为你的目标机器，
-          <code className="rounded bg-muted px-1">command</code> 改为实际部署命令即可。
-          也可把 <code className="rounded bg-muted px-1">tool</code> 换成{" "}
-          <code className="rounded bg-muted px-1">doops_file_write</code> 等其它能力。
+          <code className="rounded bg-muted px-1">ENVIRONMENT_TARGET</code>、
+          <code className="rounded bg-muted px-1">CLUSTER</code> 和
+          <code className="rounded bg-muted px-1">INSTANCE</code> 必须从仓库环境注册表原样读取；
+          <code className="rounded bg-muted px-1">DEPLOYMENT_TEMPLATE</code> 必须指向已提交的
+          DoOps workflow。不要改成 Shell、SSH 或直接 Kubernetes 命令。
         </p>
       </section>
 
@@ -295,9 +301,9 @@ jobs:
           工作原理
         </h2>
         <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-          <li>流水线携带 API Key 向网关 <code className="rounded bg-muted px-1">/api/rpc</code> 发起请求。</li>
-          <li>网关校验令牌身份与权限，把指令转发到目标实例上的 agent。</li>
-          <li>agent 执行命令并流式返回结果，所有操作都会记录到审计日志。</li>
+          <li>CLI 严格解析 DeploymentTemplate 和环境注册表，生成带摘要的 DeploymentPlan。</li>
+          <li>CLI 同步精确代码快照，网关校验 target、权限、工作区提交和资源锁。</li>
+          <li>doagent 协调目标状态，CLI 只接受与计划和真实工具观察绑定的结构化结果。</li>
         </ol>
       </section>
     </div>

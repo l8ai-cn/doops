@@ -212,6 +212,16 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 					"id":      req["id"],
 					"result":  map[string]interface{}{"sessionId": "doagent-kind"},
 				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "auto" {
+					t.Fatalf("generic prompt must use native auto mode: %#v", req)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
 			case "session/prompt":
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
@@ -223,10 +233,15 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 			}
 		case "/events":
 			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 			<-prompted
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}`)
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"done"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-kind","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
 		default:
 			http.NotFound(w, r)
@@ -323,19 +338,27 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 		t.Fatalf("read system prompt: %v", err)
 	}
 	text := string(prompt)
-	if strings.Contains(text, "deploy.sh") || strings.Contains(text, "build.sh") {
-		t.Fatalf("system prompt must not require generated deployment scripts: %s", text)
-	}
-	if !strings.Contains(text, "DeploymentPlan") || !strings.Contains(text, "Ask") {
-		t.Fatalf("system prompt must describe the semantic CI/CD contract: %s", text)
-	}
 	for _, marker := range []string{
-		"last known good",
-		"post-deploy-log-scan",
-		"requiredFailureEvidence",
+		"doagent",
+		"多 Agent",
+		"Skill",
+		"DeploymentPlan",
 	} {
 		if !strings.Contains(text, marker) {
-			t.Fatalf("system prompt must enforce deployment recovery evidence %q: %s", marker, text)
+			t.Fatalf("system prompt must describe the Agent-native boundary %q: %s", marker, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"deploy.sh",
+		"build.sh",
+		"buildctl --addr",
+		"kubectl",
+		"Harbor",
+		"registry.example.com",
+		"last known good Helm",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("system prompt must not hard-code orchestration detail %q: %s", forbidden, text)
 		}
 	}
 }
@@ -437,6 +460,124 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "idle timeout") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSubscribeDoagentSSEReturnsTurnFinishedError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"failed-turn","update":{"sessionUpdate":"turn_finished","stopReason":"error","error":"Agent error: API error (404 Not Found): vip expired"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	started := time.Now()
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "failed-turn", func(notificationEvent) {})
+	if err == nil {
+		t.Fatal("expected failed turn to return an error")
+	}
+	if !strings.Contains(err.Error(), "vip expired") {
+		t.Fatalf("turn failure must preserve the actual doagent error, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("terminal turn failure must return immediately, took %s", elapsed)
+	}
+}
+
+func TestSubscribeDoagentSSEWaitsForAuthoritativeFailedTurn(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"looks good"}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","inputTokens":10,"outputTokens":5}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"interrupted","stopReason":"context_limit"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "interrupted-turn", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
+	})
+	if err == nil || !strings.Contains(err.Error(), "context_limit") {
+		t.Fatalf("authoritative failed turn must win over agent_message, got %v", err)
+	}
+	if !strings.Contains(progress.String(), "looks good") {
+		t.Fatalf("agent message should remain visible as progress: %q", progress.String())
+	}
+}
+
+func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
+	prompted := make(chan struct{})
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			switch req["method"] {
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "admission-error"},
+				})
+			case "session/setMode":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				close(prompted)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"error":   map[string]interface{}{"code": -32003, "message": "queue full"},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	started := time.Now()
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "admission-error",
+		"instruction": "inspect",
+	})
+	if !strings.Contains(fmt.Sprint(result), "session/prompt failed") ||
+		!strings.Contains(fmt.Sprint(result), "queue full") {
+		t.Fatalf("prompt admission error must be returned directly: %#v", result)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("prompt admission error must not wait for SSE timeout, took %s", elapsed)
 	}
 }
 
@@ -868,6 +1009,27 @@ func TestAgentWebSocketWorkspaceChunkUpload(t *testing.T) {
 	}
 	if string(bytes.TrimSpace(ready)) != commit {
 		t.Fatalf("ready commit mismatch: %q", ready)
+	}
+}
+
+func TestValidateReconcileWorkspaceCommit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "reconcile"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	commit := strings.Repeat("a", 40)
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0644); err != nil {
+		t.Fatalf("write workspace marker: %v", err)
+	}
+
+	if err := validateReconcileWorkspaceCommit(sessionID, commit); err != nil {
+		t.Fatalf("matching workspace commit rejected: %v", err)
+	}
+	if err := validateReconcileWorkspaceCommit(sessionID, strings.Repeat("b", 40)); err == nil {
+		t.Fatal("mismatched workspace commit must be rejected")
 	}
 }
 

@@ -41,18 +41,23 @@ var defaultExcludes = []string{
 
 // Push 将本地代码无感隔离投递至大模型探针服务，不落宿主机磁盘、不污染用户 Git
 func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) error {
+	_, err := pushWorkspaceSnapshot(server, src, dest, dryRun, extraExcludes, sessionID)
+	return err
+}
+
+func pushWorkspaceSnapshot(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) (string, error) {
 	// 1. 解析源目录
 	src, err := filepath.Abs(src)
 	if err != nil {
-		return fmt.Errorf("解析源路径失败: %v", err)
+		return "", fmt.Errorf("解析源路径失败: %v", err)
 	}
 
 	info, err := os.Stat(src)
 	if err != nil {
-		return fmt.Errorf("源路径不存在: %s", src)
+		return "", fmt.Errorf("源路径不存在: %s", src)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("源路径必须是目录: %s", src)
+		return "", fmt.Errorf("源路径必须是目录: %s", src)
 	}
 
 	if !strings.HasSuffix(src, "/") {
@@ -65,13 +70,13 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 		sessionID = filepath.Base(clean)
 	}
 	if sessionID == "" {
-		return fmt.Errorf("session ID 必传：请通过 -session 指定会话 ID 以隔离工作区 (例如: doops exec -session prod ...)")
+		return "", fmt.Errorf("session ID 必传：请通过 -session 指定会话 ID 以隔离工作区 (例如: doops exec -session prod ...)")
 	}
 
 	token := ResolveToken(server.Name, server.Token)
 	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token)
 	if err != nil {
-		return err
+		return "", err
 	}
 	workspacePath := fmt.Sprintf("/root/ws/%s", sessionID)
 
@@ -79,7 +84,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 	tmpDir := filepath.Join(os.TempDir(), "doops-sync-"+sessionID)
 	os.RemoveAll(tmpDir) // 清理上次可能由于强杀遗留的
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		return fmt.Errorf("创建幽灵临时目录失败: %v", err)
+		return "", fmt.Errorf("创建幽灵临时目录失败: %v", err)
 	}
 	// 进程退出时挫骨扬灰，实现真正的无痕搬运
 	defer os.RemoveAll(tmpDir)
@@ -88,7 +93,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 	fmt.Printf("🧊 正在构建本地隔离快照（大型仓库首次扫描可能较慢）...\n")
 	stagedFiles, err := stageSnapshot(src, tmpDir, extraExcludes, dryRun)
 	if err != nil {
-		return fmt.Errorf("本地缓存集结失败: %v", err)
+		return "", fmt.Errorf("本地缓存集结失败: %v", err)
 	}
 
 	if dryRun {
@@ -96,7 +101,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 		for _, rel := range stagedFiles {
 			fmt.Println(rel)
 		}
-		return nil
+		return "", nil
 	}
 
 	// 4. 在幽灵目录中进行纯净 Git 化与差分推送
@@ -142,7 +147,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 				if attempt < maxRetries && gargs[0] == "push" {
 					continue // 准备重推
 				}
-				return fmt.Errorf("幽灵传输阶段执行失败 (%v): %v", redactGitArgs(gargs), lastErr)
+				return "", fmt.Errorf("幽灵传输阶段执行失败 (%v): %v", redactGitArgs(gargs), lastErr)
 			}
 			break // 成功则跳出重试循环
 		}
@@ -150,7 +155,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 
 	localCommit, err := gitCommandOutput(tmpDir, "rev-parse", "HEAD")
 	if err != nil {
-		return fmt.Errorf("读取本地幽灵提交失败: %v", err)
+		return "", fmt.Errorf("读取本地幽灵提交失败: %v", err)
 	}
 	localCommit = strings.TrimSpace(localCommit)
 
@@ -160,7 +165,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 		representativeRel = stagedFiles[0]
 	}
 	if err := waitForWorkspaceReady(server, token, sessionID, workspacePath, representativeRel, localCommit, 45*time.Second); err != nil {
-		return fmt.Errorf("push 已完成，但远端工作区未确认就绪: %v", err)
+		return "", fmt.Errorf("push 已完成，但远端工作区未确认就绪: %v", err)
 	}
 
 	elapsed := time.Since(start)
@@ -169,7 +174,7 @@ func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, 
 		shortCommit = shortCommit[:12]
 	}
 	fmt.Printf("✅ 同步完成 (%s) 🎯 远端工作区已就绪: %s @ %s\n", elapsed.Round(time.Millisecond), workspacePath, shortCommit)
-	return nil
+	return localCommit, nil
 }
 
 func buildGitRemoteURL(host, port, sessionID, token string) string {

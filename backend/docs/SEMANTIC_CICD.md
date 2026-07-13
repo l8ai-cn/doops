@@ -1,5 +1,9 @@
 # Semantic CI/CD
 
+The architecture and ownership boundary are defined in
+[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md). This document describes the
+`doops.sh/v2` data contract and CLI behavior.
+
 DoOps CI/CD has one declarative reconciliation loop:
 
 ```text
@@ -23,35 +27,63 @@ metadata:
   name: example-release
 spec:
   parameters:
-    releaseId:
+    version:
       required: true
-  plan:
-    release:
-      source:
-        repository: https://example.test/app.git
-        revision: ${inputs.releaseId}
-    target:
-      environment: oilan
-    desiredState:
-      application: example
-      delivery: immutable-release
-      configurationSource: deploy/environments.yaml
-      authorization: reconcile
-    acceptance:
-      requiredEvidence: [source-identity, runtime-state]
-      requiredFailureEvidence: [rollback-state]
-    policy:
-      mutation: require-explicit-approval
-      convergence: until-verified
-      failureMode: restore-last-known-good
-      maxAttempts: 3
-      maxNoProgress: 1
+    reason:
+      required: true
+  application: example
+  release:
+    version: ${inputs.version}
+  environment: oilan
+  configurationSource: deploy/environments.yaml
 ```
 
 Declarations must not contain scripts, commands, stages, physical target
 coordinates, Helm values, raw registry credentials, or an alternate deployment
-route. Those details are resolved from the repository environment registry into
-the generated plan.
+route. The parser uses a strict schema, so unknown fields fail with their YAML
+field name. Physical details are resolved from the repository environment
+registry into the generated plan.
+
+The environment registry owns three separate concerns:
+
+```yaml
+artifactContract:
+  type: image-set
+  sourceRegistry: docker.example.test/example
+  sourceRepository: https://example.test/app.git
+  sourceBranch: main
+  services: [api]
+  imageTagPattern: "^release-[0-9]{8}$"
+  imageTagTimeZone: Asia/Shanghai
+
+verificationProfiles:
+  production:
+    requiredEvidence: [source-identity, runtime-state]
+
+environments:
+  oilan:
+    target:
+      name: gw-oilan
+      cluster: oilan
+      instance: worker-1
+    executor:
+      type: helm
+      config:
+        namespace: app
+        release: example
+        chart: deploy/chart
+        values: deploy/values.yaml
+        registry: registry.example.test/app
+        imageBindings:
+          api: api
+    verificationProfile: production
+```
+
+`target` is the security boundary, `executor` contains implementation-specific
+configuration, and `verificationProfile` selects the environment-owned success
+checks. Application runtime settings remain in the executor's referenced
+Chart/values/Secret sources rather than being duplicated in the CI/CD registry.
+The generic compiler does not special-case application names.
 
 ## Plan
 
@@ -59,23 +91,36 @@ the generated plan.
 inputs and the environment profile and emits one `DeploymentPlan` with a
 canonical digest. The plan contains:
 
-- immutable source or manifest identity;
+- release selector: image version, source revision, or manifest reference;
+- requested image versions are validated against the declared image tag pattern;
 - resolved environment profile and its digest;
-- artifact contract;
-- desired state and acceptance evidence;
-- explicit mutation, convergence, rollback, attempt, and no-progress policy.
+- a release-kind-specific artifact contract;
+- the typed executor configuration;
+- desired application state and resolved verification evidence.
 
 There is no signing key, public key, private key, attestation RPC, source URL
-override, or caller-supplied physical target.
+override, caller-supplied physical target, or template-defined execution policy.
+Mutation authorization comes from the `cicd run` request, not from a ceremonial
+field copied into the plan.
+
+For an `image-set` release, `release.version` is the deployment selector. The
+same version may be reconciled repeatedly. Source revision and image digest may
+be recorded by the build system for troubleshooting, but neither is required as
+a deployment input and neither blocks another deployment of that version.
 
 ## Execution
 
 `doops cicd run` requires `-session` and `--allow-mutate` unless it is a dry
-run. It resolves the plan target from the plan, checks the configured Gateway
-binding, then:
+run. `--dry-run` and `--allow-mutate` are mutually exclusive. For source
+releases, the local repository must be clean and its exact `HEAD` must equal the
+declared immutable revision. It then resolves the plan target, checks the
+configured Gateway binding, and:
 
 1. calls `doops push` for the repository root and session;
-2. calls `doops_agent_prompt` with the plan and `response_format=json`;
+2. calls `doops_agent_prompt` with a minimal JSON task envelope containing the
+   selected `semantic-deployment` Skill, execution mode, and complete plan,
+   plus machine-readable `operation=reconcile`, the plan digest, and the exact
+   workspace commit produced by that push;
 3. validates the returned `ReconciliationResult`.
 
 The Gateway is transport-neutral: `response_format=json` assigns one
@@ -85,9 +130,47 @@ object atomically, and returns that object as MCP `structuredContent`. Terminal
 text is never parsed as the machine result. The Gateway does not interpret
 CI/CD fields or implement a second release controller.
 
-The doagent owns semantic execution. It may choose the operational actions
-needed to reach the declared state, but cannot replace the plan with a fixed
-stage graph, command list, generated shell script, or another target.
+The prompt does not duplicate the Skill with stages, commands, retries, recovery
+instructions, or tool names. The doops-agent maps each request to a native
+doagent mode and resets that mode before every prompt:
+
+| Request | Native mode |
+| :--- | :--- |
+| general Ask | `auto` |
+| reconciliation dry run | `plan` |
+| reconciliation apply | `build` |
+
+The Gateway validates the reconciliation metadata and authorizes every
+executable agent prompt as `ActionReconcile`; `ActionAsk` is limited to
+read-only metadata and history requests. Push and reconciliation use the same
+workspace resource lock. After the reconciliation lock is acquired, the agent
+compares the requested workspace commit with `/root/ws/<session>/.doops-ready`
+before it starts doagent, so a concurrent push cannot silently replace the
+source being deployed.
+
+
+The doagent owns semantic execution, including context management, planning,
+multi-Agent delegation, Skill composition, and tool selection. It may choose
+the operational actions needed to reach the declared state, but cannot replace
+the plan with a fixed stage graph, command list, generated shell script, or
+another target.
+
+The doops-agent never answers `permission.updated` on behalf of doagent or the
+user. An unexpected permission request fails the operation with the observed
+permission details. Permission policy remains in native doagent modes and
+runtime configuration.
+
+`session/prompt` success is admission only. The bridge waits for the
+authoritative `turn_finished` event; earlier `agent_message` and `usage_update`
+events cannot complete the operation. Admission errors are returned directly
+instead of being hidden behind an SSE timeout.
+
+For reconciliation, the bridge hashes the real terminal ACP tool events and
+injects an `executionEvidence` object containing the turn ID, exact workspace
+commit, tool summaries, and a trace digest. Every Agent-authored evidence item
+must name the exact `toolCallId` that produced the observation. The bridge
+accepts only matching completed observation calls and injects that call's
+`toolDigest`; the CLI recomputes the trace and cross-checks both bindings.
 
 The target image bundles the `semantic-deployment` Skill. Structured
 `DeploymentPlan` requests select that Skill, which defines the desired state,
@@ -106,17 +189,52 @@ The machine result artifact is one object:
   "status": "converged",
   "attempts": 2,
   "noProgressAttempts": 0,
-  "evidence": [],
-  "failureEvidence": []
+  "evidence": [
+    {
+      "kind": "runtime-state",
+      "subject": "service",
+      "observedAt": "2026-07-13T00:00:00Z",
+      "value": "ready",
+      "toolCallId": "call-observe",
+      "toolDigest": "sha256:...",
+      "traceDigest": "sha256:..."
+    }
+  ],
+  "failureEvidence": [],
+  "executionEvidence": {
+    "turnId": "turn-...",
+    "workspaceCommit": "0123456789abcdef0123456789abcdef01234567",
+    "traceDigest": "sha256:...",
+    "toolCalls": [
+      {
+        "callId": "call-...",
+        "tool": "WebFetch",
+        "status": "completed",
+        "observation": true,
+        "digest": "sha256:..."
+      }
+    ]
+  }
 }
 ```
 
 `status` is one of `converged`, `blocked`, or `failed`.
 
 - `converged` is valid only when every `requiredEvidence` item is present.
-- `blocked` and `failed` are valid only when every
-  `requiredFailureEvidence` item is present.
-- Attempts and no-progress attempts must be within the plan policy.
+- `converged` also requires a completed observation tool call and a valid
+  bridge-generated execution trace bound to the pushed workspace commit.
+- Each evidence item must bind to its own matching completed observation call.
+  Missing, nonexistent, failed, generic execution, write, and other
+  non-observation call IDs are rejected even if another observation call
+  completed in the same turn.
+- `blocked` and `failed` require actual observed `failureEvidence`; unavailable
+  evidence must not be invented.
+- `rollback-state` is valid only when mutation occurred, the environment
+  declared a reversible recovery capability, and recovery was actually
+  attempted and observed.
+- Attempts are observations reported by the agent. The CLI checks that they are
+  positive and internally consistent; it does not pretend they are a host-side
+  retry controller.
 - Any textual success message, missing evidence, mismatched digest, or invalid
   JSON is a failure, not a successful release.
 

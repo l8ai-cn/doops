@@ -832,6 +832,40 @@ func workspacePath(sessionID string) (string, error) {
 	return filepath.Join(workspaceRoot(), sessionID), nil
 }
 
+func validateReconcileWorkspaceCommit(sessionID, expected string) error {
+	expected, err := normalizeWorkspaceCommit(expected)
+	if err != nil {
+		return fmt.Errorf("reconciliation workspace_commit is invalid: %w", err)
+	}
+	workspace, err := workspacePath(sessionID)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, ".doops-ready"))
+	if err != nil {
+		return fmt.Errorf("read reconciliation workspace commit: %w", err)
+	}
+	actual, err := normalizeWorkspaceCommit(string(data))
+	if err != nil {
+		return fmt.Errorf("stored reconciliation workspace commit is invalid: %w", err)
+	}
+	if actual != expected {
+		return fmt.Errorf("reconciliation workspace commit mismatch: got %s want %s", actual, expected)
+	}
+	return nil
+}
+
+func normalizeWorkspaceCommit(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != 40 && len(value) != 64 {
+		return "", fmt.Errorf("commit must contain 40 or 64 hexadecimal characters")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return "", fmt.Errorf("commit must be hexadecimal: %w", err)
+	}
+	return value, nil
+}
+
 func uploadDir() string {
 	return filepath.Join(os.TempDir(), "doops-uploads")
 }

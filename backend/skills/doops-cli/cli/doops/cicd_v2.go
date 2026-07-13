@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,43 +20,17 @@ const (
 	deploymentAPIVersion    = "doops.sh/v2"
 	deploymentTemplateKind  = "DeploymentTemplate"
 	deploymentPlanKind      = "DeploymentPlan"
-	deploymentMutationGate  = "require-explicit-approval"
-	deploymentConvergence   = "until-verified"
-	deploymentFailureMode   = "restore-last-known-good"
 	deploymentConfiguration = "deploy/environments.yaml"
+
+	cicdExecutorHelm     = "helm"
+	cicdArtifactImageSet = "image-set"
+	cicdArtifactManifest = "manifest"
 )
 
 var (
 	immutableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	ociDigestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
-
-var forbiddenCICDDeclarationFields = map[string]struct{}{
-	"stages":                    {},
-	"uses":                      {},
-	"task":                      {},
-	"run":                       {},
-	"requiredCommand":           {},
-	"verificationCommand":       {},
-	"dryRunVerificationCommand": {},
-	"script":                    {},
-	"context":                   {},
-	"route":                     {},
-	"namespace":                 {},
-	"services":                  {},
-	"executionTarget":           {},
-	"profileDigest":             {},
-	"profile":                   {},
-	"artifactContract":          {},
-	"registry":                  {},
-	"chart":                     {},
-	"values":                    {},
-	"runtimeFiles":              {},
-	"deploymentMode":            {},
-	"publicHosts":               {},
-	"healthChecks":              {},
-	"authz":                     {},
-}
 
 type DeploymentTemplate struct {
 	APIVersion string                 `json:"apiVersion" yaml:"apiVersion"`
@@ -70,8 +46,11 @@ type DeploymentMetadata struct {
 }
 
 type DeploymentTemplateSpec struct {
-	Parameters map[string]DeploymentParameter `json:"parameters,omitempty" yaml:"parameters,omitempty"`
-	Plan       DeploymentPlanSpec             `json:"plan" yaml:"plan"`
+	Parameters          map[string]DeploymentParameter `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Application         string                         `json:"application" yaml:"application"`
+	Release             CICDReleaseReference           `json:"release" yaml:"release"`
+	Environment         string                         `json:"environment" yaml:"environment"`
+	ConfigurationSource string                         `json:"configurationSource,omitempty" yaml:"configurationSource,omitempty"`
 }
 
 type DeploymentParameter struct {
@@ -91,15 +70,15 @@ type DeploymentPlan struct {
 type DeploymentPlanSpec struct {
 	Release          CICDReleaseReference `json:"release" yaml:"release"`
 	Target           CICDDeploymentTarget `json:"target" yaml:"target"`
-	ArtifactContract CICDArtifactContract `json:"artifactContract,omitempty" yaml:"artifactContract,omitempty"`
+	ArtifactContract CICDArtifactContract `json:"artifactContract" yaml:"artifactContract"`
 	DesiredState     CICDDesiredState     `json:"desiredState" yaml:"desiredState"`
 	Acceptance       CICDAcceptance       `json:"acceptance" yaml:"acceptance"`
-	Policy           CICDDeploymentPolicy `json:"policy" yaml:"policy"`
 }
 
 type CICDReleaseReference struct {
 	Source   *CICDSourceRelease   `json:"source,omitempty" yaml:"source,omitempty"`
 	Manifest *CICDManifestRelease `json:"manifest,omitempty" yaml:"manifest,omitempty"`
+	Version  string               `json:"version,omitempty" yaml:"version,omitempty"`
 }
 
 type CICDSourceRelease struct {
@@ -117,164 +96,125 @@ type CICDManifestRelease struct {
 
 type CICDDeploymentTarget struct {
 	Environment     string                  `json:"environment" yaml:"environment"`
-	ExecutionTarget string                  `json:"executionTarget,omitempty" yaml:"executionTarget,omitempty"`
-	ProfileDigest   string                  `json:"profileDigest,omitempty" yaml:"profileDigest,omitempty"`
-	Profile         *CICDEnvironmentProfile `json:"profile,omitempty" yaml:"profile,omitempty"`
+	ExecutionTarget string                  `json:"executionTarget" yaml:"executionTarget"`
+	ProfileDigest   string                  `json:"profileDigest" yaml:"profileDigest"`
+	Profile         *CICDEnvironmentProfile `json:"profile" yaml:"profile"`
 }
 
 type CICDDesiredState struct {
-	Application         string                `json:"application" yaml:"application"`
-	Delivery            string                `json:"delivery" yaml:"delivery"`
-	ConfigurationSource string                `json:"configurationSource" yaml:"configurationSource"`
-	Authorization       string                `json:"authorization" yaml:"authorization"`
-	Security            *CICDDesiredSecurity  `json:"security,omitempty" yaml:"security,omitempty"`
-	Artifacts           *CICDDesiredArtifacts `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
-	RetiredResources    string                `json:"retiredResources,omitempty" yaml:"retiredResources,omitempty"`
-}
-
-type CICDDesiredSecurity struct {
-	MachineOAuthClients *CICDMachineOAuthClientsState `json:"machineOauthClients,omitempty" yaml:"machineOauthClients,omitempty"`
-}
-
-type CICDMachineOAuthClientsState struct {
-	Manifest         string `json:"manifest" yaml:"manifest"`
-	ApplicationState string `json:"applicationState" yaml:"applicationState"`
-	SecretState      string `json:"secretState" yaml:"secretState"`
-}
-
-type CICDDesiredArtifacts struct {
-	Source *CICDDesiredSourceArtifact `json:"source,omitempty" yaml:"source,omitempty"`
-	Target *CICDDesiredTargetArtifact `json:"target,omitempty" yaml:"target,omitempty"`
-}
-
-type CICDDesiredSourceArtifact struct {
-	Kind                string `json:"kind" yaml:"kind"`
-	ReleaseID           string `json:"releaseId" yaml:"releaseId"`
-	CredentialReference string `json:"credentialReference" yaml:"credentialReference"`
-}
-
-type CICDDesiredTargetArtifact struct {
-	Mode                        string `json:"mode" yaml:"mode"`
-	RegistryCredentialReference string `json:"registryCredentialReference" yaml:"registryCredentialReference"`
+	Application string `json:"application" yaml:"application"`
 }
 
 type CICDAcceptance struct {
-	RequiredEvidence        []string `json:"requiredEvidence" yaml:"requiredEvidence"`
-	RequiredFailureEvidence []string `json:"requiredFailureEvidence" yaml:"requiredFailureEvidence"`
-}
-
-type CICDDeploymentPolicy struct {
-	Mutation      string `json:"mutation" yaml:"mutation"`
-	Convergence   string `json:"convergence" yaml:"convergence"`
-	FailureMode   string `json:"failureMode" yaml:"failureMode"`
-	MaxAttempts   int    `json:"maxAttempts" yaml:"maxAttempts"`
-	MaxNoProgress int    `json:"maxNoProgress" yaml:"maxNoProgress"`
+	VerificationProfile string   `json:"verificationProfile" yaml:"verificationProfile"`
+	RequiredEvidence    []string `json:"requiredEvidence" yaml:"requiredEvidence"`
 }
 
 type CICDEnvironmentRegistry struct {
-	ArtifactContract CICDArtifactContract              `json:"artifactContract" yaml:"artifactContract"`
-	Environments     map[string]CICDEnvironmentProfile `json:"environments" yaml:"environments"`
+	APIVersion           string                             `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	Kind                 string                             `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Metadata             CICDRegistryMetadata               `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	IdentityRules        []string                           `json:"identityRules,omitempty" yaml:"identityRules,omitempty"`
+	ArtifactContract     CICDArtifactContract               `json:"artifactContract" yaml:"artifactContract"`
+	VerificationProfiles map[string]CICDVerificationProfile `json:"verificationProfiles" yaml:"verificationProfiles"`
+	Environments         map[string]CICDEnvironmentProfile  `json:"environments" yaml:"environments"`
+}
+
+type CICDRegistryMetadata struct {
+	Name      string `json:"name,omitempty" yaml:"name,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
+}
+
+type CICDVerificationProfile struct {
+	RequiredEvidence []string `json:"requiredEvidence" yaml:"requiredEvidence"`
 }
 
 type CICDEnvironmentProfile struct {
-	DisplayName               string                  `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Target                    string                  `json:"target" yaml:"target"`
-	Cluster                   string                  `json:"cluster" yaml:"cluster"`
-	Instance                  string                  `json:"instance" yaml:"instance"`
-	Namespace                 string                  `json:"namespace" yaml:"namespace"`
-	Release                   string                  `json:"release" yaml:"release"`
-	Workload                  string                  `json:"workload" yaml:"workload"`
-	Container                 string                  `json:"container" yaml:"container"`
-	ModelRouting              *CICDModelRouting       `json:"modelRouting,omitempty" yaml:"modelRouting,omitempty"`
-	ModelSettings             *CICDModelSettings      `json:"modelSettings,omitempty" yaml:"modelSettings,omitempty"`
-	Registry                  string                  `json:"registry" yaml:"registry"`
-	RegistryCredential        *CICDRegistryCredential `json:"registryCredential,omitempty" yaml:"registryCredential,omitempty"`
-	ReleaseManifestRepository string                  `json:"releaseManifestRepository" yaml:"releaseManifestRepository"`
-	Chart                     string                  `json:"chart" yaml:"chart"`
-	Values                    string                  `json:"values" yaml:"values"`
-	RuntimeFiles              string                  `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
-	DeploymentMode            string                  `json:"deploymentMode" yaml:"deploymentMode"`
-	ControlPlaneEnvironment   string                  `json:"controlPlaneEnvironment,omitempty" yaml:"controlPlaneEnvironment,omitempty"`
-	WorkloadNamespaces        map[string]string       `json:"workloadNamespaces,omitempty" yaml:"workloadNamespaces,omitempty"`
-	ArtifactSync              *CICDArtifactSync       `json:"artifactSync,omitempty" yaml:"artifactSync,omitempty"`
-	RetiredResources          []CICDRetiredResource   `json:"retiredResources,omitempty" yaml:"retiredResources,omitempty"`
-	PublicHosts               []string                `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
-	HealthChecks              CICDHealthChecks        `json:"healthChecks" yaml:"healthChecks"`
-	Authz                     map[string]string       `json:"authz,omitempty" yaml:"authz,omitempty"`
+	DisplayName             string                  `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Target                  CICDEnvironmentTarget   `json:"target" yaml:"target"`
+	Executor                CICDEnvironmentExecutor `json:"executor" yaml:"executor"`
+	VerificationProfile     string                  `json:"verificationProfile" yaml:"verificationProfile"`
+	DeploymentMode          string                  `json:"deploymentMode,omitempty" yaml:"deploymentMode,omitempty"`
+	ControlPlaneEnvironment string                  `json:"controlPlaneEnvironment,omitempty" yaml:"controlPlaneEnvironment,omitempty"`
+	PublicHosts             []string                `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
 }
 
-type CICDRegistryCredential struct {
-	Namespace  string `json:"namespace" yaml:"namespace"`
-	SecretName string `json:"secretName" yaml:"secretName"`
-	Key        string `json:"key" yaml:"key"`
+type CICDEnvironmentTarget struct {
+	Name     string `json:"name" yaml:"name"`
+	Cluster  string `json:"cluster" yaml:"cluster"`
+	Instance string `json:"instance" yaml:"instance"`
+}
+
+type CICDEnvironmentExecutor struct {
+	Type   string                 `json:"type" yaml:"type"`
+	Config CICDHelmExecutorConfig `json:"config" yaml:"config"`
+}
+
+type CICDHelmExecutorConfig struct {
+	Namespace                 string                 `json:"namespace" yaml:"namespace"`
+	Release                   string                 `json:"release" yaml:"release"`
+	Chart                     string                 `json:"chart" yaml:"chart"`
+	Values                    string                 `json:"values" yaml:"values"`
+	Workload                  string                 `json:"workload,omitempty" yaml:"workload,omitempty"`
+	Container                 string                 `json:"container,omitempty" yaml:"container,omitempty"`
+	Registry                  string                 `json:"registry,omitempty" yaml:"registry,omitempty"`
+	ReleaseManifestRepository string                 `json:"releaseManifestRepository,omitempty" yaml:"releaseManifestRepository,omitempty"`
+	ImageBindings             map[string]string      `json:"imageBindings,omitempty" yaml:"imageBindings,omitempty"`
+	RuntimeFiles              string                 `json:"runtimeFiles,omitempty" yaml:"runtimeFiles,omitempty"`
+	PublicHosts               []string               `json:"publicHosts,omitempty" yaml:"publicHosts,omitempty"`
+	HealthChecks              CICDHealthChecks       `json:"healthChecks,omitempty" yaml:"healthChecks,omitempty"`
+	DeploymentMode            string                 `json:"deploymentMode,omitempty" yaml:"deploymentMode,omitempty"`
+	ArtifactSync              CICDArtifactSync       `json:"artifactSync,omitempty" yaml:"artifactSync,omitempty"`
+	RegistryCredential        CICDRegistryCredential `json:"registryCredential,omitempty" yaml:"registryCredential,omitempty"`
+	WorkloadNamespaces        map[string]string      `json:"workloadNamespaces,omitempty" yaml:"workloadNamespaces,omitempty"`
+	RetiredResources          []CICDRetiredResource  `json:"retiredResources,omitempty" yaml:"retiredResources,omitempty"`
+	Authz                     map[string]string      `json:"authz,omitempty" yaml:"authz,omitempty"`
 }
 
 type CICDArtifactSync struct {
-	SourceCredentialRef   *CICDKubernetesObjectReference `json:"sourceCredentialRef,omitempty" yaml:"sourceCredentialRef,omitempty"`
-	RegistryCredentialRef *CICDKubernetesObjectReference `json:"registryCredentialRef,omitempty" yaml:"registryCredentialRef,omitempty"`
+	SourceCredentialRef   *CICDKubernetesSecretReference `json:"sourceCredentialRef,omitempty" yaml:"sourceCredentialRef,omitempty"`
+	RegistryCredentialRef *CICDKubernetesSecretReference `json:"registryCredentialRef,omitempty" yaml:"registryCredentialRef,omitempty"`
 }
 
-type CICDKubernetesObjectReference struct {
+type CICDKubernetesSecretReference struct {
 	Kind string `json:"kind" yaml:"kind"`
 	Name string `json:"name" yaml:"name"`
 }
 
-type CICDRetiredResource struct {
-	APIVersion     string                         `json:"apiVersion" yaml:"apiVersion"`
-	Kind           string                         `json:"kind" yaml:"kind"`
-	Name           string                         `json:"name" yaml:"name"`
-	DeletionPolicy string                         `json:"deletionPolicy" yaml:"deletionPolicy"`
-	Expected       CICDRetiredResourceExpectation `json:"expected" yaml:"expected"`
+type CICDRegistryCredential struct {
+	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	SecretName string `json:"secretName,omitempty" yaml:"secretName,omitempty"`
+	Key        string `json:"key,omitempty" yaml:"key,omitempty"`
 }
 
-type CICDRetiredResourceExpectation struct {
+type CICDRetiredResource struct {
+	APIVersion     string                      `json:"apiVersion" yaml:"apiVersion"`
+	Kind           string                      `json:"kind" yaml:"kind"`
+	Name           string                      `json:"name" yaml:"name"`
+	DeletionPolicy string                      `json:"deletionPolicy" yaml:"deletionPolicy"`
+	Expected       CICDRetiredResourceExpected `json:"expected" yaml:"expected"`
+}
+
+type CICDRetiredResourceExpected struct {
 	Manager          string   `json:"manager" yaml:"manager"`
 	IngressClassName string   `json:"ingressClassName" yaml:"ingressClassName"`
 	Hosts            []string `json:"hosts" yaml:"hosts"`
 }
 
-type CICDModelRouting struct {
-	Policy string `json:"policy" yaml:"policy"`
-}
-
-type CICDModelSettings struct {
-	Provider  string              `json:"provider" yaml:"provider"`
-	Model     string              `json:"model" yaml:"model"`
-	SecretRef CICDSecretReference `json:"secretRef" yaml:"secretRef"`
-}
-
-type CICDSecretReference struct {
-	Name string `json:"name" yaml:"name"`
-	Key  string `json:"key" yaml:"key"`
-}
-
 type CICDArtifactContract struct {
-	SourceRepository                 string                 `json:"sourceRepository,omitempty" yaml:"sourceRepository,omitempty"`
-	SourceBranch                     string                 `json:"sourceBranch,omitempty" yaml:"sourceBranch,omitempty"`
-	CNBRegistry                      string                 `json:"cnbRegistry,omitempty" yaml:"cnbRegistry,omitempty"`
-	SourceArtifactManifestRepository string                 `json:"sourceArtifactManifestRepository,omitempty" yaml:"sourceArtifactManifestRepository,omitempty"`
-	Build                            *CICDBuildContract     `json:"build,omitempty" yaml:"build,omitempty"`
-	ImageRegistry                    string                 `json:"imageRegistry,omitempty" yaml:"imageRegistry,omitempty"`
-	Services                         []string               `json:"services" yaml:"services"`
-	ImageTagPattern                  string                 `json:"imageTagPattern,omitempty" yaml:"imageTagPattern,omitempty"`
-	ImageTagTimeZone                 string                 `json:"imageTagTimeZone,omitempty" yaml:"imageTagTimeZone,omitempty"`
-	ImageReferenceFormat             string                 `json:"imageReferenceFormat,omitempty" yaml:"imageReferenceFormat,omitempty"`
-	HelmImageBindings                map[string]string      `json:"helmImageBindings,omitempty" yaml:"helmImageBindings,omitempty"`
-	TestEnvironment                  string                 `json:"testEnvironment,omitempty" yaml:"testEnvironment,omitempty"`
-	PromotionEnvironments            []string               `json:"promotionEnvironments,omitempty" yaml:"promotionEnvironments,omitempty"`
-	ManifestRepository               string                 `json:"manifestRepository,omitempty" yaml:"manifestRepository,omitempty"`
-	Authz                            map[string]interface{} `json:"authz,omitempty" yaml:"authz,omitempty"`
-}
-
-type CICDBuildContract struct {
-	Provider string `json:"provider" yaml:"provider"`
-	Branch   string `json:"branch" yaml:"branch"`
-	Event    string `json:"event" yaml:"event"`
+	Type                 string   `json:"type" yaml:"type"`
+	SourceRegistry       string   `json:"sourceRegistry,omitempty" yaml:"sourceRegistry,omitempty"`
+	SourceRepository     string   `json:"sourceRepository,omitempty" yaml:"sourceRepository,omitempty"`
+	SourceBranch         string   `json:"sourceBranch,omitempty" yaml:"sourceBranch,omitempty"`
+	Services             []string `json:"services,omitempty" yaml:"services,omitempty"`
+	ImageTagPattern      string   `json:"imageTagPattern,omitempty" yaml:"imageTagPattern,omitempty"`
+	ImageTagTimeZone     string   `json:"imageTagTimeZone,omitempty" yaml:"imageTagTimeZone,omitempty"`
+	ImageReferenceFormat string   `json:"imageReferenceFormat,omitempty" yaml:"imageReferenceFormat,omitempty"`
 }
 
 type CICDHealthChecks struct {
-	Public    []CICDPublicHealthCheck   `json:"public" yaml:"public"`
-	Workloads []CICDWorkloadHealthCheck `json:"workloads" yaml:"workloads"`
+	Public    []CICDPublicHealthCheck   `json:"public,omitempty" yaml:"public,omitempty"`
+	Workloads []CICDWorkloadHealthCheck `json:"workloads,omitempty" yaml:"workloads,omitempty"`
 }
 
 type CICDPublicHealthCheck struct {
@@ -297,25 +237,11 @@ func loadDeploymentTemplate(path string) (DeploymentTemplate, error) {
 		return DeploymentTemplate{}, fmt.Errorf("read deployment template: %w", err)
 	}
 
-	var raw yaml.Node
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return DeploymentTemplate{}, fmt.Errorf("parse deployment template: %w", err)
-	}
-
 	var template DeploymentTemplate
-	if err := yaml.Unmarshal(data, &template); err != nil {
+	if err := decodeStrictCICDYAML(data, &template); err != nil {
 		return DeploymentTemplate{}, fmt.Errorf("parse deployment template: %w", err)
 	}
 	template.path = path
-	if template.APIVersion != deploymentAPIVersion {
-		return DeploymentTemplate{}, fmt.Errorf("unsupported apiVersion %q", template.APIVersion)
-	}
-	if template.Kind != deploymentTemplateKind {
-		return DeploymentTemplate{}, fmt.Errorf("unsupported kind %q", template.Kind)
-	}
-	if field, found := findForbiddenCICDDeclarationField(&raw); found {
-		return DeploymentTemplate{}, fmt.Errorf("forbidden command-driven field %q", field)
-	}
 	if err := validateDeploymentTemplate(template); err != nil {
 		return DeploymentTemplate{}, err
 	}
@@ -332,7 +258,7 @@ func validateDeploymentTemplate(template DeploymentTemplate) error {
 	if strings.TrimSpace(template.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	return validateDeploymentPlanSpec(template.Spec.Plan, true)
+	return validateDeploymentIntent(template.Spec, true)
 }
 
 func compileDeploymentPlan(template DeploymentTemplate, overrides map[string]string, registry CICDEnvironmentRegistry) (DeploymentPlan, error) {
@@ -343,35 +269,48 @@ func compileDeploymentPlan(template DeploymentTemplate, overrides map[string]str
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	spec := renderDeploymentPlanSpec(template.Spec.Plan, inputs)
-	if err := validateDeploymentPlanSpec(spec, false); err != nil {
+	intent := renderDeploymentIntent(template.Spec, inputs)
+	if err := validateDeploymentIntent(intent, false); err != nil {
 		return DeploymentPlan{}, err
 	}
-	profile, ok := registry.Environments[spec.Target.Environment]
+
+	profile, ok := registry.Environments[intent.Environment]
 	if !ok {
-		return DeploymentPlan{}, fmt.Errorf("environment %q is not declared in environment profile", spec.Target.Environment)
+		return DeploymentPlan{}, fmt.Errorf("environment %q is not declared in environment registry", intent.Environment)
 	}
-	if err := validateCICDEnvironmentProfile(spec.Target.Environment, profile); err != nil {
+	if err := validateCICDEnvironmentProfile(intent.Environment, profile); err != nil {
 		return DeploymentPlan{}, err
 	}
-	if err := validateCICDModelRouting(spec.DesiredState.Application, profile.ModelRouting); err != nil {
+	verification, ok := registry.VerificationProfiles[profile.VerificationProfile]
+	if !ok {
+		return DeploymentPlan{}, fmt.Errorf("environment %q verification profile %q is not declared", intent.Environment, profile.VerificationProfile)
+	}
+	if err := validateCICDVerificationProfile(profile.VerificationProfile, verification); err != nil {
 		return DeploymentPlan{}, err
 	}
-	if err := validateCICDModelSettings(spec.DesiredState.Application, profile.ModelSettings); err != nil {
+	if err := validateCICDArtifactContract(intent.Release, registry.ArtifactContract, profile.Executor); err != nil {
 		return DeploymentPlan{}, err
 	}
-	if err := validateCICDArtifactContract(registry.ArtifactContract); err != nil {
-		return DeploymentPlan{}, err
-	}
-	spec.Target.ExecutionTarget = profile.Target
-	spec.Target.Profile = &profile
+
 	profileDigest, err := digestDeploymentValue(profile)
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	spec.Target.ProfileDigest = profileDigest
-	spec.ArtifactContract = registry.ArtifactContract
-
+	spec := DeploymentPlanSpec{
+		Release: intent.Release,
+		Target: CICDDeploymentTarget{
+			Environment:     intent.Environment,
+			ExecutionTarget: profile.Target.Name,
+			ProfileDigest:   profileDigest,
+			Profile:         &profile,
+		},
+		ArtifactContract: registry.ArtifactContract,
+		DesiredState:     CICDDesiredState{Application: intent.Application},
+		Acceptance: CICDAcceptance{
+			VerificationProfile: profile.VerificationProfile,
+			RequiredEvidence:    normalizeEvidenceKinds(verification.RequiredEvidence),
+		},
+	}
 	plan := DeploymentPlan{
 		APIVersion: deploymentAPIVersion,
 		Kind:       deploymentPlanKind,
@@ -379,11 +318,10 @@ func compileDeploymentPlan(template DeploymentTemplate, overrides map[string]str
 		Inputs:     inputs,
 		Spec:       spec,
 	}
-	digest, err := digestDeploymentPlan(plan)
+	plan.Digest, err = digestDeploymentPlan(plan)
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	plan.Digest = digest
 	if err := validateDeploymentPlan(plan); err != nil {
 		return DeploymentPlan{}, err
 	}
@@ -395,7 +333,10 @@ func buildDeploymentPlan(template DeploymentTemplate, overrides map[string]strin
 	if err != nil {
 		return DeploymentPlan{}, err
 	}
-	configurationSource := renderCICDTemplate(template.Spec.Plan.DesiredState.ConfigurationSource, inputs)
+	configurationSource := renderCICDTemplate(template.Spec.ConfigurationSource, inputs)
+	if strings.TrimSpace(configurationSource) == "" {
+		configurationSource = deploymentConfiguration
+	}
 	registryPath, err := resolveDeploymentConfigurationPath(template, configurationSource)
 	if err != nil {
 		return DeploymentPlan{}, err
@@ -413,22 +354,37 @@ func loadCICDEnvironmentRegistry(path string) (CICDEnvironmentRegistry, error) {
 		return CICDEnvironmentRegistry{}, fmt.Errorf("read environment registry: %w", err)
 	}
 	var registry CICDEnvironmentRegistry
-	if err := yaml.Unmarshal(data, &registry); err != nil {
+	if err := decodeStrictCICDYAML(data, &registry); err != nil {
 		return CICDEnvironmentRegistry{}, fmt.Errorf("parse environment registry: %w", err)
 	}
 	if len(registry.Environments) == 0 {
 		return CICDEnvironmentRegistry{}, fmt.Errorf("environment registry has no environments")
 	}
+	if len(registry.VerificationProfiles) == 0 {
+		return CICDEnvironmentRegistry{}, fmt.Errorf("environment registry has no verification profiles")
+	}
 	return registry, nil
+}
+
+func decodeStrictCICDYAML(data []byte, target interface{}) error {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err == nil {
+		return fmt.Errorf("multiple YAML documents are not allowed")
+	} else if err != io.EOF {
+		return fmt.Errorf("parse trailing YAML document: %w", err)
+	}
+	return nil
 }
 
 func resolveDeploymentConfigurationPath(template DeploymentTemplate, source string) (string, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return "", fmt.Errorf("deployment configuration source is required")
-	}
-	if filepath.IsAbs(source) {
-		return source, nil
 	}
 	if strings.TrimSpace(template.path) == "" {
 		return "", fmt.Errorf("deployment template path is required to resolve configuration source")
@@ -445,105 +401,133 @@ func resolveDeploymentConfigurationPath(template DeploymentTemplate, source stri
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			break
+			return "", fmt.Errorf("deployment template %q is not inside a Git repository", template.path)
 		}
 		dir = parent
 	}
-	return filepath.Join(root, source), nil
+
+	resolved := source
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(root, resolved)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve deployment configuration source: %w", err)
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return "", fmt.Errorf("validate deployment configuration source: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("deployment configuration source must stay inside repository root")
+	}
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve deployment configuration symlinks: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root symlinks: %w", err)
+	}
+	relative, err = filepath.Rel(root, resolved)
+	if err != nil {
+		return "", fmt.Errorf("validate deployment configuration source: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("deployment configuration source must stay inside repository root")
+	}
+	return resolved, nil
 }
 
-func validateDeploymentPlanSpec(spec DeploymentPlanSpec, allowTemplates bool) error {
-	sourceSet := spec.Release.Source != nil
-	manifestSet := spec.Release.Manifest != nil
-	if sourceSet == manifestSet {
-		return fmt.Errorf("spec.plan.release requires exactly one of source or manifest")
+func validateDeploymentIntent(intent DeploymentTemplateSpec, allowTemplates bool) error {
+	if strings.TrimSpace(intent.Application) == "" {
+		return fmt.Errorf("spec.application is required")
 	}
-	if sourceSet {
-		if err := validateCICDSourceRelease(*spec.Release.Source, allowTemplates); err != nil {
-			return err
-		}
+	if strings.TrimSpace(intent.Environment) == "" {
+		return fmt.Errorf("spec.environment is required")
 	}
-	if manifestSet {
-		if err := validateCICDManifestRelease(*spec.Release.Manifest, allowTemplates); err != nil {
-			return err
-		}
+	if !allowTemplates && hasUnresolvedCICDTemplate(intent.Application, intent.Environment, intent.ConfigurationSource) {
+		return fmt.Errorf("deployment intent contains an unresolved template input")
 	}
-	if strings.TrimSpace(spec.Target.Environment) == "" {
-		return fmt.Errorf("spec.plan.target.environment is required")
-	}
-	if strings.TrimSpace(spec.DesiredState.Application) == "" {
-		return fmt.Errorf("spec.plan.desiredState.application is required")
-	}
-	if strings.TrimSpace(spec.DesiredState.Delivery) == "" {
-		return fmt.Errorf("spec.plan.desiredState.delivery is required")
-	}
-	if strings.TrimSpace(spec.DesiredState.ConfigurationSource) == "" {
-		return fmt.Errorf("spec.plan.desiredState.configurationSource is required")
-	}
-	if strings.TrimSpace(spec.DesiredState.Authorization) == "" {
-		return fmt.Errorf("spec.plan.desiredState.authorization is required")
-	}
-	if err := validateCICDDesiredStateExtensions(spec.DesiredState); err != nil {
+	return validateCICDReleaseReference(intent.Release, allowTemplates)
+}
+
+func validateDeploymentPlanSpec(spec DeploymentPlanSpec) error {
+	if err := validateCICDReleaseReference(spec.Release, false); err != nil {
 		return err
 	}
+	if strings.TrimSpace(spec.Target.Environment) == "" {
+		return fmt.Errorf("spec.target.environment is required")
+	}
+	if strings.TrimSpace(spec.Target.ExecutionTarget) == "" {
+		return fmt.Errorf("spec.target.executionTarget is required")
+	}
+	if strings.TrimSpace(spec.DesiredState.Application) == "" {
+		return fmt.Errorf("spec.desiredState.application is required")
+	}
+	if strings.TrimSpace(spec.Acceptance.VerificationProfile) == "" {
+		return fmt.Errorf("spec.acceptance.verificationProfile is required")
+	}
 	if len(normalizeEvidenceKinds(spec.Acceptance.RequiredEvidence)) == 0 {
-		return fmt.Errorf("spec.plan.acceptance.requiredEvidence is required")
+		return fmt.Errorf("spec.acceptance.requiredEvidence is required")
 	}
-	if len(normalizeEvidenceKinds(spec.Acceptance.RequiredFailureEvidence)) == 0 {
-		return fmt.Errorf("spec.plan.acceptance.requiredFailureEvidence is required")
+	return nil
+}
+
+func validateCICDReleaseReference(release CICDReleaseReference, allowTemplates bool) error {
+	sourceSet := release.Source != nil
+	manifestSet := release.Manifest != nil
+	versionSet := strings.TrimSpace(release.Version) != ""
+	if boolCount(sourceSet, manifestSet, versionSet) != 1 {
+		return fmt.Errorf("release requires exactly one of source, manifest, or version")
 	}
-	if spec.Policy.Mutation != deploymentMutationGate {
-		return fmt.Errorf("spec.plan.policy.mutation must be %q", deploymentMutationGate)
+	if sourceSet {
+		return validateCICDSourceRelease(*release.Source, allowTemplates)
 	}
-	if spec.Policy.Convergence != deploymentConvergence {
-		return fmt.Errorf("spec.plan.policy.convergence must be %q", deploymentConvergence)
+	if manifestSet {
+		return validateCICDManifestRelease(*release.Manifest, allowTemplates)
 	}
-	if spec.Policy.FailureMode != deploymentFailureMode {
-		return fmt.Errorf("spec.plan.policy.failureMode must be %q", deploymentFailureMode)
-	}
-	if spec.Policy.MaxAttempts <= 0 {
-		return fmt.Errorf("spec.plan.policy.maxAttempts must be positive")
-	}
-	if spec.Policy.MaxNoProgress <= 0 {
-		return fmt.Errorf("spec.plan.policy.maxNoProgress must be positive")
+	if !allowTemplates && hasUnresolvedCICDTemplate(release.Version) {
+		return fmt.Errorf("release.version contains an unresolved template input")
 	}
 	return nil
 }
 
 func validateCICDSourceRelease(source CICDSourceRelease, allowTemplates bool) error {
 	if strings.TrimSpace(source.Repository) == "" {
-		return fmt.Errorf("spec.plan.release.source.repository is required")
+		return fmt.Errorf("release.source.repository is required")
 	}
 	if strings.TrimSpace(source.Revision) == "" {
-		return fmt.Errorf("spec.plan.release.source.revision is required")
+		return fmt.Errorf("release.source.revision is required")
 	}
-	if !allowTemplates && strings.Contains(source.Revision, "${") {
-		return fmt.Errorf("spec.plan.release.source.revision was not rendered")
-	}
-	if !allowTemplates && !immutableGitCommitPattern.MatchString(source.Revision) {
-		return fmt.Errorf("spec.plan.release.source.revision must be a 40-character immutable Git commit")
+	if !allowTemplates {
+		if hasUnresolvedCICDTemplate(source.Repository, source.Revision, source.Branch, source.TreeDigest) {
+			return fmt.Errorf("release.source contains an unresolved template input")
+		}
+		if !immutableGitCommitPattern.MatchString(source.Revision) {
+			return fmt.Errorf("release.source.revision must be a 40-character immutable Git commit")
+		}
 	}
 	return nil
 }
 
 func validateCICDManifestRelease(manifest CICDManifestRelease, allowTemplates bool) error {
 	if strings.TrimSpace(manifest.Repository) == "" {
-		return fmt.Errorf("spec.plan.release.manifest.repository is required")
+		return fmt.Errorf("release.manifest.repository is required")
 	}
 	if strings.TrimSpace(manifest.Reference) == "" {
-		return fmt.Errorf("spec.plan.release.manifest.reference is required")
-	}
-	if !allowTemplates && strings.Contains(manifest.Reference, "${") {
-		return fmt.Errorf("spec.plan.release.manifest.reference was not rendered")
+		return fmt.Errorf("release.manifest.reference is required")
 	}
 	if strings.TrimSpace(manifest.Digest) == "" {
-		return fmt.Errorf("spec.plan.release.manifest.digest is required")
+		return fmt.Errorf("release.manifest.digest is required")
 	}
-	if !allowTemplates && strings.Contains(manifest.Digest, "${") {
-		return fmt.Errorf("spec.plan.release.manifest.digest was not rendered")
-	}
-	if !allowTemplates && !ociDigestPattern.MatchString(manifest.Digest) {
-		return fmt.Errorf("spec.plan.release.manifest.digest must be an OCI sha256 digest")
+	if !allowTemplates {
+		if hasUnresolvedCICDTemplate(manifest.Repository, manifest.Reference, manifest.Digest) {
+			return fmt.Errorf("release.manifest contains an unresolved template input")
+		}
+		if !ociDigestPattern.MatchString(manifest.Digest) {
+			return fmt.Errorf("release.manifest.digest must be an OCI sha256 digest")
+		}
 	}
 	return nil
 }
@@ -569,50 +553,12 @@ func resolveDeploymentParameters(spec map[string]DeploymentParameter, overrides 
 	return inputs, nil
 }
 
-func renderDeploymentPlanSpec(spec DeploymentPlanSpec, inputs map[string]string) DeploymentPlanSpec {
-	spec.Release = renderCICDReleaseReference(spec.Release, inputs)
-	spec.Target.Environment = renderCICDTemplate(spec.Target.Environment, inputs)
-	spec.DesiredState.Application = renderCICDTemplate(spec.DesiredState.Application, inputs)
-	spec.DesiredState.Delivery = renderCICDTemplate(spec.DesiredState.Delivery, inputs)
-	spec.DesiredState.ConfigurationSource = renderCICDTemplate(spec.DesiredState.ConfigurationSource, inputs)
-	spec.DesiredState.Authorization = renderCICDTemplate(spec.DesiredState.Authorization, inputs)
-	if spec.DesiredState.Security != nil && spec.DesiredState.Security.MachineOAuthClients != nil {
-		machineOAuthClients := *spec.DesiredState.Security.MachineOAuthClients
-		machineOAuthClients.Manifest = renderCICDTemplate(machineOAuthClients.Manifest, inputs)
-		machineOAuthClients.ApplicationState = renderCICDTemplate(machineOAuthClients.ApplicationState, inputs)
-		machineOAuthClients.SecretState = renderCICDTemplate(machineOAuthClients.SecretState, inputs)
-		security := *spec.DesiredState.Security
-		security.MachineOAuthClients = &machineOAuthClients
-		spec.DesiredState.Security = &security
-	}
-	if spec.DesiredState.Artifacts != nil {
-		artifacts := *spec.DesiredState.Artifacts
-		if artifacts.Source != nil {
-			source := *artifacts.Source
-			source.Kind = renderCICDTemplate(source.Kind, inputs)
-			source.ReleaseID = renderCICDTemplate(source.ReleaseID, inputs)
-			source.CredentialReference = renderCICDTemplate(source.CredentialReference, inputs)
-			artifacts.Source = &source
-		}
-		if artifacts.Target != nil {
-			target := *artifacts.Target
-			target.Mode = renderCICDTemplate(target.Mode, inputs)
-			target.RegistryCredentialReference = renderCICDTemplate(target.RegistryCredentialReference, inputs)
-			artifacts.Target = &target
-		}
-		spec.DesiredState.Artifacts = &artifacts
-	}
-	spec.DesiredState.RetiredResources = renderCICDTemplate(spec.DesiredState.RetiredResources, inputs)
-	for i := range spec.Acceptance.RequiredEvidence {
-		spec.Acceptance.RequiredEvidence[i] = renderCICDTemplate(spec.Acceptance.RequiredEvidence[i], inputs)
-	}
-	for i := range spec.Acceptance.RequiredFailureEvidence {
-		spec.Acceptance.RequiredFailureEvidence[i] = renderCICDTemplate(spec.Acceptance.RequiredFailureEvidence[i], inputs)
-	}
-	spec.Policy.Mutation = renderCICDTemplate(spec.Policy.Mutation, inputs)
-	spec.Policy.Convergence = renderCICDTemplate(spec.Policy.Convergence, inputs)
-	spec.Policy.FailureMode = renderCICDTemplate(spec.Policy.FailureMode, inputs)
-	return spec
+func renderDeploymentIntent(intent DeploymentTemplateSpec, inputs map[string]string) DeploymentTemplateSpec {
+	intent.Application = renderCICDTemplate(intent.Application, inputs)
+	intent.Environment = renderCICDTemplate(intent.Environment, inputs)
+	intent.ConfigurationSource = renderCICDTemplate(intent.ConfigurationSource, inputs)
+	intent.Release = renderCICDReleaseReference(intent.Release, inputs)
+	return intent
 }
 
 func renderCICDReleaseReference(release CICDReleaseReference, inputs map[string]string) CICDReleaseReference {
@@ -631,235 +577,143 @@ func renderCICDReleaseReference(release CICDReleaseReference, inputs map[string]
 		manifest.Digest = renderCICDTemplate(manifest.Digest, inputs)
 		release.Manifest = &manifest
 	}
+	release.Version = renderCICDTemplate(release.Version, inputs)
 	return release
 }
 
-func validateCICDArtifactContract(artifact CICDArtifactContract) error {
-	if strings.TrimSpace(artifact.SourceRepository) == "" {
-		return fmt.Errorf("artifact contract source repository is required")
-	}
-	if strings.TrimSpace(artifact.SourceBranch) == "" {
-		return fmt.Errorf("artifact contract source branch is required")
-	}
-	if len(artifact.Services) == 0 {
-		return fmt.Errorf("artifact contract services are required")
-	}
-	if strings.TrimSpace(artifact.ImageTagPattern) == "" {
-		return fmt.Errorf("artifact contract image tag pattern is required")
-	}
-	if strings.TrimSpace(artifact.ImageReferenceFormat) == "" {
-		return fmt.Errorf("artifact contract image reference format is required")
-	}
-	if len(artifact.HelmImageBindings) != len(artifact.Services) {
-		return fmt.Errorf("artifact contract must bind every service to Helm")
-	}
-	for _, service := range artifact.Services {
-		if strings.TrimSpace(artifact.HelmImageBindings[service]) == "" {
-			return fmt.Errorf("artifact contract service %q is missing a Helm binding", service)
+func validateCICDArtifactContract(release CICDReleaseReference, artifact CICDArtifactContract, executor CICDEnvironmentExecutor) error {
+	switch artifact.Type {
+	case cicdArtifactImageSet:
+		if len(artifact.Services) == 0 {
+			return fmt.Errorf("image-set artifact contract services are required")
 		}
+		if strings.TrimSpace(artifact.ImageTagPattern) == "" {
+			return fmt.Errorf("image-set artifact contract image tag pattern is required")
+		}
+		tagPattern, err := regexp.Compile(artifact.ImageTagPattern)
+		if err != nil {
+			return fmt.Errorf("image-set artifact contract image tag pattern is invalid: %w", err)
+		}
+		if release.Version != "" {
+			if strings.TrimSpace(artifact.SourceRegistry) == "" {
+				return fmt.Errorf("version image-set artifact contract source registry is required")
+			}
+			if !tagPattern.MatchString(release.Version) {
+				return fmt.Errorf("release.version %q does not match image tag pattern", release.Version)
+			}
+		} else if release.Source != nil {
+			if strings.TrimSpace(artifact.SourceRepository) == "" {
+				return fmt.Errorf("image-set artifact contract source repository is required")
+			}
+			if strings.TrimSpace(artifact.SourceBranch) == "" {
+				return fmt.Errorf("image-set artifact contract source branch is required")
+			}
+			if artifact.SourceRepository != release.Source.Repository {
+				return fmt.Errorf("artifact source repository does not match release source repository")
+			}
+			if artifact.SourceBranch != release.Source.Branch {
+				return fmt.Errorf("artifact source branch does not match release source branch")
+			}
+		} else {
+			return fmt.Errorf("image-set artifact contract requires a source or version release")
+		}
+		seenServices := make(map[string]bool, len(artifact.Services))
+		for _, service := range artifact.Services {
+			service = strings.TrimSpace(service)
+			if service == "" {
+				return fmt.Errorf("image-set artifact contract services must not contain empty names")
+			}
+			if seenServices[service] {
+				return fmt.Errorf("image-set artifact contract service %q is duplicated", service)
+			}
+			seenServices[service] = true
+		}
+		if executor.Type == cicdExecutorHelm {
+			if strings.TrimSpace(executor.Config.Registry) == "" {
+				return fmt.Errorf("Helm image-set executor registry is required")
+			}
+			for _, service := range artifact.Services {
+				if strings.TrimSpace(executor.Config.ImageBindings[service]) == "" {
+					return fmt.Errorf("Helm image-set executor service %q is missing an image binding", service)
+				}
+			}
+		}
+		return nil
+	case cicdArtifactManifest:
+		if release.Manifest == nil {
+			return fmt.Errorf("manifest artifact contract requires a manifest release")
+		}
+		if artifact.SourceRegistry != "" ||
+			artifact.SourceRepository != "" ||
+			artifact.SourceBranch != "" ||
+			len(artifact.Services) > 0 ||
+			artifact.ImageTagPattern != "" ||
+			artifact.ImageTagTimeZone != "" ||
+			artifact.ImageReferenceFormat != "" {
+			return fmt.Errorf("manifest artifact contract must not contain image-set fields")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported artifact contract type %q", artifact.Type)
 	}
-	return nil
 }
 
-func validateCICDDesiredStateExtensions(desiredState CICDDesiredState) error {
-	if desiredState.Security != nil {
-		machineOAuthClients := desiredState.Security.MachineOAuthClients
-		if machineOAuthClients == nil {
-			return fmt.Errorf("spec.plan.desiredState.security.machineOauthClients is required")
-		}
-		if strings.TrimSpace(machineOAuthClients.Manifest) == "" ||
-			strings.TrimSpace(machineOAuthClients.ApplicationState) == "" ||
-			strings.TrimSpace(machineOAuthClients.SecretState) == "" {
-			return fmt.Errorf("spec.plan.desiredState.security.machineOauthClients requires manifest, applicationState, and secretState")
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
 		}
 	}
-	if desiredState.Artifacts != nil {
-		if desiredState.Artifacts.Source == nil || desiredState.Artifacts.Target == nil {
-			return fmt.Errorf("spec.plan.desiredState.artifacts requires source and target")
-		}
-		source := desiredState.Artifacts.Source
-		if strings.TrimSpace(source.Kind) == "" ||
-			strings.TrimSpace(source.ReleaseID) == "" ||
-			strings.TrimSpace(source.CredentialReference) == "" {
-			return fmt.Errorf("spec.plan.desiredState.artifacts.source requires kind, releaseId, and credentialReference")
-		}
-		target := desiredState.Artifacts.Target
-		if strings.TrimSpace(target.Mode) == "" ||
-			strings.TrimSpace(target.RegistryCredentialReference) == "" {
-			return fmt.Errorf("spec.plan.desiredState.artifacts.target requires mode and registryCredentialReference")
-		}
+	return count
+}
+
+func validateCICDVerificationProfile(name string, profile CICDVerificationProfile) error {
+	if len(normalizeEvidenceKinds(profile.RequiredEvidence)) == 0 {
+		return fmt.Errorf("verification profile %q requiredEvidence is required", name)
 	}
 	return nil
 }
 
 func validateCICDEnvironmentProfile(name string, profile CICDEnvironmentProfile) error {
-	required := map[string]string{
-		"target":         profile.Target,
-		"cluster":        profile.Cluster,
-		"instance":       profile.Instance,
-		"deploymentMode": profile.DeploymentMode,
+	requiredTarget := map[string]string{
+		"target.name":     profile.Target.Name,
+		"target.cluster":  profile.Target.Cluster,
+		"target.instance": profile.Target.Instance,
 	}
-	for field, value := range required {
+	for field, value := range requiredTarget {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("environment %q %s is required", name, field)
 		}
 	}
-
-	switch profile.DeploymentMode {
-	case "control-plane":
-		if err := requireCICDEnvironmentFields(name, map[string]string{
-			"namespace":                 profile.Namespace,
-			"release":                   profile.Release,
-			"workload":                  profile.Workload,
-			"container":                 profile.Container,
-			"registry":                  profile.Registry,
-			"releaseManifestRepository": profile.ReleaseManifestRepository,
-			"chart":                     profile.Chart,
-			"values":                    profile.Values,
-		}); err != nil {
-			return err
+	if strings.TrimSpace(profile.VerificationProfile) == "" {
+		return fmt.Errorf("environment %q verificationProfile is required", name)
+	}
+	switch profile.Executor.Type {
+	case cicdExecutorHelm:
+		required := map[string]string{
+			"executor.config.namespace": profile.Executor.Config.Namespace,
+			"executor.config.release":   profile.Executor.Config.Release,
+			"executor.config.chart":     profile.Executor.Config.Chart,
+			"executor.config.values":    profile.Executor.Config.Values,
 		}
-	case "application":
-		if err := requireCICDEnvironmentFields(name, map[string]string{
-			"namespace":                 profile.Namespace,
-			"release":                   profile.Release,
-			"registry":                  profile.Registry,
-			"releaseManifestRepository": profile.ReleaseManifestRepository,
-			"chart":                     profile.Chart,
-			"values":                    profile.Values,
-			"runtimeFiles":              profile.RuntimeFiles,
-		}); err != nil {
-			return err
+		for field, value := range required {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("environment %q %s is required", name, field)
+			}
 		}
-	case "carrier-site":
-		if err := requireCICDEnvironmentFields(name, map[string]string{
-			"namespace":                 profile.Namespace,
-			"release":                   profile.Release,
-			"registry":                  profile.Registry,
-			"releaseManifestRepository": profile.ReleaseManifestRepository,
-			"chart":                     profile.Chart,
-			"values":                    profile.Values,
-		}); err != nil {
-			return err
-		}
-	case "external-control-plane":
-		if err := requireCICDEnvironmentFields(name, map[string]string{
-			"controlPlaneEnvironment": profile.ControlPlaneEnvironment,
-			"values":                  profile.Values,
-		}); err != nil {
-			return err
-		}
-		if len(profile.PublicHosts) == 0 {
-			return fmt.Errorf("external-control-plane environment %q publicHosts are required", name)
-		}
-		return nil
 	default:
-		return fmt.Errorf("environment %q deploymentMode %q is unsupported", name, profile.DeploymentMode)
+		return fmt.Errorf("environment %q has unsupported executor type %q", name, profile.Executor.Type)
 	}
-
-	if len(profile.HealthChecks.Public) == 0 {
-		return fmt.Errorf("environment %q public health checks are required", name)
-	}
-	for _, check := range profile.HealthChecks.Public {
+	for _, check := range profile.Executor.Config.HealthChecks.Public {
 		if strings.TrimSpace(check.ID) == "" || strings.TrimSpace(check.URL) == "" || check.ExpectedStatus <= 0 {
 			return fmt.Errorf("environment %q public health check requires id, url, and expected status", name)
 		}
 	}
-	if profile.DeploymentMode == "application" {
-		if strings.TrimSpace(profile.RuntimeFiles) == "" {
-			return fmt.Errorf("application environment %q runtime files are required", name)
+	for _, check := range profile.Executor.Config.HealthChecks.Workloads {
+		if strings.TrimSpace(check.Service) == "" || check.MinReadyReplicas < 1 {
+			return fmt.Errorf("environment %q workload health check requires service and a positive ready replica count", name)
 		}
-		if len(profile.HealthChecks.Workloads) == 0 {
-			return fmt.Errorf("application environment %q workload health checks are required", name)
-		}
-		for _, check := range profile.HealthChecks.Workloads {
-			if strings.TrimSpace(check.Service) == "" || check.MinReadyReplicas < 1 || !check.RequireEndpoints {
-				return fmt.Errorf("application environment %q workload health checks must require service readiness and endpoints", name)
-			}
-		}
-	}
-	if profile.RegistryCredential != nil {
-		if strings.TrimSpace(profile.RegistryCredential.Namespace) == "" ||
-			strings.TrimSpace(profile.RegistryCredential.SecretName) == "" ||
-			strings.TrimSpace(profile.RegistryCredential.Key) == "" {
-			return fmt.Errorf("environment %q registryCredential requires namespace, secretName, and key", name)
-		}
-	}
-	for service, namespace := range profile.WorkloadNamespaces {
-		if strings.TrimSpace(service) == "" || strings.TrimSpace(namespace) == "" {
-			return fmt.Errorf("environment %q workloadNamespaces requires non-empty service and namespace", name)
-		}
-	}
-	if profile.ArtifactSync != nil {
-		for field, ref := range map[string]*CICDKubernetesObjectReference{
-			"sourceCredentialRef":   profile.ArtifactSync.SourceCredentialRef,
-			"registryCredentialRef": profile.ArtifactSync.RegistryCredentialRef,
-		} {
-			if ref == nil {
-				continue
-			}
-			if ref.Kind != "KubernetesSecret" || strings.TrimSpace(ref.Name) == "" {
-				return fmt.Errorf("environment %q artifactSync.%s must reference a KubernetesSecret", name, field)
-			}
-		}
-	}
-	for _, resource := range profile.RetiredResources {
-		if strings.TrimSpace(resource.APIVersion) == "" ||
-			strings.TrimSpace(resource.Kind) == "" ||
-			strings.TrimSpace(resource.Name) == "" ||
-			strings.TrimSpace(resource.DeletionPolicy) == "" {
-			return fmt.Errorf("environment %q retiredResources entries require apiVersion, kind, name, and deletionPolicy", name)
-		}
-		if strings.TrimSpace(resource.Expected.Manager) == "" ||
-			strings.TrimSpace(resource.Expected.IngressClassName) == "" ||
-			len(resource.Expected.Hosts) == 0 {
-			return fmt.Errorf("environment %q retiredResources expected state is incomplete", name)
-		}
-	}
-	return nil
-}
-
-func requireCICDEnvironmentFields(name string, fields map[string]string) error {
-	for field, value := range fields {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("environment %q %s is required", name, field)
-		}
-	}
-	return nil
-}
-
-func validateCICDModelRouting(application string, routing *CICDModelRouting) error {
-	if application != "doops-agent" {
-		return nil
-	}
-	if routing == nil || strings.TrimSpace(routing.Policy) == "" {
-		return fmt.Errorf("doops-agent environment modelRouting.policy is required")
-	}
-	switch routing.Policy {
-	case "single-model", "tiered":
-		return nil
-	default:
-		return fmt.Errorf("doops-agent modelRouting.policy must be single-model or tiered")
-	}
-}
-
-func validateCICDModelSettings(application string, settings *CICDModelSettings) error {
-	if application != "doops-agent" {
-		return nil
-	}
-	if settings == nil {
-		return fmt.Errorf("doops-agent environment modelSettings are required")
-	}
-	provider := strings.TrimSpace(settings.Provider)
-	model := strings.TrimSpace(settings.Model)
-	if provider == "" || model == "" {
-		return fmt.Errorf("doops-agent modelSettings.provider and model are required")
-	}
-	if !strings.HasPrefix(model, provider+"/") {
-		return fmt.Errorf("doops-agent modelSettings.model must use the declared provider prefix")
-	}
-	if strings.TrimSpace(settings.SecretRef.Name) == "" || strings.TrimSpace(settings.SecretRef.Key) == "" {
-		return fmt.Errorf("doops-agent modelSettings.secretRef.name and key are required")
 	}
 	return nil
 }
@@ -918,32 +772,30 @@ func validateDeploymentPlan(plan DeploymentPlan) error {
 	if strings.TrimSpace(plan.Digest) == "" {
 		return fmt.Errorf("deployment plan digest is required")
 	}
-	if err := validateDeploymentPlanSpec(plan.Spec, false); err != nil {
+	if err := validateDeploymentPlanSpec(plan.Spec); err != nil {
 		return err
 	}
 	if plan.Spec.Target.Profile == nil {
 		return fmt.Errorf("deployment plan resolved environment profile is required")
 	}
-	if plan.Spec.Target.ExecutionTarget != plan.Spec.Target.Profile.Target {
+	profile := *plan.Spec.Target.Profile
+	if plan.Spec.Target.ExecutionTarget != profile.Target.Name {
 		return fmt.Errorf("deployment plan execution target does not match environment profile")
 	}
-	if err := validateCICDEnvironmentProfile(plan.Spec.Target.Environment, *plan.Spec.Target.Profile); err != nil {
+	if plan.Spec.Acceptance.VerificationProfile != profile.VerificationProfile {
+		return fmt.Errorf("deployment plan verification profile does not match environment profile")
+	}
+	if err := validateCICDEnvironmentProfile(plan.Spec.Target.Environment, profile); err != nil {
 		return err
 	}
-	if err := validateCICDModelRouting(plan.Spec.DesiredState.Application, plan.Spec.Target.Profile.ModelRouting); err != nil {
-		return err
-	}
-	if err := validateCICDModelSettings(plan.Spec.DesiredState.Application, plan.Spec.Target.Profile.ModelSettings); err != nil {
-		return err
-	}
-	profileDigest, err := digestDeploymentValue(*plan.Spec.Target.Profile)
+	profileDigest, err := digestDeploymentValue(profile)
 	if err != nil {
 		return err
 	}
 	if plan.Spec.Target.ProfileDigest != profileDigest {
 		return fmt.Errorf("deployment plan environment profile digest mismatch")
 	}
-	if err := validateCICDArtifactContract(plan.Spec.ArtifactContract); err != nil {
+	if err := validateCICDArtifactContract(plan.Spec.Release, plan.Spec.ArtifactContract, profile.Executor); err != nil {
 		return err
 	}
 	expectedDigest, err := digestDeploymentPlan(plan)
@@ -965,41 +817,30 @@ func validateCICDServerBinding(server Server, plan DeploymentPlan) error {
 		return fmt.Errorf("configured target %q does not match deployment plan target %q", server.Name, plan.Spec.Target.ExecutionTarget)
 	}
 	cluster := strings.TrimSpace(server.Cluster)
-	if cluster == "" {
-		cluster = "default"
-	}
 	instance := strings.TrimSpace(server.Instance)
-	if instance == "" {
-		instance = server.Name
+	if cluster == "" || instance == "" {
+		return fmt.Errorf("configured target %q requires explicit cluster and instance bindings", server.Name)
 	}
-	if cluster != profile.Cluster || instance != profile.Instance {
-		return fmt.Errorf("configured target %q resolves to %s/%s, but deployment plan requires %s/%s", server.Name, cluster, instance, profile.Cluster, profile.Instance)
+	if cluster != profile.Target.Cluster || instance != profile.Target.Instance {
+		return fmt.Errorf(
+			"configured target %q resolves to %s/%s, but deployment plan requires %s/%s",
+			server.Name,
+			cluster,
+			instance,
+			profile.Target.Cluster,
+			profile.Target.Instance,
+		)
 	}
 	return nil
 }
 
-func findForbiddenCICDDeclarationField(node *yaml.Node) (string, bool) {
-	if node == nil {
-		return "", false
-	}
-	if node.Kind == yaml.MappingNode {
-		for index := 0; index+1 < len(node.Content); index += 2 {
-			key := node.Content[index]
-			if _, forbidden := forbiddenCICDDeclarationFields[key.Value]; forbidden {
-				return key.Value, true
-			}
-			if field, found := findForbiddenCICDDeclarationField(node.Content[index+1]); found {
-				return field, true
-			}
-		}
-		return "", false
-	}
-	for _, child := range node.Content {
-		if field, found := findForbiddenCICDDeclarationField(child); found {
-			return field, true
+func hasUnresolvedCICDTemplate(values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(value, "${") {
+			return true
 		}
 	}
-	return "", false
+	return false
 }
 
 func renderCICDTemplate(value string, inputs map[string]string) string {

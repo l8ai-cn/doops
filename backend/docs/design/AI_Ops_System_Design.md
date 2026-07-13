@@ -1,117 +1,88 @@
-# doops.sh — 分布式 AI 运维执行系统
+# doops.sh 分布式 Agent 运维系统
 
-`doops.sh` 是面向远端运维节点的执行与智能分析入口。系统把确定性命令和自然语言任务拆成两条路径：明确命令走 `exec` 快路径，复杂意图走 `ask` 慢路径，由边缘节点上的 doagent 结合 Skills 自主分析、执行和回传结果。
+CI/CD 的权威职责边界见
+[`AGENT_NATIVE_CICD.md`](../AGENT_NATIVE_CICD.md)。
 
-## 核心调用链路
+`doops.sh` 把确定性控制面与 Agent 原生执行面分开：CLI、Gateway 和边缘适配器负责
+可重复验证的协议、安全和工作区边界；doagent 负责上下文、规划、多 Agent、Skill 和
+工具执行。
+
+## 架构
 
 ```mermaid
 flowchart LR
-    subgraph UserSide["用户侧"]
-        U["用户 / IDE / 终端"]
-        CLI["doops CLI"]
-        SK["doops Skill"]
-        U --> CLI
-        U --> SK
-    end
+    USER["用户 / IDE / 自动化"]
+    CLI["doops CLI"]
+    GW["doops-gateway\n鉴权 / RBAC / Queue / Audit"]
+    EDGE["doops-agent\nMCP / workspace / ACP adapter"]
+    ENGINE["doagent\n上下文 / 多 Agent / Skill / 工具"]
+    TARGET["Host / Kubernetes / Runtime / External API"]
 
-    subgraph ControlPlane["控制面"]
-        GW["doops-gateway\n公网入口 /v1/rpc\nRBAC / Audit / Queue"]
-        DB["SQLite\nusers / tokens / grants / audit / targets"]
-        GW <--> DB
-    end
-
-    subgraph EdgeNode["边缘节点"]
-        AG["doops-agent\n/ws + /v1/agent/connect"]
-        ACP["doagent ACP HTTP\n127.0.0.1:9000"]
-        WS["/root/ws/<session>\n工作区 / 审计 / 产物"]
-        SKILLS["运维 Skills"]
-        AG --> ACP
-        ACP --> SKILLS
-        AG --> WS
-        ACP --> WS
-    end
-
-    subgraph Infra["目标环境"]
-        K8S["Kubernetes / K3s"]
-        CTR["Docker / nerdctl / containerd"]
-        HOST["Host OS / Filesystem / PTY"]
-    end
-
-    CLI -->|"直连模式\nWS /ws"| AG
-    SK -->|"调用 doops CLI"| CLI
-    CLI -->|"隧道模式\nWS /v1/rpc"| GW
-    GW -->|"WS /v1/agent/connect"| AG
-
-    AG -->|"exec / read / write / push / pull / info / clean / check"| HOST
-    AG -->|"kubectl / rollout / logs"| K8S
-    AG -->|"buildctl / docker / nerdctl"| CTR
-    ACP -->|"ask / chat / 多轮任务分析"| HOST
-    ACP -->|"部署 / 巡检 / 总结 / 生成脚本"| K8S
-    ACP -->|"镜像构建 / 容器诊断"| CTR
+    USER --> CLI
+    CLI -->|"直连"| EDGE
+    CLI -->|"隧道"| GW
+    GW --> EDGE
+    EDGE --> ENGINE
+    EDGE -->|"确定性原子工具"| TARGET
+    ENGINE -->|"Agent 原生工具调用"| TARGET
 ```
 
-主链路分成两种连接模式和两种执行路径：
+## 分层职责
 
-- 连接模式：CLI 可以直连 `doops-agent`，也可以先连 `doops-gateway` 再路由到内网 agent。
-- 执行路径：确定性命令走 `exec/read/write/push/pull/info/check/clean`，复杂意图走 `ask`，由 `doagent` 结合 Skills 和工作区上下文处理。
+| 层 | 负责 |
+| :--- | :--- |
+| CLI | 配置读取、协议编译、工作区同步、结构化结果验证 |
+| Gateway | 用户和 target 鉴权、队列、并发限制、资源锁、审计、路由 |
+| doops-agent | MCP 工具、session 工作区、ACP 会话和事件适配 |
+| doagent | 上下文、规划、多 Agent 委派、Skill 组合、工具选择 |
+| Skill | 领域目标、不变量、授权、证据和输出契约 |
+| 工具 | 小而确定的执行或观察能力 |
 
-## 组件分工
+DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 
-| 层级 | 组件 | 角色 |
+## 执行路径
+
+| 路径 | 入口 | 适用任务 |
 | :--- | :--- | :--- |
-| 客户端 | `doops` CLI | 读取目标配置，建立 WebSocket，发起 exec/ask/push/pull/read/write |
-| Skill | `.agent/skills/doops/SKILL.md` | 告诉上位 Agent 如何使用 doops，不直接保存凭据 |
-| 网关 | `/app/doops-agent` | 暴露 `/ws`、鉴权、PTY 会话、Git HTTP、文件读写 |
-| AI 内核 | `/usr/local/bin/do-agent` | 通过 ACP HTTP 处理自然语言任务 |
-| 配置 | `/root/.agent/settings.json` | doagent provider/model 配置，密钥由 Secret 或本地文件注入 |
+| 确定性工具 | `exec/read/write/push/pull/info` | 调用方已经知道准确原子操作 |
+| Agent 任务 | `ask` / `doops_agent_prompt` | 需要观察、推理、Skill 或多 Agent 协作 |
 
-## 协议与鉴权
+这两条路径没有自动 fallback。失败必须保留原路径的真实错误，不能静默改写成另一种
+执行方式。
 
-- CLI 到网关统一使用 WebSocket：`ws://<node-ip>:42222/ws`。
-- WebSocket 握手使用 `X-Doops-Key` 或 `Authorization: Bearer <token>`。
-- 客户端配置字段统一为 `token`。
-- 模型网关统一使用 `https://api.example.com` 或 `https://api.example.com/v1`。
+## Agent 原生约束
 
-## 快路径与慢路径
+- doops-agent 只通过 ACP 创建会话、设置模式、发送 prompt 和转发事件。
+- 每个 prompt 都显式设置 `auto`、`plan` 或 `build` 模式。
+- doops-agent 不自动回复 `permission.updated`。
+- Skill 选择和多 Agent 调度由 doagent 完成。
+- system prompt 和 Skill 不写死环境命令、target 坐标或固定回滚实现。
+- CI/CD 只使用 `doops.sh/v2` 的 `DeploymentPlan` 与 `ReconciliationResult`。
 
-| 路径 | 入口 | 用途 | 依赖 |
-| :--- | :--- | :--- | :--- |
-| 快路径 | `doops exec` / `doops_shell` | 明确命令、CI 检查、确定性发布 | doops-agent 网关 |
-| 慢路径 | `doops ask` / `doops_agent_prompt` | 复杂排障、自动探索、总结报告 | doops-agent + doagent ACP HTTP + settings.json |
+## 工作区与状态
 
-快路径必须在 doagent 不可用时仍能工作；慢路径失败时应返回清晰错误，例如 doagent ACP 未启动、模型配置缺失或 API 网关不可达。
+- session 工作区是 Agent 和确定性工具共享的任务上下文。
+- Git 工作区同步必须绑定精确 commit。
+- CI/CD 在锁内校验 `.doops-ready`，防止并发 push 替换待发布代码。
+- 密钥通过 Secret 或节点本地设置注入，不进入 Skill、计划、日志和仓库。
+
+## Skill 和脚本
+
+Skill 描述“要达到什么状态、哪些事实不能改变、什么证据算完成”，不描述固定命令
+序列。doagent 可以组合多个 Skill 和工具，也可以委派多个 Agent。
+
+脚本仅用于经过审查的原子能力或确定性校验。脚本必须显式输入、严格失败、可观察，
+不得承担规划、Skill 路由、自动修复、权限批准或完整发布控制。
 
 ## 部署形态
 
-默认镜像为：
+边缘镜像包含：
 
-```text
-docker.cnb.cool/l8ai/ai/doops.sh:v1.1
-```
+- `/app/doops-agent`：Go 网关与 ACP 适配器；
+- `/usr/local/bin/do-agent`：doagent 原生 Agent 引擎；
+- `/app/skills`：运行时安装的 Skills；
+- `/root/ws/<session>`：会话工作区；
+- `/root/.agent/settings.json`：模型和 provider 配置。
 
-发布同时维护基础镜像：
-
-```text
-docker.cnb.cool/l8ai/ai/doops.sh/base:v1
-```
-
-`doops.sh/base` 包含 sandbox、doagent、BuildKit 和系统工具；`doops.sh` 只叠加 doops-agent、skills、docs 和 entrypoint。K8s 日常只滚动 `doops.sh`，基础镜像只在运行时能力变化时升级。
-
-镜像内关键路径：
-
-- `/app/doops-agent`：Go Gateway
-- `/usr/local/bin/do-agent`：doagent AI 内核
-- `/app/skills`：doops 运维 Skills
-- `/root/ws/<session>`：远端工作区
-- `/root/.agent/settings.json`：doagent 模型配置
-
-## Skill 编写约束
-
-业务项目可以在 `.agent/skills/<name>/SKILL.md` 中沉淀 SOP。Skill 应描述目标、检查点和允许的命令边界；远端代码同步统一通过 `doops push`，确定性操作优先通过 `doops exec`，复杂排障才交给 `doops ask`。
-
-## 安全边界
-
-- 日常连接只使用 agent token，不依赖 SSH。
-- SSH 仅用于首次自举或 agent 完全不可用时的自恢复。
-- 生产配置中的 API key 不写入 ConfigMap 模板，应通过 Secret 或节点本地 `settings.json` 注入。
-- 发布前必须验证 `/app/doops-agent` 和 `/usr/local/bin/do-agent` 都能在最终镜像内启动。
+发布本身遵循 GitOps 和 Semantic CI/CD：配置进入仓库，目标由环境注册表解析，最终
+状态由外部证据验证。

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -677,6 +679,22 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_agent_prompt":
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
+		operation := strings.ToLower(strings.TrimSpace(args.Operation))
+		nativeMode, err := doagentModeForPrompt(operation, args.ExecutionMode)
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
+		if operation == "reconcile" {
+			if !validAgentPlanDigest(args.PlanDigest) {
+				writeJSON(buildErrorResponse(reqID, -32602, "reconciliation plan_digest must be a sha256 digest"))
+				return
+			}
+			if err := validateReconcileWorkspaceCommit(sessionID, args.WorkspaceCommit); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+				return
+			}
+		}
 		if args.ResponseFormat != "" && args.ResponseFormat != "json" {
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
@@ -707,7 +725,22 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			return
 		}
-		gw.handleAgentPromptWS(ctx, reqID, sessionID, args.Instruction, args.Model, args.ResponseFormat, pushProgress, writeJSON)
+		gw.handleAgentPromptWS(
+			ctx,
+			reqID,
+			sessionID,
+			args.Instruction,
+			args.Model,
+			args.ResponseFormat,
+			agentPromptExecutionContext{
+				NativeMode:      nativeMode,
+				Operation:       operation,
+				PlanDigest:      strings.TrimSpace(args.PlanDigest),
+				WorkspaceCommit: strings.ToLower(strings.TrimSpace(args.WorkspaceCommit)),
+			},
+			pushProgress,
+			writeJSON,
+		)
 
 	case "doops_git_clone":
 		result, err := handleGitClone(argBytes)
@@ -778,8 +811,59 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 }
 
+func doagentModeForPrompt(operation, executionMode string) (string, error) {
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	executionMode = strings.ToLower(strings.TrimSpace(executionMode))
+	switch operation {
+	case "":
+		if executionMode != "" {
+			return "", fmt.Errorf("execution_mode requires operation=reconcile")
+		}
+		return "auto", nil
+	case "reconcile":
+		switch executionMode {
+		case "dry-run":
+			return "plan", nil
+		case "apply":
+			return "build", nil
+		default:
+			return "", fmt.Errorf(`operation=reconcile requires execution_mode "dry-run" or "apply"`)
+		}
+	default:
+		return "", fmt.Errorf("unsupported agent prompt operation: %s", operation)
+	}
+}
+
+func validAgentPlanDigest(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, char := range strings.TrimPrefix(value, "sha256:") {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+type agentPromptExecutionContext struct {
+	NativeMode      string
+	Operation       string
+	PlanDigest      string
+	WorkspaceCommit string
+}
+
+type doagentToolTraceRecord struct {
+	CallID      string `json:"callId"`
+	Tool        string `json:"tool"`
+	Status      string `json:"status"`
+	Observation bool   `json:"observation"`
+	Digest      string `json:"digest"`
+}
+
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
-func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, pushProgress notificationSender, writeJSON func(v interface{})) {
+func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: %s [Model: %s]", instr, model)
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
@@ -859,72 +943,99 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		}
 		gw.sessionMapMu.Unlock()
 		log.Printf("🔗 Bound Doops Session %s -> doagent Session %s", doopsSessionID, targetSessionID)
+	}
 
-		// 仅当显式开启 DOOPS_AGENT_AUTO_APPROVE=1 时才切换到 build 模式
-		// (always_allow=["*"]，所有工具调用自动批准)。默认保持 doagent 的
-		// 安全默认模式，需要人工/逐项确认，避免无人值守地放行任意工具。
-		if agentAutoApproveEnabled() {
-			doagentRPC(doagentURL, map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      "setmode-" + doopsSessionID,
-				"method":  "session/setMode",
-				"params": map[string]interface{}{
-					"sessionId": targetSessionID,
-					"modeId":    "build",
-				},
-			})
-			log.Printf("🔓 Session %s set to build mode (auto-approve all tools)", targetSessionID)
-		} else {
-			log.Printf("🔒 Session %s using default mode; set DOOPS_AGENT_AUTO_APPROVE=1 to auto-approve tool calls", targetSessionID)
-		}
-
-		// 设置模型（仅当调用方显式指定时覆盖默认模型）
+	// 仅当调用方显式指定时覆盖模型，并在复用会话时同样生效。
+	if model != "" {
 		targetModel := model
-		if targetModel != "" {
-			if !strings.Contains(targetModel, "/") {
-				targetModel = "openai/" + targetModel
-			}
-			doagentRPC(doagentURL, map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      "setmodel-" + doopsSessionID,
-				"method":  "session/setModel",
-				"params": map[string]interface{}{
-					"sessionId": targetSessionID,
-					"model":     targetModel,
-				},
-			})
+		if !strings.Contains(targetModel, "/") {
+			targetModel = "openai/" + targetModel
+		}
+		if _, err := doagentRPC(doagentURL, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      "setmodel-" + doopsSessionID,
+			"method":  "session/setModel",
+			"params": map[string]interface{}{
+				"sessionId": targetSessionID,
+				"model":     targetModel,
+			},
+		}); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent session/setModel failed: "+err.Error()))
+			return
 		}
 	}
+
+	if _, err := doagentRPC(doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "setmode-" + doopsSessionID,
+		"method":  "session/setMode",
+		"params": map[string]interface{}{
+			"sessionId": targetSessionID,
+			"modeId":    execution.NativeMode,
+		},
+	}); err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/setMode failed: "+err.Error()))
+		return
+	}
+	log.Printf("🧭 Session %s using native doagent mode %s", targetSessionID, execution.NativeMode)
 
 	// 启动 SSE 事件订阅（在 prompt 之前连接，防止丢失事件）
 	sseCtx, sseCancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer sseCancel()
 
-	sseDone := make(chan error, 1)
-	go func() {
-		sseDone <- subscribeDoagentSSEWithCollector(sseCtx, doagentURL, targetSessionID, pushProgress, nil)
-	}()
-
-	// 等待 SSE 连接建立（本地连接 <10ms，200ms 留足余量）
-	time.Sleep(200 * time.Millisecond)
-
-	// 发送 prompt（doagent 对长任务返回 202 Accepted，实际执行异步进行）
-	go func() {
-		_, err := doagentRPC(doagentURL, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      "prompt-" + doopsSessionID,
-			"method":  "session/prompt",
-			"params": map[string]interface{}{
-				"sessionId": targetSessionID,
-				"prompt":    instr,
-			},
-		})
-		if err != nil {
-			log.Printf("⚠️ doagent prompt RPC returned: %v", err)
+	var terminalTurnID string
+	toolTrace := make(map[string]doagentToolTraceRecord)
+	var collector doagentSSECollector
+	if responseFormat == "json" {
+		collector = func(update map[string]interface{}) (bool, bool, error) {
+			switch updateType, _ := update["sessionUpdate"].(string); updateType {
+			case "tool_call_update":
+				if record, ok, err := doagentToolTraceRecordFromUpdate(update); err != nil {
+					return false, false, err
+				} else if ok {
+					toolTrace[record.CallID] = record
+				}
+			case "turn_finished":
+				terminalTurnID, _ = update["turnId"].(string)
+				terminalTurnID = strings.TrimSpace(terminalTurnID)
+			}
+			return false, false, nil
 		}
+	}
+	sseDone := make(chan error, 1)
+	sseReady := make(chan error, 1)
+	go func() {
+		sseDone <- subscribeDoagentSSEWithCollectorReady(
+			sseCtx,
+			doagentURL,
+			targetSessionID,
+			pushProgress,
+			collector,
+			sseReady,
+		)
 	}()
+	if err := <-sseReady; err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent SSE subscribe failed: "+err.Error()))
+		return
+	}
 
-	// 等待 SSE 完成（agent_message/error 事件或超时）
+	// session/prompt 的同步响应只代表 admission；终态仍以 SSE turn_finished 为准。
+	if _, err := doagentRPC(doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "prompt-" + doopsSessionID,
+		"method":  "session/prompt",
+		"params": map[string]interface{}{
+			"sessionId": targetSessionID,
+			"prompt":    instr,
+		},
+	}); err != nil {
+		sseCancel()
+		<-sseDone
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/prompt failed: "+err.Error()))
+		return
+	}
+
+	// 等待权威 turn_finished 终态或错误。
 	if err := <-sseDone; err != nil && err != context.Canceled {
 		errMsg := fmt.Sprintf("doagent execution error: %v", err)
 		log.Printf("⚠️ %s", errMsg)
@@ -940,6 +1051,17 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result artifact: %v", err)))
 			return
+		}
+		if execution.Operation == "reconcile" {
+			if err := attestReconciliationResult(
+				structuredContent,
+				execution,
+				terminalTurnID,
+				toolTrace,
+			); err != nil {
+				writeJSON(buildToolErrorResponse(reqID, "doagent reconciliation attestation failed: "+err.Error()))
+				return
+			}
 		}
 		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))
 		return
@@ -1475,6 +1597,82 @@ func ensureDoagentResultDirectory(path string) error {
 	return nil
 }
 
+func doagentToolTraceRecordFromUpdate(update map[string]interface{}) (doagentToolTraceRecord, bool, error) {
+	status, _ := update["status"].(string)
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status != "completed" && status != "failed" {
+		return doagentToolTraceRecord{}, false, nil
+	}
+	callID, _ := update["toolCallId"].(string)
+	toolName, _ := update["toolName"].(string)
+	callID = strings.TrimSpace(callID)
+	toolName = strings.TrimSpace(toolName)
+	if callID == "" || toolName == "" {
+		return doagentToolTraceRecord{}, false, fmt.Errorf("terminal tool update requires toolCallId and toolName")
+	}
+	encoded, err := json.Marshal(update)
+	if err != nil {
+		return doagentToolTraceRecord{}, false, fmt.Errorf("encode terminal tool update: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return doagentToolTraceRecord{
+		CallID:      callID,
+		Tool:        toolName,
+		Status:      status,
+		Observation: doagentObservationTool(toolName),
+		Digest:      fmt.Sprintf("sha256:%x", digest[:]),
+	}, true, nil
+}
+
+func doagentObservationTool(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "agent", "append", "bash", "cicdreport", "edit", "executecode", "fileedit", "filewrite",
+		"listagents", "noteedit", "skill", "taskcreate", "teamcreate", "waitagent", "write":
+		return false
+	default:
+		return true
+	}
+}
+
+func attestReconciliationResult(
+	result map[string]interface{},
+	execution agentPromptExecutionContext,
+	turnID string,
+	records map[string]doagentToolTraceRecord,
+) error {
+	if turnID == "" {
+		return fmt.Errorf("turn_finished has no turnId")
+	}
+	toolCalls := make([]doagentToolTraceRecord, 0, len(records))
+	for _, record := range records {
+		toolCalls = append(toolCalls, record)
+	}
+	sort.Slice(toolCalls, func(i, j int) bool {
+		return toolCalls[i].CallID < toolCalls[j].CallID
+	})
+	traceDigest, err := doagentReconciliationTraceDigest(
+		execution.PlanDigest,
+		execution.WorkspaceCommit,
+		turnID,
+		toolCalls,
+	)
+	if err != nil {
+		return err
+	}
+	for _, field := range []string{"evidence", "failureEvidence"} {
+		if err := bindReconciliationEvidenceTrace(result, field, traceDigest, records); err != nil {
+			return err
+		}
+	}
+	result["executionEvidence"] = map[string]interface{}{
+		"turnId":          turnID,
+		"workspaceCommit": execution.WorkspaceCommit,
+		"traceDigest":     traceDigest,
+		"toolCalls":       toolCalls,
+	}
+	return nil
+}
+
 func appendDoagentStructuredResultContract(instruction, resultPath string) string {
 	return instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
 		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
@@ -1508,18 +1706,95 @@ func readDoagentStructuredResult(path string) (string, map[string]interface{}, e
 	return text, object, nil
 }
 
+func bindReconciliationEvidenceTrace(
+	result map[string]interface{},
+	field, traceDigest string,
+	records map[string]doagentToolTraceRecord,
+) error {
+	raw, exists := result[field]
+	if !exists || raw == nil {
+		return nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return fmt.Errorf("%s must be an array", field)
+	}
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("%s items must be objects", field)
+		}
+		callID, _ := item["toolCallId"].(string)
+		callID = strings.TrimSpace(callID)
+		if callID == "" {
+			return fmt.Errorf("%s item toolCallId is required", field)
+		}
+		record, ok := records[callID]
+		if !ok {
+			return fmt.Errorf("%s item toolCallId %q was not observed", field, callID)
+		}
+		if record.Status != "completed" {
+			return fmt.Errorf("%s item toolCallId %q did not complete successfully", field, callID)
+		}
+		if !record.Observation {
+			return fmt.Errorf("%s item toolCallId %q is not an observation call", field, callID)
+		}
+		item["toolCallId"] = callID
+		item["toolDigest"] = record.Digest
+		item["traceDigest"] = traceDigest
+	}
+	return nil
+}
+
+func doagentReconciliationTraceDigest(
+	planDigest, workspaceCommit, turnID string,
+	toolCalls []doagentToolTraceRecord,
+) (string, error) {
+	payload := struct {
+		PlanDigest      string                   `json:"planDigest"`
+		WorkspaceCommit string                   `json:"workspaceCommit"`
+		TurnID          string                   `json:"turnId"`
+		ToolCalls       []doagentToolTraceRecord `json:"toolCalls"`
+	}{
+		PlanDigest:      planDigest,
+		WorkspaceCommit: workspaceCommit,
+		TurnID:          turnID,
+		ToolCalls:       toolCalls,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode reconciliation trace: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", digest[:]), nil
+}
+
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
-// 当收到 agent_message（完成）或 error（失败）事件时返回。
+// 仅当收到权威 turn_finished 或 error 事件时返回。
 func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender) error {
 	return subscribeDoagentSSEWithCollector(ctx, baseURL, sessionID, pushProgress, nil)
 }
 
 func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender, collector doagentSSECollector) error {
+	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil)
+}
+
+func subscribeDoagentSSEWithCollectorReady(
+	ctx context.Context,
+	baseURL string,
+	sessionID string,
+	pushProgress notificationSender,
+	collector doagentSSECollector,
+	ready chan<- error,
+) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/events?sid="+sessionID, nil)
 	if err != nil {
+		if ready != nil {
+			ready <- err
+		}
 		return fmt.Errorf("create SSE request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
@@ -1528,9 +1803,22 @@ func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessi
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		if ready != nil {
+			ready <- err
+		}
 		return fmt.Errorf("SSE connect: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		err := fmt.Errorf("SSE connect returned HTTP %d", resp.StatusCode)
+		if ready != nil {
+			ready <- err
+		}
+		return err
+	}
+	if ready != nil {
+		ready <- nil
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -1640,7 +1928,7 @@ func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessi
 						pushProgress(toolNotification(toolName, status))
 					}
 				case "agent_message":
-					// agent 完成最终回复：content 同样是 map 或 []interface{}
+					// 最终文本先转发，但只有后续 turn_finished 才能结束本轮。
 					switch c := sessionUpdate["content"].(type) {
 					case map[string]interface{}:
 						if text, ok := c["text"].(string); ok && text != "" {
@@ -1661,30 +1949,36 @@ func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessi
 							pushProgress(assistantDeltaNotification(c))
 						}
 					}
-					return nil
 				case "completed", "usage_update":
-					// 任务完成 / token 统计
+					// 非权威状态或 token 统计，继续等待 turn_finished。
+				case "turn_finished":
+					if err := doagentTurnFinishedError(sessionUpdate); err != nil {
+						pushProgress(errorNotification("[error] " + err.Error()))
+						return err
+					}
 					return nil
 				}
 
 			case "permission.updated":
-				// 权限请求 — 在 build 模式下不应出现，但出现时自动批准
+				details := make([]string, 0, 3)
 				if perm, ok := params["permission"].(map[string]interface{}); ok {
 					permID, _ := perm["id"].(string)
-					sessionID, _ := params["sessionId"].(string)
 					if permID != "" {
-						log.Printf("🔑 Auto-approving permission %s for session %s", permID, sessionID)
-						go doagentRPC(baseURL, map[string]interface{}{
-							"jsonrpc": "2.0",
-							"id":      "perm-" + permID,
-							"method":  "permission/reply",
-							"params": map[string]interface{}{
-								"permissionId": permID,
-								"decision":     "allow",
-							},
-						})
+						details = append(details, "id="+permID)
+					}
+					if title, _ := perm["title"].(string); title != "" {
+						details = append(details, "title="+title)
+					}
+					if toolName, _ := perm["toolName"].(string); toolName != "" {
+						details = append(details, "tool="+toolName)
 					}
 				}
+				message := "doagent permission required"
+				if len(details) > 0 {
+					message += ": " + strings.Join(details, ", ")
+				}
+				pushProgress(errorNotification("[error] " + message))
+				return errors.New(message)
 
 			case "error":
 				errMsg := "unknown error"
@@ -1725,6 +2019,28 @@ func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessi
 		return fmt.Errorf("doagent SSE ended before final event")
 	}
 	return fmt.Errorf("doagent SSE ended without events")
+}
+
+func doagentTurnFinishedError(update map[string]interface{}) error {
+	status := strings.TrimSpace(fmt.Sprint(update["status"]))
+	stopReason := strings.TrimSpace(fmt.Sprint(update["stopReason"]))
+	message := strings.TrimSpace(fmt.Sprint(update["failureReason"]))
+	if message == "" || message == "<nil>" {
+		message = strings.TrimSpace(fmt.Sprint(update["error"]))
+	}
+	if message != "" && message != "<nil>" {
+		return fmt.Errorf("doagent turn failed: %s", sanitizeSecretText(message))
+	}
+	if status == "completed" {
+		return nil
+	}
+	if status == "" || status == "<nil>" {
+		status = "unknown"
+	}
+	if stopReason == "" || stopReason == "<nil>" {
+		return fmt.Errorf("doagent turn %s", status)
+	}
+	return fmt.Errorf("doagent turn %s: %s", status, stopReason)
 }
 
 func doagentSSEIdleTimeout() time.Duration {

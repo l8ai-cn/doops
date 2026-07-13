@@ -164,6 +164,10 @@ func buildGatewayAgentURL(rawURL, cluster, instance string) (string, error) {
 	}
 	if u.Path == "" || u.Path == "/" {
 		u.Path = "/v1/agent/connect"
+	} else if strings.TrimRight(u.Path, "/") == "/v1/agent/connect" {
+		u.Path = "/v1/agent/connect"
+	} else {
+		return "", fmt.Errorf("invalid gateway URL path %q: use the doops-gateway base URL or /v1/agent/connect; /ws is the direct-agent endpoint", u.Path)
 	}
 	q := u.Query()
 	q.Set("cluster", cluster)

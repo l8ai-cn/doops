@@ -19,6 +19,17 @@ func TestBuildGatewayAgentURLUsesVersionedEndpoint(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayAgentURLAllowsExplicitVersionedEndpoint(t *testing.T) {
+	got, err := buildGatewayAgentURL("https://gateway.example.com/v1/agent/connect", "dev", "local")
+	if err != nil {
+		t.Fatalf("build url: %v", err)
+	}
+	want := "wss://gateway.example.com/v1/agent/connect?cluster=dev&instance=local"
+	if got != want {
+		t.Fatalf("gateway URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestBuildGatewayAgentURLRejectsInsecureRemoteByDefault(t *testing.T) {
 	// Ensure the default-deny path is exercised regardless of any ambient
 	// DOOPS_ALLOW_INSECURE_GATEWAY value in the developer's shell.
@@ -37,6 +48,13 @@ func TestBuildGatewayAgentURLAllowsInsecureRemoteWithOptIn(t *testing.T) {
 	want := "ws://203.0.113.10:42222/v1/agent/connect?cluster=dev&instance=local"
 	if got != want {
 		t.Fatalf("gateway URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestBuildGatewayAgentURLRejectsLegacyDirectAgentWSPath(t *testing.T) {
+	t.Setenv("DOOPS_ALLOW_INSECURE_GATEWAY", "1")
+	if _, err := buildGatewayAgentURL("http://203.0.113.10:42222/ws", "dev", "local"); err == nil {
+		t.Fatal("legacy direct-agent /ws path must be rejected for gateway reverse tunnel")
 	}
 }
 

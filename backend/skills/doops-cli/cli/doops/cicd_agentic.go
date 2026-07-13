@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -31,8 +32,8 @@ type agenticDeploymentRunner struct {
 	server          Server
 	sourceDirectory string
 	sessionID       string
-	pushWorkspace   func(Server, string, string) error
-	ask             func(string) (ReconciliationResult, error)
+	pushWorkspace   func(Server, string, string) (string, error)
+	ask             func(map[string]interface{}) (ReconciliationResult, error)
 }
 
 type cicdSetFlags map[string]string
@@ -103,6 +104,9 @@ func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRun
 	if request.Command == "plan" {
 		return writeCICDJSON(plan)
 	}
+	if request.DryRun && request.AllowMutate {
+		return fmt.Errorf("--dry-run and --allow-mutate are mutually exclusive")
+	}
 	if !request.DryRun && !request.AllowMutate {
 		return fmt.Errorf("mutating deployment requires --allow-mutate")
 	}
@@ -111,6 +115,9 @@ func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRun
 	}
 	sourceDirectory, err := findCICDSourceDirectory(request.File)
 	if err != nil {
+		return err
+	}
+	if err := validateCICDSourceWorkspace(plan, sourceDirectory); err != nil {
 		return err
 	}
 	runner, cleanup, err := newRunner(plan, sourceDirectory)
@@ -130,6 +137,39 @@ func runCICDCommand(ctx context.Context, args []string, newRunner cicdAgenticRun
 	return runErr
 }
 
+func validateCICDSourceWorkspace(plan DeploymentPlan, sourceDirectory string) error {
+	if plan.Spec.Release.Source == nil {
+		return nil
+	}
+	runGit := func(args ...string) (string, error) {
+		command := exec.Command("git", append([]string{"-C", sourceDirectory}, args...)...)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		}
+		return strings.TrimSpace(string(output)), nil
+	}
+	head, err := runGit("rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("resolve deployment workspace revision: %w", err)
+	}
+	if head != plan.Spec.Release.Source.Revision {
+		return fmt.Errorf(
+			"deployment workspace HEAD %s does not match declared release revision %s",
+			head,
+			plan.Spec.Release.Source.Revision,
+		)
+	}
+	status, err := runGit("status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return fmt.Errorf("inspect deployment workspace: %w", err)
+	}
+	if status != "" {
+		return fmt.Errorf("deployment workspace has uncommitted changes")
+	}
+	return nil
+}
+
 func writeCICDJSON(value interface{}) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -141,15 +181,12 @@ func newAgenticDeploymentRunner(server Server, sourceDirectory, sessionID string
 		return nil, fmt.Errorf("deployment source directory, session ID, and Ask client are required")
 	}
 	return &agenticDeploymentRunner{server: server, sourceDirectory: sourceDirectory, sessionID: sessionID,
-		pushWorkspace: func(target Server, source, session string) error {
-			return Push(target, source, "", false, nil, session)
+		pushWorkspace: func(target Server, source, session string) (string, error) {
+			return pushWorkspaceSnapshot(target, source, "", false, nil, session)
 		},
-		ask: func(instruction string) (ReconciliationResult, error) {
+		ask: func(arguments map[string]interface{}) (ReconciliationResult, error) {
 			var result ReconciliationResult
-			err := client.CallStructured("doops_agent_prompt", map[string]interface{}{
-				"instruction":     instruction,
-				"response_format": "json",
-			}, &result)
+			err := client.CallStructured("doops_agent_prompt", arguments, &result)
 			return result, err
 		},
 	}, nil
@@ -162,15 +199,24 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	if r.pushWorkspace == nil || r.ask == nil {
 		return CICDAgenticRun{}, fmt.Errorf("agentic deployment runner is incomplete")
 	}
-	if err := r.pushWorkspace(r.server, r.sourceDirectory, r.sessionID); err != nil {
-		return CICDAgenticRun{}, fmt.Errorf("push deployment workspace: %w", err)
-	}
 	request.SessionID = r.sessionID
 	instruction, err := buildAgenticDeploymentInstruction(plan, request)
 	if err != nil {
 		return CICDAgenticRun{}, err
 	}
-	result, err := r.ask(instruction)
+	arguments, err := buildAgenticDeploymentArguments(plan, request, instruction)
+	if err != nil {
+		return CICDAgenticRun{}, err
+	}
+	workspaceCommit, err := r.pushWorkspace(r.server, r.sourceDirectory, r.sessionID)
+	if err != nil {
+		return CICDAgenticRun{}, fmt.Errorf("push deployment workspace: %w", err)
+	}
+	if !validWorkspaceCommit(workspaceCommit) {
+		return CICDAgenticRun{}, fmt.Errorf("push deployment workspace returned an invalid commit")
+	}
+	arguments["workspace_commit"] = workspaceCommit
+	result, err := r.ask(arguments)
 	if err != nil {
 		return CICDAgenticRun{}, fmt.Errorf("ask deployment agent: %w", err)
 	}
@@ -180,7 +226,7 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 		Workspace:  "/root/ws/" + r.sessionID,
 		Result:     result,
 	}
-	if err := validateReconciliationResult(plan, result); err != nil {
+	if err := validateReconciliationResult(plan, workspaceCommit, result); err != nil {
 		return run, err
 	}
 	if result.Status != ReconciliationConverged {
@@ -189,28 +235,66 @@ func (r agenticDeploymentRunner) Run(ctx context.Context, plan DeploymentPlan, r
 	return run, nil
 }
 
+func validWorkspaceCommit(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func buildAgenticDeploymentArguments(plan DeploymentPlan, request CICDAgenticRunRequest, instruction string) (map[string]interface{}, error) {
+	if request.DryRun == request.AllowMutate {
+		return nil, fmt.Errorf("deployment execution requires exactly one of dry-run or mutation authorization")
+	}
+	if !ociDigestPattern.MatchString(plan.Digest) {
+		return nil, fmt.Errorf("deployment plan digest must be a sha256 digest")
+	}
+	if strings.TrimSpace(instruction) == "" {
+		return nil, fmt.Errorf("deployment instruction is required")
+	}
+	executionMode := "dry-run"
+	if request.AllowMutate {
+		executionMode = "apply"
+	}
+	return map[string]interface{}{
+		"instruction":     instruction,
+		"response_format": "json",
+		"operation":       "reconcile",
+		"plan_digest":     plan.Digest,
+		"execution_mode":  executionMode,
+	}, nil
+}
+
 func buildAgenticDeploymentInstruction(plan DeploymentPlan, request CICDAgenticRunRequest) (string, error) {
-	encodedPlan, err := json.Marshal(plan)
+	if request.DryRun == request.AllowMutate {
+		return "", fmt.Errorf("deployment execution requires exactly one of dry-run or mutation authorization")
+	}
+	executionMode := "dry-run"
+	if request.AllowMutate {
+		executionMode = "apply"
+	}
+	envelope := struct {
+		Task           string         `json:"task"`
+		Skill          string         `json:"skill"`
+		ExecutionMode  string         `json:"executionMode"`
+		DeploymentPlan DeploymentPlan `json:"deploymentPlan"`
+	}{
+		Task:           "reconcile-deployment-plan",
+		Skill:          "semantic-deployment",
+		ExecutionMode:  executionMode,
+		DeploymentPlan: plan,
+	}
+	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		return "", fmt.Errorf("encode DeploymentPlan for Ask: %w", err)
 	}
-	return fmt.Sprintf(
-		"You own reconciliation for this DeploymentPlan. The synchronized workspace is /root/ws/%s. "+
-			"Treat the resolved environment profile, desired state, acceptance criteria, and policy in the declaration as authoritative. "+
-			"The Gateway has already routed this executor to the declared executionTarget %q. "+
-			"Validate Gateway target identity from DOOPS_GATEWAY_CLUSTER and DOOPS_GATEWAY_INSTANCE when those variables are present. "+
-			"Kubernetes node hostname is not target identity and must not be compared with executionTarget or used alone to return Blocked. "+
-			"Use your available tools to inspect the workspace and actual target, then reconcile the declared desired state until it converges or the declared policy requires Blocked or Failed. "+
-			"Never infer a different target or replace the declaration with a script, stage list, command list, or textual success claim. "+
-			"Dry run: %t. Mutation is authorized: %t. "+
-			"Return exactly one JSON object with apiVersion, kind=ReconciliationResult, planDigest, status, attempts, noProgressAttempts, evidence, and failureEvidence. "+
-			"For converged, include every requiredEvidence item. For blocked or failed, include every requiredFailureEvidence item.\nDeploymentPlan:\n%s",
-		request.SessionID,
-		plan.Spec.Target.ExecutionTarget,
-		request.DryRun,
-		request.AllowMutate,
-		string(encodedPlan),
-	), nil
+	return string(encoded), nil
 }
 
 func findCICDSourceDirectory(templatePath string) (string, error) {
@@ -219,7 +303,7 @@ func findCICDSourceDirectory(templatePath string) (string, error) {
 		return "", fmt.Errorf("resolve deployment template path: %w", err)
 	}
 	for directory := filepath.Dir(path); ; directory = filepath.Dir(directory) {
-		if info, err := os.Stat(filepath.Join(directory, ".git")); err == nil && info.IsDir() {
+		if _, err := os.Stat(filepath.Join(directory, ".git")); err == nil {
 			return directory, nil
 		}
 		parent := filepath.Dir(directory)

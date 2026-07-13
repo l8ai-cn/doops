@@ -59,9 +59,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 声明式 CI/CD 闭环示例:
   # run 先把当前仓库同步到 /root/ws/<session>，再通过 Ask 交给 doagent 执行和核验。
   doops cicd lint -f deploy/workflows/test.yaml
-  doops cicd plan -f deploy/workflows/test.yaml --set releaseId=<immutable-release> --set reason=smoke
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set releaseId=<immutable-release> --set reason=smoke
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set releaseId=<immutable-release> --set reason=release
+  doops cicd plan -f deploy/workflows/test.yaml --set version=release-YYYYMMDD --set reason=<change-reference>
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set version=release-YYYYMMDD --set reason=<change-reference>
+  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set version=release-YYYYMMDD --set reason=<change-reference>
 `)
 	}
 	flag.Parse()

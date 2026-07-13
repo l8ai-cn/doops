@@ -16,6 +16,10 @@
 
 ## 架构图
 
+Agent 原生 CI/CD 的权威职责边界见
+[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md)。DoOps 不实现另一套
+Agent 框架；上下文、规划、多 Agent、Skill 和工具调用由 doagent 原生引擎负责。
+
 ```mermaid
 flowchart LR
     U["用户 / IDE"] --> CLI["doops CLI / Skill"]

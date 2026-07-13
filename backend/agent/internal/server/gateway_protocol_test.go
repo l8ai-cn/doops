@@ -1424,8 +1424,46 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "session:exec-a" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", json.RawMessage(`{"session_id":"ask-a"}`), "dev", "node"); got != "session:ask-a" {
-		t.Fatalf("ask resource key mismatch: %q", got)
+	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
+	if got := actionForTool("doops_agent_prompt", genericPromptArgs); got != ActionReconcile {
+		t.Fatalf("executable agent prompt must require reconcile permission: %q", got)
+	}
+	if got := resourceKeyForTool(ActionReconcile, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "workspace:ask-a" {
+		t.Fatalf("agent prompt workspace resource key mismatch: %q", got)
+	}
+	metadataArgs := json.RawMessage(`{"session_id":"ask-a","mode":"metadata"}`)
+	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
+		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)
+	}
+	reconcileArgs := json.RawMessage(`{
+		"session_id":"deploy-a",
+		"operation":"reconcile",
+		"plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"execution_mode":"apply",
+		"response_format":"json",
+		"workspace_commit":"1111111111111111111111111111111111111111"
+	}`)
+	if got := actionForTool("doops_agent_prompt", reconcileArgs); got != ActionReconcile {
+		t.Fatalf("reconciliation prompt action mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionReconcile, "doops_agent_prompt", reconcileArgs, "dev", "node"); got != "workspace:deploy-a" {
+		t.Fatalf("reconciliation resource key mismatch: %q", got)
+	}
+	if err := validateReconcileInvocation(reconcileArgs); err != nil {
+		t.Fatalf("valid reconciliation metadata rejected: %v", err)
+	}
+	if err := validateReconcileInvocation(json.RawMessage(`{"operation":"reconcile","execution_mode":"apply"}`)); err == nil {
+		t.Fatal("reconciliation without plan digest must be rejected")
+	}
+	if err := validateReconcileInvocation(json.RawMessage(`{
+		"session_id":"deploy-a",
+		"operation":"reconcile",
+		"plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"execution_mode":"apply",
+		"response_format":"json",
+		"workspace_commit":"not-a-commit"
+	}`)); err == nil {
+		t.Fatal("reconciliation with invalid workspace commit must be rejected")
 	}
 	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "workspace:push-a" {
 		t.Fatalf("push resource key mismatch: %q", got)
