@@ -15,25 +15,18 @@ historical cluster alias.
 # Model Routing
 
 The Oilan declaration records `modelRouting.policy: single-model`. The mounted
-`doops-agent-settings` Secret remains the only source of the model identifier
-and provider credentials. At startup the Agent materializes a runtime copy of
-that settings document without `model_tiers`, because this policy intentionally
-routes every task class to the one declared model. The mounted Secret is never
-rewritten, and a persisted `/root/.agent/settings.json` cannot override it.
+`doagent-config` ConfigMap remains the source of the model identifier and
+provider configuration. At startup the Agent materializes a separate runtime
+settings file without `model_tiers`, because this policy intentionally routes
+every task class to the one declared model. No mounted configuration object is
+rewritten.
 
 # Registry Credentials
 
-The runtime Secret references are `doops-agent-runtime`,
-`doops-agent-settings`, and `doops-registry-pull`.
-
-`doops-registry-pull` is a `kubernetes.io/dockerconfigjson` Secret with key
-`.dockerconfigjson` and an `auths.docker.cnb.cool` entry. It is referenced by
-the declared Deployment through `imagePullSecrets` and mounted into the Agent
-as `/root/.docker/config.json` for BuildKit push and pull.
-
-The environment contract requires this Secret before deployment. This keeps
-registry authorization outside Git while keeping its one reference and release
-behavior versioned.
+The Agent candidate image is public. Its runtime declaration therefore does not
+require an image pull or registry credential Secret. A release plan that needs
+to mirror a private artifact must declare its credential reference explicitly;
+the Agent does not infer one from historical workload configuration.
 
 # Execution And Verification
 

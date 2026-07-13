@@ -67,28 +67,12 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
     assert "https://api.example.com/v1" not in entrypoint
 
 
-def test_agent_registry_auth_uses_one_mounted_multi_registry_config():
-    for path in ("agent/agent.yaml", "agent/agent-default.yaml"):
-        manifest = read(path)
-
-        assert "doops-registry-pull" in manifest
-        assert "mountPath: /root/.docker" in manifest
-        assert "key: .dockerconfigjson" in manifest
-        assert "doops-registry-auth" not in manifest
-        assert "REGISTRY_URL" not in manifest
-        assert "REGISTRY_USER" not in manifest
-        assert "REGISTRY_PASS" not in manifest
-
-
-def test_agent_entrypoints_require_mounted_registry_auth_config():
+def test_agent_entrypoints_do_not_require_registry_auth_for_public_images():
     for path in ("agent/agent-entrypoint.sh", "agent/sandbox-entrypoint.sh"):
         entrypoint = read(path)
 
-        assert "DOOPS_REGISTRY_AUTH_FILE" in entrypoint
-        assert "registry auth config is required" in entrypoint
-        assert "REGISTRY_URL" not in entrypoint
-        assert "REGISTRY_USER" not in entrypoint
-        assert "REGISTRY_PASS" not in entrypoint
+        assert "DOOPS_REGISTRY_AUTH_FILE" not in entrypoint
+        assert "registry auth config is required" not in entrypoint
 
 
 def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
@@ -206,6 +190,8 @@ def test_agent_images_sync_semantic_skills_into_doagent_discovery_path():
     for path in ("agent/agent-entrypoint.sh", "agent/sandbox-entrypoint.sh"):
         entrypoint = read(path)
         assert "/app/configure_doagent_settings.py" in entrypoint
+        assert "DO_AGENT_SETTINGS" in entrypoint
+        assert "runtime-settings.json" in entrypoint
         assert "for d in /app/skills/*/; do" in entrypoint
         assert 'mkdir -p "/root/.agent/skills/$name"' in entrypoint
         assert 'cp -rf "$d"* "/root/.agent/skills/$name/"' in entrypoint

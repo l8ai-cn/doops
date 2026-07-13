@@ -57,9 +57,7 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
     assert "meta.helm.sh/release-namespace" not in deployment["metadata"].get("annotations", {})
     assert deployment["spec"]["strategy"]["type"] == "Recreate"
     assert deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"] == "192.168.0.24"
-    assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == [
-        {"name": "doops-registry-pull"}
-    ]
+    assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == []
     assert container["image"].endswith(f":{RELEASE_ID}")
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {item["name"] for item in container["env"]}
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
@@ -71,15 +69,12 @@ def test_oilan_agent_chart_is_helm_owned_and_uses_secret_refs():
         "key": "agent-token",
     }
     assert "agent-token" not in container["command"][-1]
-    registry_auth = next(
+    doagent_config = next(
         item
         for item in deployment["spec"]["template"]["spec"]["volumes"]
-        if item["name"] == "registry-auth"
+        if item["name"] == "doagent-config"
     )
-    assert registry_auth["secret"]["secretName"] == "doops-registry-pull"
-    assert registry_auth["secret"]["items"] == [
-        {"key": ".dockerconfigjson", "path": "config.json"}
-    ]
+    assert doagent_config["configMap"]["name"] == "doagent-config"
     volumes = {
         item["name"]: item["hostPath"]["path"]
         for item in deployment["spec"]["template"]["spec"]["volumes"]

@@ -73,65 +73,6 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
           volumeMounts:
-            - name: kube-admin
-              mountPath: /etc/kubernetes/admin.conf
-              readOnly: true
-            - name: kube-admin
-              mountPath: /root/.kube/config
-              readOnly: true
-            - name: agent-home
-              mountPath: /root
-            - name: registry-auth
-              mountPath: /root/.docker
-              readOnly: true
-            - name: doagent-config
-              mountPath: /opt/doagent_config
-              readOnly: true
-            - name: containerd-socket
-              mountPath: /run/containerd/containerd.sock
-            - name: nerdctl-bin
-              mountPath: /usr/local/bin/nerdctl
-              readOnly: true
-            - name: nerdctl-real-bin
-              mountPath: /usr/local/bin/nerdctl.real
-              readOnly: true
-            - name: crictl-bin
-              mountPath: /usr/bin/crictl
-              readOnly: true
+{{ toYaml .Values.volumeMounts | indent 12 }}
       volumes:
-        - name: kube-admin
-          hostPath:
-            path: {{ .Values.paths.kubeconfig }}
-            type: File
-        - name: agent-home
-          hostPath:
-            path: {{ .Values.paths.agentHome }}
-            type: DirectoryOrCreate
-        - name: registry-auth
-          secret:
-            secretName: {{ .Values.registryAuth.secretName }}
-            items:
-              - key: {{ .Values.registryAuth.key }}
-                path: config.json
-        - name: doagent-config
-          secret:
-            secretName: {{ .Values.agentSettings.secretName }}
-            items:
-              - key: {{ .Values.agentSettings.key }}
-                path: settings.json
-        - name: containerd-socket
-          hostPath:
-            path: {{ .Values.paths.containerdSocket }}
-            type: Socket
-        - name: nerdctl-bin
-          hostPath:
-            path: {{ .Values.paths.nerdctl }}
-            type: File
-        - name: nerdctl-real-bin
-          hostPath:
-            path: {{ .Values.paths.nerdctlReal }}
-            type: File
-        - name: crictl-bin
-          hostPath:
-            path: {{ .Values.paths.crictl }}
-            type: File
+{{ toYaml .Values.volumes | indent 8 }}

@@ -72,7 +72,7 @@ configure_kubectl() {
 
 configure_doagent() {
     mkdir -p /root/.agent
-    local settings_file=/root/.agent/settings.json
+    local settings_file="${DO_AGENT_SETTINGS:-/root/.agent/runtime-settings.json}"
     local source=/opt/doagent_config/settings.json
     local policy="${DO_AGENT_MODEL_ROUTING_POLICY:-}"
 
@@ -82,6 +82,7 @@ configure_doagent() {
     fi
 
     python3 /app/configure_doagent_settings.py "${source}" "${settings_file}" "${policy}"
+    export DO_AGENT_SETTINGS="${settings_file}"
     echo "✅ doagent config: materialized from mounted settings"
 }
 
@@ -113,26 +114,12 @@ start_buildkit() {
     fi
 }
 
-configure_registry_auth() {
-    local registry_auth_file="${DOOPS_REGISTRY_AUTH_FILE:-/root/.docker/config.json}"
-    if [ ! -s "${registry_auth_file}" ]; then
-        echo "❌ registry auth config is required at ${registry_auth_file}"
-        exit 1
-    fi
-    if ! grep -q '"auths"' "${registry_auth_file}"; then
-        echo "❌ registry auth config is invalid: ${registry_auth_file}"
-        exit 1
-    fi
-    echo "✅ registry auth config: using mounted ${registry_auth_file}"
-}
-
 start_sandbox_services
 configure_kubectl
 sync_skills
 configure_doagent
 start_doagent
 start_buildkit
-configure_registry_auth
 
 export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules

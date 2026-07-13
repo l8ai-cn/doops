@@ -21,18 +21,6 @@ gateway:
 
 nodeSelector: {}
 
-agentSettings:
-  secretName: ""
-  key: ""
+volumeMounts: []
 
-registryAuth:
-  secretName: ""
-  key: ""
-
-paths:
-  kubeconfig: ""
-  agentHome: ""
-  containerdSocket: ""
-  nerdctl: ""
-  nerdctlReal: ""
-  crictl: ""
+volumes: []

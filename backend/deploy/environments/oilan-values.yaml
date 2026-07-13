@@ -9,8 +9,7 @@ workload:
 modelRouting:
   policy: single-model
 
-imagePullSecrets:
-  - name: doops-registry-pull
+imagePullSecrets: []
 
 gateway:
   url: https://doops.l8ai.cn
@@ -23,21 +22,58 @@ gateway:
 nodeSelector:
   kubernetes.io/hostname: 192.168.0.24
 
-agentSettings:
-  secretName: doops-agent-settings
-  key: settings.json
-
 doagentConfig:
   configMapName: doagent-config
 
-registryAuth:
-  secretName: doops-registry-pull
-  key: .dockerconfigjson
+volumeMounts:
+  - name: kube-admin
+    mountPath: /etc/kubernetes/admin.conf
+    readOnly: true
+  - name: kube-admin
+    mountPath: /root/.kube/config
+    readOnly: true
+  - name: agent-home
+    mountPath: /root
+  - name: doagent-config
+    mountPath: /opt/doagent_config
+    readOnly: true
+  - name: containerd-socket
+    mountPath: /run/containerd/containerd.sock
+  - name: nerdctl-bin
+    mountPath: /usr/local/bin/nerdctl
+    readOnly: true
+  - name: nerdctl-real-bin
+    mountPath: /usr/local/bin/nerdctl.real
+    readOnly: true
+  - name: crictl-bin
+    mountPath: /usr/bin/crictl
+    readOnly: true
 
-paths:
-  kubeconfig: /etc/kubernetes/admin.conf
-  agentHome: /var/lib/doops-agent-home
-  containerdSocket: /run/containerd/containerd.sock
-  nerdctl: /usr/bin/nerdctl
-  nerdctlReal: /usr/local/bin/nerdctl.real
-  crictl: /usr/bin/crictl
+volumes:
+  - name: kube-admin
+    hostPath:
+      path: /etc/kubernetes/admin.conf
+      type: File
+  - name: agent-home
+    hostPath:
+      path: /var/lib/doops-agent-home
+      type: DirectoryOrCreate
+  - name: doagent-config
+    configMap:
+      name: doagent-config
+  - name: containerd-socket
+    hostPath:
+      path: /run/containerd/containerd.sock
+      type: Socket
+  - name: nerdctl-bin
+    hostPath:
+      path: /usr/bin/nerdctl
+      type: File
+  - name: nerdctl-real-bin
+    hostPath:
+      path: /usr/local/bin/nerdctl.real
+      type: File
+  - name: crictl-bin
+    hostPath:
+      path: /usr/bin/crictl
+      type: File

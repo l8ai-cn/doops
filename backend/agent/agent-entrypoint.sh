@@ -108,7 +108,7 @@ fi
 
 # The mounted settings Secret is authoritative. Do not reuse a persisted,
 # potentially stale settings file or synthesize credentials in the container.
-SETTINGS_FILE="/root/.agent/settings.json"
+SETTINGS_FILE="${DO_AGENT_SETTINGS:-/root/.agent/runtime-settings.json}"
 if [ ! -f "/opt/doagent_config/settings.json" ]; then
     echo "❌ doagent config: mounted settings are required at /opt/doagent_config/settings.json"
     exit 1
@@ -117,6 +117,7 @@ python3 /app/configure_doagent_settings.py \
     /opt/doagent_config/settings.json \
     "${SETTINGS_FILE}" \
     "${DO_AGENT_MODEL_ROUTING_POLICY:-}"
+export DO_AGENT_SETTINGS="${SETTINGS_FILE}"
 echo "✅ doagent config: materialized from mounted settings"
 
 # 启动 doagent ACP HTTP 服务（后台）
@@ -144,18 +145,6 @@ if command -v buildkitd &>/dev/null && command -v buildctl &>/dev/null; then
 else
     echo "⚠️  buildkitd/buildctl not found, image build will not work"
 fi
-
-# ========== Registry 认证 (BuildKit 读取 Kubernetes Secret 挂载的 Docker config) ==========
-DOOPS_REGISTRY_AUTH_FILE="${DOOPS_REGISTRY_AUTH_FILE:-/root/.docker/config.json}"
-if [ ! -s "${DOOPS_REGISTRY_AUTH_FILE}" ]; then
-    echo "❌ registry auth config is required at ${DOOPS_REGISTRY_AUTH_FILE}"
-    exit 1
-fi
-if ! grep -q '"auths"' "${DOOPS_REGISTRY_AUTH_FILE}"; then
-    echo "❌ registry auth config is invalid: ${DOOPS_REGISTRY_AUTH_FILE}"
-    exit 1
-fi
-echo "✅ registry auth config: using mounted ${DOOPS_REGISTRY_AUTH_FILE}"
 
 # 使用 tini 作为 PID 1 init，自动回收所有僵尸子进程
 export PATH=/usr/local/bin:$PATH
