@@ -48,10 +48,10 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，只能由已注册的 DoOps Agent 执行版本化 DoOps `DeploymentTemplate`。CNB 仅承担 PR/push 测试，不能构建、推送或部署 Agent 镜像；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送带 `日期-提交短 SHA` 标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps `DeploymentTemplate` 消费该 digest 并完成环境同步、Helm 收敛与验证。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，再以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
 
 ```bash
 doops -session oilan-agent-bootstrap cicd run \
@@ -68,7 +68,7 @@ required evidence.
 
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。
-2. 在目标 Agent 的 BuildKit 中构建并推送 `doops.sh/base-light:<release>` 与 `doops.sh:<release>`。
+2. 解析 CI 候选镜像的 registry digest，并按环境声明同步到目标 registry。
 3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
 4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
 5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。

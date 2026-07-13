@@ -143,6 +143,23 @@ def test_cnb_ci_runs_release_contract_tests_on_pr_and_push():
         assert " helm" in push_block
 
 
+def test_cnb_main_builds_date_and_revision_tagged_agent_images_after_checks():
+    cnb = read_repo(".cnb.yml")
+    main = top_level_block(cnb, "main")
+    _, push_block = main.split("  push:", 1)
+
+    assert "services:\n        - docker" in push_block
+    assert "docker-cli" in push_block
+    assert 'RELEASE_DATE="$(date -u +%Y%m%d)"' in push_block
+    assert 'RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"' in push_block
+    assert "backend/Dockerfile.base.light" in push_block
+    assert "backend/Dockerfile" in push_block
+    assert '--build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}"' in push_block
+    assert "docker push" in push_block
+    for forbidden in ("kubectl ", "helm upgrade", "doops -session", "cicd submit"):
+        assert forbidden not in push_block
+
+
 def test_doops_cicd_is_the_only_agent_release_definition():
     cnb = read_repo(".cnb.yml")
     workflow = read_repo("backend/deploy/workflows/oilan-agent-bootstrap.yaml")

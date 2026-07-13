@@ -21,12 +21,14 @@ main:
   push:
     - name: ci
       runner:
-        cpus: 2
+        cpus: 4
+      services:
+        - docker
       docker:
         image: golang:1.24-alpine
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
+          script: apk add --no-cache bash docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: agent tests
@@ -47,6 +49,27 @@ main:
             pnpm install --frozen-lockfile
             pnpm exec tsc --noEmit
             pnpm build
+        - name: build immutable agent images
+          script: |
+            RELEASE_DATE="$(date -u +%Y%m%d)"
+            RELEASE_TAG="${RELEASE_DATE}-${CNB_COMMIT_SHORT}"
+            BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_TAG}"
+            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"
+            docker build \
+              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+              --label org.opencontainers.image.version="${RELEASE_TAG}" \
+              -f backend/Dockerfile.base.light \
+              -t "${BASE_IMAGE}" \
+              backend
+            docker push "${BASE_IMAGE}"
+            docker build \
+              --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
+              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+              --label org.opencontainers.image.version="${RELEASE_TAG}" \
+              -f backend/Dockerfile \
+              -t "${APP_IMAGE}" \
+              backend
+            docker push "${APP_IMAGE}"
 
 master:
   pull_request:
