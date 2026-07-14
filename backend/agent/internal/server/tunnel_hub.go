@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -634,7 +633,6 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	if !h.store.UserCan(auth.UserID, cluster, instance, ActionInfo) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionReconcile) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
 		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
@@ -721,15 +719,9 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation != "" {
-			if operation != "reconcile" {
-				writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
-				return nil
-			}
-			if err := validateReconcileInvocation(params.Arguments); err != nil {
-				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-				return nil
-			}
+		if operation != "" && operation != "ask" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
+			return nil
 		}
 	}
 	action := actionForTool(params.Name, params.Arguments)
@@ -1605,7 +1597,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		case "metadata", "history":
 			return ActionAsk
 		default:
-			return ActionReconcile
+			return ActionAsk
 		}
 	case "doops_git_clone":
 		return ActionPull
@@ -1632,10 +1624,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionReconcile:
-		if sessionID := extractSession(args); sessionID != "" {
-			return "workspace:" + sessionID
-		}
 	case ActionExec, ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
@@ -1674,37 +1662,6 @@ func extractStringArg(args json.RawMessage, key string) string {
 	}
 	v, _ := m[key].(string)
 	return strings.TrimSpace(v)
-}
-
-func validateReconcileInvocation(args json.RawMessage) error {
-	if extractStringArg(args, "operation") != "reconcile" {
-		return fmt.Errorf("reconciliation operation is required")
-	}
-	if extractSession(args) == "" {
-		return fmt.Errorf("reconciliation session_id is required")
-	}
-	digest := extractStringArg(args, "plan_digest")
-	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
-		return fmt.Errorf("reconciliation plan_digest must be a sha256 digest")
-	}
-	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
-		return fmt.Errorf("reconciliation plan_digest must be a sha256 digest")
-	}
-	switch extractStringArg(args, "execution_mode") {
-	case "dry-run", "apply":
-	default:
-		return fmt.Errorf("reconciliation execution_mode must be dry-run or apply")
-	}
-	if revision := extractStringArg(args, "source_revision"); revision != "" && !validAgentSourceRevision(revision) {
-		return fmt.Errorf("reconciliation source_revision must be an immutable Git commit")
-	}
-	if extractStringArg(args, "response_format") != "json" {
-		return fmt.Errorf("reconciliation response_format must be json")
-	}
-	if _, err := normalizeWorkspaceCommit(extractStringArg(args, "workspace_commit")); err != nil {
-		return fmt.Errorf("reconciliation workspace_commit is required and must be a Git object ID")
-	}
-	return nil
 }
 
 func sessionIDFromNotification(parsed map[string]interface{}) string {

@@ -342,7 +342,7 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 		"doagent",
 		"多 Agent",
 		"Skill",
-		"DeploymentPlan",
+		"doops-cicd",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("system prompt must describe the Agent-native boundary %q: %s", marker, text)
@@ -1009,27 +1009,6 @@ func TestAgentWebSocketWorkspaceChunkUpload(t *testing.T) {
 	}
 	if string(bytes.TrimSpace(ready)) != commit {
 		t.Fatalf("ready commit mismatch: %q", ready)
-	}
-}
-
-func TestValidateReconcileWorkspaceCommit(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionID := "reconcile"
-	workspace := filepath.Join(root, sessionID)
-	if err := os.MkdirAll(workspace, 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	commit := strings.Repeat("a", 40)
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0644); err != nil {
-		t.Fatalf("write workspace marker: %v", err)
-	}
-
-	if err := validateReconcileWorkspaceCommit(sessionID, commit); err != nil {
-		t.Fatalf("matching workspace commit rejected: %v", err)
-	}
-	if err := validateReconcileWorkspaceCommit(sessionID, strings.Repeat("b", 40)); err == nil {
-		t.Fatal("mismatched workspace commit must be rejected")
 	}
 }
 

@@ -1,6 +1,4 @@
-import platform
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,13 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 WORKFLOW = ROOT / "deploy" / "workflows" / "oilan-agent-bootstrap.yaml"
 REGISTRY = ROOT / "deploy" / "environments.yaml"
-SKILL = ROOT / "agent" / "skills" / "semantic-deployment" / "SKILL.md"
+SKILL = ROOT / "agent" / "skills" / "doops-cicd" / "SKILL.md"
 ARCHITECTURE = ROOT / "docs" / "AGENT_NATIVE_CICD.md"
 AGENT_DESIGN = ROOT / "agent" / "DESIGN.md"
 SYSTEM_DESIGN = ROOT / "docs" / "design" / "AI_Ops_System_Design.md"
 SKILL_GUIDE = ROOT / "docs" / "SKILL_INTEGRATION_GUIDE.md"
 SEMANTIC_CICD = ROOT / "docs" / "SEMANTIC_CICD.md"
-CLI_BIN = ROOT / "skills" / "doops-cli" / "bin"
 GATEWAY_PROXY = ROOT / "gateway" / "nginx" / "doops-proxy.conf"
 GATEWAY_DEPLOY = ROOT / "scripts" / "deploy-gateway-tls-proxy.sh"
 
@@ -73,29 +70,32 @@ def test_oilan_registry_separates_target_executor_and_verification():
 
     assert artifact["type"] == "image-set"
     assert artifact["imageReferenceFormat"] == "repository@digest"
-    assert set(environment) == {"target", "executor", "verificationProfile"}
+    assert set(environment) == {
+        "deploymentPlatform",
+        "target",
+        "executor",
+        "verificationProfile",
+    }
+    assert environment["deploymentPlatform"] == "linux/amd64"
     assert set(environment["target"]) == {"name", "cluster", "instance"}
     assert executor["type"] == "helm"
-    assert executor["config"]["imageBindings"] == {"doops-agent": "image"}
+    assert executor["config"]["imageBindings"] == {"doops-agent": ""}
     assert "modelRouting" not in executor["config"]
     assert "modelSettings" not in executor["config"]
     assert environment["verificationProfile"] in registry["verificationProfiles"]
 
 
-def test_semantic_deployment_contract_has_one_version_and_real_failure_evidence():
+def test_doops_cicd_contract_has_one_version_and_real_failure_evidence():
     text = SKILL.read_text(encoding="utf-8")
 
     assert "doops.sh/v2" in text
     assert "doops.sh/v3" not in text
-    assert "requiredFailureEvidence" not in text
-    assert "failureEvidence" in text
-    assert "实际发生 mutation" in text
-    assert "多 Agent" in text
-    assert "Skill" in text
-    assert "executionEvidence" in text
-    assert "toolCallId" in text
-    assert "toolDigest" in text
-    assert "traceDigest" in text
+    assert "DeploymentRun" in text
+    assert "mutationCount" in text
+    assert "multi-agent" in text
+    assert "$doops-cicd" in text
+    assert "admitted" in text
+    assert "fallback" in text
     assert "buildctl" not in text
     assert "kubectl" not in text
     assert "last known good Helm" not in text
@@ -138,28 +138,15 @@ def test_related_design_docs_use_the_same_agent_native_boundary():
     assert "toolDigest" in semantic_cicd
 
 
-def test_prebuilt_cli_accepts_current_deployment_template():
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    architecture = {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }.get(machine)
-    if system not in {"darwin", "linux"} or architecture is None:
-        pytest.skip(f"unsupported prebuilt CLI platform: {system}/{machine}")
+def test_current_deployment_template_is_consumed_by_the_skill_adapter():
+    text = SKILL.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
-    binary = CLI_BIN / f"doops-{system}-{architecture}"
-    result = subprocess.run(
-        [str(binary), "cicd", "lint", "-f", str(WORKFLOW)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "deployment template ok" in result.stdout
+    assert workflow["apiVersion"] == "doops.sh/v2"
+    assert workflow["kind"] == "DeploymentTemplate"
+    assert "cicd run" in text
+    assert "doops_agent_prompt" in text
+    assert "$doops-cicd" in text
 
 
 def test_legacy_bootstrap_and_manual_release_paths_are_removed():
@@ -337,6 +324,46 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
     )
 
 
+def test_doagent_baseline_records_index_provenance_and_platform_runtime_pin():
+    baseline = read_env("runtime-versions.env")
+    base_dockerfile = read_backend("Dockerfile.base.light")
+    app_dockerfile = read_backend("Dockerfile")
+    cnb = read_repo(".cnb.yml")
+    main = top_level_block(cnb, "main")
+    _, push_block = main.split("  push:", 1)
+
+    assert baseline["DO_AGENT_VERSION"] == "0.2.17"
+    assert baseline["DO_AGENT_INDEX_DIGEST"] == (
+        "sha256:99dfc897903fc17bdf3ceea645344107a05602f963df297dc9227137bfd7b807"
+    )
+    assert baseline["DO_AGENT_PLATFORM"] == "linux/amd64"
+    assert baseline["DO_AGENT_PLATFORM_DIGEST"] == (
+        "sha256:def0a2d662a82b7e60a4de4b4641a564f4e76cc479520e248cc07de2329def8e"
+    )
+    assert baseline["DO_AGENT_IMAGE"] == (
+        "docker.cnb.cool/l8ai/ai/doagent:v0.2.17@"
+        + baseline["DO_AGENT_PLATFORM_DIGEST"]
+    )
+
+    for dockerfile in (base_dockerfile, app_dockerfile):
+        assert "ARG DO_AGENT_INDEX_DIGEST" in dockerfile
+        assert "ARG DO_AGENT_PLATFORM" in dockerfile
+        assert "ARG DO_AGENT_PLATFORM_DIGEST" in dockerfile
+        assert 'LABEL org.l8ai.doagent.index.digest="${DO_AGENT_INDEX_DIGEST}"' in dockerfile
+        assert 'LABEL org.l8ai.doagent.platform="${DO_AGENT_PLATFORM}"' in dockerfile
+        assert (
+            'LABEL org.l8ai.doagent.platform.digest="${DO_AGENT_PLATFORM_DIGEST}"'
+            in dockerfile
+        )
+
+    assert push_block.count('--build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}"') == 2
+    assert push_block.count('--build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}"') == 2
+    assert (
+        push_block.count('--build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}"')
+        == 2
+    )
+
+
 def test_agent_update_dockerfiles_default_to_base_light_runtime():
     required_arg = (
         "ARG DOOPS_AGENT_BASE_IMAGE="
@@ -428,16 +455,15 @@ def test_doops_cicd_is_the_only_agent_release_definition():
     assert "cicd submit" not in workflow
 
 
-def test_agent_bundles_and_syncs_semantic_deployment_skill():
-    skill = read_backend("agent/skills/semantic-deployment/SKILL.md")
+def test_agent_bundles_and_syncs_doops_cicd_skill():
+    skill = read_backend("agent/skills/doops-cicd/SKILL.md")
     system_prompt = read_backend("agent/skills/system_prompt.md")
 
-    assert "name: semantic-deployment" in skill
-    assert "DeploymentPlan" in skill
-    assert "ReconciliationResult" in skill
-    assert "requires: []" in skill
-    assert "conflicts: []" in skill
-    assert "semantic-deployment" in system_prompt
+    assert "name: doops-cicd" in skill
+    assert "DeploymentPlan" not in skill
+    assert "ReconciliationResult" not in skill
+    assert "$doops-cicd" in skill
+    assert "semantic-deployment" not in system_prompt
     for forbidden in (
         "cicd submit",
         "CNB",

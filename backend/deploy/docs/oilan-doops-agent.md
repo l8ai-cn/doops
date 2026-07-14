@@ -15,6 +15,17 @@ typed Helm executor, verification profile, and artifact contract. This document
 must not repeat that mapping, and it must not be inferred from the Oilan name, a
 domain, or a historical cluster alias.
 
+For an `image-set` release, the compiler resolves the declared source tag to
+the declared deployment platform manifest digest. Oilan declares
+`linux/amd64`; that child manifest digest is the only digest permitted in the
+source reference, target reference, Helm values, and runtime image identity.
+An OCI index digest remains provenance only. Each target repository is read
+from the exact declared image binding path
+`<binding>.image.repository`; an explicit empty binding denotes
+`image.repository`. The service key is the source artifact name unless
+`sourceArtifactNames` declares a different name. No repository, tag, digest,
+or values path is guessed.
+
 The Deployment reads the gateway registration token from the declared
 `gateway.agentTokenSecret` reference and passes it to `doops-agent`. The token
 is bound to the declared gateway cluster and instance.
@@ -39,29 +50,19 @@ the Agent does not infer one from historical workload configuration.
 
 # Execution And Verification
 
-`doops cicd run` resolves a `DeploymentPlan` from the declaration, synchronizes
-the clean repository at the exact declared commit to `/root/ws/<session>`, then
-invokes Ask with machine-readable reconciliation metadata, including the exact
-workspace commit produced by the push. The Gateway authorizes every executable
-agent prompt as `ActionReconcile`; `ActionAsk` is reserved for read-only
-metadata and history. After acquiring the workspace lock, the agent verifies
-that commit against `.doops-ready` before starting doagent. doagent is the sole executor: it
-interprets the resolved target, Helm executor, artifact contract, and
-verification profile, reaches the declared desired state, and returns one
-`ReconciliationResult`. The CLI accepts the release only after its digest and
-every `requiredEvidence` item validate against the plan. The bridge waits for
-doagent's authoritative `turn_finished`, injects `executionEvidence` from real
-ACP tool events, and binds evidence to that trace before the CLI validates it.
+`doops cicd run` requires an explicit target and exactly one of `--dry-run` or
+`--allow-mutate`. It synchronizes the repository to `/root/ws/<session>` with
+`doops push`, then invokes ordinary Ask with the `$doops-cicd` Skill and the
+resulting workspace commit. The Gateway uses the normal `ActionAsk` permission
+and session resource lock; it has no reconciliation-only admission path.
 
-The doops-agent sets native doagent mode `plan` for dry runs and `build` for
-authorized apply requests. Planning, multi-Agent delegation, Skill composition,
-and tool selection remain inside doagent. The bridge does not auto-approve
-permissions.
+doagent is the sole Agent executor. It selects existing DoOps modules, observes
+the declared target, and writes a run-local `DeploymentRun` YAML. `planned`,
+`converged`, `blocked`, `failed`, and `outcome-unknown` are valid phases.
+`admitted` text, generic attestation, or an Agent claim without structured
+observed data is not evidence. Dry-run mutation count must be zero.
 
-On failure, doagent reports only observations it actually collected. A
-pre-mutation capability or permission block does not fabricate recovery
-evidence. Recovery is attempted only when mutation occurred and the resolved
-environment explicitly provides a reversible recovery capability; otherwise
-the result remains honestly `blocked` or `failed`. There is no manual Helm,
-kubectl, SSH, shell-script, CNB, signing key, or dedicated CI/CD RPC release
-procedure for this environment.
+The bridge waits for doagent's authoritative `turn_finished` event and does
+not answer permission requests or synthesize deployment evidence. The
+reconciliation-only Go control plane, `doops_plan` MCP, dedicated CICD tools,
+shell/kubectl/SSH adapters, and manual CNB deployment events are removed.

@@ -68,9 +68,6 @@ type AgentPromptParams struct {
 	Mode            string `json:"mode,omitempty"`
 	ResponseFormat  string `json:"response_format,omitempty"`
 	Operation       string `json:"operation,omitempty"`
-	PlanDigest      string `json:"plan_digest,omitempty"`
-	ExecutionMode   string `json:"execution_mode,omitempty"`
-	SourceRevision  string `json:"source_revision,omitempty"`
 	WorkspaceCommit string `json:"workspace_commit,omitempty"`
 }
 

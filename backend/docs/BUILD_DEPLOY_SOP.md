@@ -60,10 +60,9 @@ doops -session oilan-agent-bootstrap cicd run \
   --set releaseId=<main-commit-sha>
 ```
 
-The command creates a resolved `DeploymentPlan`, synchronizes the repository,
-then asks doagent to reconcile it. A textual completion is not evidence:
-completion requires a plan-matching `ReconciliationResult` with the declaration's
-required evidence.
+The command synchronizes the repository, then sends one ordinary Ask to doagent
+for the `$doops-cicd` Skill. The Skill writes a run-local `DeploymentRun` YAML;
+text such as `admitted` is not evidence, and dry-run mutation count must be zero.
 
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。

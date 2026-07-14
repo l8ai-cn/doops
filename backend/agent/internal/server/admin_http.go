@@ -440,7 +440,6 @@ var knownActions = map[string]GatewayAction{
 	"admin":         ActionAdmin,
 	"exec":          ActionExec,
 	"ask":           ActionAsk,
-	"reconcile":     ActionReconcile,
 	"read":          ActionRead,
 	"write":         ActionWrite,
 	"push":          ActionPush,

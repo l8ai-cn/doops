@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -18,10 +19,12 @@ import (
 const workspaceSourceManifestPath = ".doops/source.json"
 
 type workspaceSourceManifest struct {
-	APIVersion string            `json:"apiVersion"`
-	Kind       string            `json:"kind"`
-	Source     CICDSourceRelease `json:"source"`
+	APIVersion string                  `json:"apiVersion"`
+	Kind       string                  `json:"kind"`
+	Source     WorkspaceSourceIdentity `json:"source"`
 }
+
+var immutableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // 默认排除的目录/文件
 var defaultExcludes = []string{
@@ -64,7 +67,7 @@ func pushWorkspaceSnapshotWithSource(
 	dryRun bool,
 	extraExcludes []string,
 	sessionID string,
-	source *CICDSourceRelease,
+	source *WorkspaceSourceIdentity,
 ) (string, error) {
 	// 1. 解析源目录
 	src, err := filepath.Abs(src)
@@ -129,13 +132,21 @@ func pushWorkspaceSnapshotWithSource(
 	fmt.Printf("🚀 进行极速无感增量推送至远端工作区: %s (%s)\n", workspacePath, server.Name)
 	fmt.Printf("🔧 正在初始化幽灵 Git 仓库并生成同步提交...\n")
 
-	gitCmds := [][]string{
-		{"init", "-b", "master"}, // 规避老版本默认 master 警告并强制契合服务端空 bare 库的默认 HEAD
-		{"add", "."},
-		{"-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "--allow-empty", "-m", "AutoSync"},
-		{"push", "-f", gitURL, "HEAD:master"},
+	localCommit, err := createWorkspaceSnapshotCommit(tmpDir, source)
+	if err != nil {
+		return "", err
+	}
+	sourceManifestBlob := ""
+	if source != nil {
+		sourceManifestBlob, err = workspaceSourceManifestBlobID(tmpDir, localCommit)
+		if err != nil {
+			return "", err
+		}
 	}
 
+	gitCmds := [][]string{
+		{"push", "-f", gitURL, "HEAD:master"},
+	}
 	for _, gargs := range gitCmds {
 		stepLabel := describeGitStep(gargs)
 		if stepLabel != "" {
@@ -173,18 +184,21 @@ func pushWorkspaceSnapshotWithSource(
 		}
 	}
 
-	localCommit, err := gitCommandOutput(tmpDir, "rev-parse", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("读取本地幽灵提交失败: %v", err)
-	}
-	localCommit = strings.TrimSpace(localCommit)
-
 	fmt.Printf("🔍 正在确认远端工作区已完成 checkout 并就绪...\n")
 	representativeRel := ""
 	if len(stagedFiles) > 0 {
 		representativeRel = stagedFiles[0]
 	}
-	if err := waitForWorkspaceReady(server, token, sessionID, workspacePath, representativeRel, localCommit, 45*time.Second); err != nil {
+	if err := waitForWorkspaceReady(
+		server,
+		token,
+		sessionID,
+		workspacePath,
+		representativeRel,
+		localCommit,
+		sourceManifestBlob,
+		45*time.Second,
+	); err != nil {
 		return "", fmt.Errorf("push 已完成，但远端工作区未确认就绪: %v", err)
 	}
 
@@ -197,11 +211,85 @@ func pushWorkspaceSnapshotWithSource(
 	return localCommit, nil
 }
 
+func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity) (string, error) {
+	gitCmds := [][]string{
+		{"init", "-b", "master"},
+		{"add", "."},
+	}
+	if source != nil {
+		gitCmds = append(gitCmds, []string{"add", "-f", "--", workspaceSourceManifestPath})
+	}
+	gitCmds = append(gitCmds,
+		[]string{"-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "--allow-empty", "-m", "AutoSync"},
+	)
+
+	for _, args := range gitCmds {
+		if label := describeGitStep(args); label != "" {
+			fmt.Printf("⏳ %s...\n", label)
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("创建幽灵提交失败 (%v): %v: %s", args, err, strings.TrimSpace(string(output)))
+		}
+	}
+
+	commit, err := gitCommandOutput(root, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("读取本地幽灵提交失败: %v", err)
+	}
+	commit = strings.TrimSpace(commit)
+	if source != nil {
+		if err := validateWorkspaceSourceManifestInCommit(root, commit, *source); err != nil {
+			return "", err
+		}
+	}
+	return commit, nil
+}
+
+func validateWorkspaceSourceManifestInCommit(root, commit string, source WorkspaceSourceIdentity) error {
+	object := commit + ":" + workspaceSourceManifestPath
+	objectType, err := gitCommandOutput(root, "cat-file", "-t", object)
+	if err != nil {
+		return fmt.Errorf("transport commit is missing %s: %w", workspaceSourceManifestPath, err)
+	}
+	if strings.TrimSpace(objectType) != "blob" {
+		return fmt.Errorf("transport commit %s must be a regular file", workspaceSourceManifestPath)
+	}
+	data, err := gitCommandOutput(root, "show", object)
+	if err != nil {
+		return fmt.Errorf("read transport source manifest: %w", err)
+	}
+	var manifest workspaceSourceManifest
+	if err := json.Unmarshal([]byte(data), &manifest); err != nil {
+		return fmt.Errorf("decode transport source manifest: %w", err)
+	}
+	if manifest.APIVersion != workspaceManifestAPIVersion || manifest.Kind != "WorkspaceSource" {
+		return fmt.Errorf("transport source manifest has invalid type")
+	}
+	if manifest.Source != source {
+		return fmt.Errorf("transport source manifest does not match declared source identity")
+	}
+	return nil
+}
+
+func workspaceSourceManifestBlobID(root, commit string) (string, error) {
+	blob, err := gitCommandOutput(root, "rev-parse", commit+":"+workspaceSourceManifestPath)
+	if err != nil {
+		return "", fmt.Errorf("read transport source manifest blob: %w", err)
+	}
+	blob = strings.TrimSpace(blob)
+	if !validWorkspaceCommit(blob) {
+		return "", fmt.Errorf("transport source manifest blob ID is invalid")
+	}
+	return blob, nil
+}
+
 func stageWorkspaceSnapshot(
 	src, tmpDir string,
 	extraExcludes []string,
 	dryRun bool,
-	source *CICDSourceRelease,
+	source *WorkspaceSourceIdentity,
 ) ([]string, error) {
 	stagedFiles, err := stageSnapshot(src, tmpDir, extraExcludes, dryRun)
 	if err != nil {
@@ -223,7 +311,7 @@ func stageWorkspaceSnapshot(
 	return stagedFiles, nil
 }
 
-func writeWorkspaceSourceManifest(root string, source *CICDSourceRelease) (string, error) {
+func writeWorkspaceSourceManifest(root string, source *WorkspaceSourceIdentity) (string, error) {
 	if source == nil {
 		return "", fmt.Errorf("source identity is required")
 	}
@@ -233,8 +321,11 @@ func writeWorkspaceSourceManifest(root string, source *CICDSourceRelease) (strin
 	if !immutableGitCommitPattern.MatchString(strings.TrimSpace(source.Revision)) {
 		return "", fmt.Errorf("source revision must be an immutable Git commit")
 	}
+	if strings.TrimSpace(source.Branch) == "" || strings.TrimSpace(source.Branch) != source.Branch {
+		return "", fmt.Errorf("source branch is required")
+	}
 	manifest := workspaceSourceManifest{
-		APIVersion: deploymentAPIVersion,
+		APIVersion: workspaceManifestAPIVersion,
 		Kind:       "WorkspaceSource",
 		Source:     *source,
 	}
@@ -358,7 +449,16 @@ func gitCommandOutput(dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
-func waitForWorkspaceReady(server Server, token string, sessionID string, workspacePath string, representativeRel string, expectedCommit string, timeout time.Duration) error {
+func waitForWorkspaceReady(
+	server Server,
+	token string,
+	sessionID string,
+	workspacePath string,
+	representativeRel string,
+	expectedCommit string,
+	expectedSourceManifestBlob string,
+	timeout time.Duration,
+) error {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
@@ -375,15 +475,26 @@ func waitForWorkspaceReady(server Server, token string, sessionID string, worksp
 	var lastOut string
 	var lastErr string
 	for attempt := 1; time.Now().Before(deadline); attempt++ {
-		cmd := fmt.Sprintf("if [ -f %q ]; then printf 'ready:'; tr -d '\\r\\n' < %q; exit 0; fi", readyFile, readyFile)
-		cmd += "; exit 3"
+		cmd := ""
+		if expectedSourceManifestBlob != "" {
+			cmd = workspaceCheckoutProofCommand(workspacePath, sessionID, expectedCommit)
+		} else {
+			cmd = fmt.Sprintf("if [ -f %q ]; then printf 'ready:'; tr -d '\\r\\n' < %q; exit 0; fi", readyFile, readyFile)
+			cmd += "; exit 3"
+		}
 		stdout, err := mcpClient.CallAndCapture("doops_shell", map[string]interface{}{
 			"command": cmd,
 		})
 		lastOut = strings.TrimSpace(stdout)
 		lastErr = ""
 		if err == nil {
-			if remoteCommit, ready := cicdReadyCommit(lastOut); ready {
+			if expectedSourceManifestBlob != "" {
+				if err := validateWorkspaceCheckoutProof(lastOut, expectedCommit, expectedSourceManifestBlob); err == nil {
+					return nil
+				} else {
+					lastErr = err.Error()
+				}
+			} else if remoteCommit, ready := cicdReadyCommit(lastOut); ready {
 				if remoteCommit == expectedCommit {
 					return nil
 				}
@@ -407,6 +518,68 @@ func waitForWorkspaceReady(server Server, token string, sessionID string, worksp
 		return fmt.Errorf("等待超时，未发现远端 ready 哨兵 %s（代表文件 %s 不能替代提交校验）", readyFile, representativePath)
 	}
 	return fmt.Errorf("等待超时，未发现远端 ready 哨兵 %s", readyFile)
+}
+
+func workspaceCheckoutProofCommand(workspacePath, sessionID, expectedCommit string) string {
+	readyFile := filepath.ToSlash(filepath.Join(workspacePath, ".doops-ready"))
+	manifestFile := filepath.ToSlash(filepath.Join(workspacePath, workspaceSourceManifestPath))
+	bareRepository := filepath.ToSlash(filepath.Join("/tmp/repos", sessionID+".git"))
+	return fmt.Sprintf(
+		`if [ -f %q ] && [ -f %q ]; then `+
+			`ready=$(tr -d '\r\n' < %q); `+
+			`bare=$(git --git-dir=%q rev-parse master 2>/dev/null); `+
+			`tree=$(git --git-dir=%q rev-parse %q 2>/dev/null); `+
+			`checkout=$(git hash-object %q 2>/dev/null); `+
+			`printf 'ready:%%s\nbare:%%s\ntree:%%s\ncheckout:%%s\n' "$ready" "$bare" "$tree" "$checkout"; `+
+			`exit 0; fi; exit 3`,
+		readyFile,
+		manifestFile,
+		readyFile,
+		bareRepository,
+		bareRepository,
+		expectedCommit+":"+workspaceSourceManifestPath,
+		manifestFile,
+	)
+}
+
+func validateWorkspaceCheckoutProof(output, expectedCommit, expectedManifestBlob string) error {
+	fields := make(map[string]string, 4)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || key == "" || value == "" {
+			return fmt.Errorf("invalid remote workspace proof line %q", line)
+		}
+		if _, exists := fields[key]; exists {
+			return fmt.Errorf("duplicate remote workspace proof field %q", key)
+		}
+		switch key {
+		case "ready", "bare", "tree", "checkout":
+			fields[key] = value
+		default:
+			return fmt.Errorf("unexpected remote workspace proof field %q", key)
+		}
+	}
+	for _, field := range []string{"ready", "bare", "tree", "checkout"} {
+		if fields[field] == "" {
+			return fmt.Errorf("remote workspace proof is missing %s", field)
+		}
+		if !validWorkspaceCommit(fields[field]) {
+			return fmt.Errorf("remote workspace proof %s is not a Git object ID", field)
+		}
+	}
+	if fields["ready"] != expectedCommit {
+		return fmt.Errorf("remote ready commit mismatch: got %s want %s", fields["ready"], expectedCommit)
+	}
+	if fields["bare"] != expectedCommit {
+		return fmt.Errorf("remote bare master mismatch: got %s want %s", fields["bare"], expectedCommit)
+	}
+	if fields["tree"] != expectedManifestBlob {
+		return fmt.Errorf("remote transport tree manifest mismatch: got %s want %s", fields["tree"], expectedManifestBlob)
+	}
+	if fields["checkout"] != expectedManifestBlob {
+		return fmt.Errorf("remote checkout manifest mismatch: got %s want %s", fields["checkout"], expectedManifestBlob)
+	}
+	return nil
 }
 
 func cicdReadyCommit(output string) (string, bool) {
