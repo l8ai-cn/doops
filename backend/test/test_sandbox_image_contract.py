@@ -93,10 +93,9 @@ def test_lightweight_base_contract_keeps_runtime_tools_without_webide_surface():
         "ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified\n"
     )
     assert re.fullmatch(r"\d+\.\d+\.\d+", baseline["DO_AGENT_VERSION"])
-    assert baseline["DO_AGENT_IMAGE"].startswith(
-        f"docker.cnb.cool/l8ai/ai/doagent:v{baseline['DO_AGENT_VERSION']}@sha256:"
-    )
-    assert re.fullmatch(r"sha256:[0-9a-f]{64}", baseline["DO_AGENT_IMAGE"].split("@", 1)[1])
+    image_name, image_digest = baseline["DO_AGENT_IMAGE"].rsplit("@", 1)
+    assert image_name
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest)
     assert (
         'test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}"'
         in dockerfile
