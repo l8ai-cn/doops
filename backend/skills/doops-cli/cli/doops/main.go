@@ -56,7 +56,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
   -help       显示此帮助信息
 
-	声明式 CI/CD 兼容适配示例:
+	Agent 原生声明式 CI/CD 示例:
 	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
 	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --dry-run --set version=release-YYYYMMDD
 	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --set version=release-YYYYMMDD
