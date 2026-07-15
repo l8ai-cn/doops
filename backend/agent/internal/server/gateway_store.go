@@ -142,6 +142,7 @@ type UpgradeOperation struct {
 	Instance      string
 	Image         string
 	OldGeneration uint64
+	OldRuntimeID  string
 	Status        string
 	Phase         string
 	Error         string
@@ -250,6 +251,7 @@ func (s *GatewayStore) migrate() error {
 			instance TEXT NOT NULL,
 			image TEXT NOT NULL,
 			old_generation INTEGER NOT NULL,
+			old_runtime_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			phase TEXT NOT NULL,
 			error TEXT NOT NULL DEFAULT '',
@@ -331,6 +333,9 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("agent_status", "generation", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("upgrade_operations", "old_runtime_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil
@@ -737,9 +742,9 @@ func (s *GatewayStore) CreateUpgradeOperation(op UpgradeOperation) (UpgradeOpera
 	}
 	op.UpdatedAt = now
 	_, err := s.db.Exec(`INSERT INTO upgrade_operations
-		(id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		op.ID, op.Cluster, op.Instance, op.Image, op.OldGeneration, op.Status, op.Phase, op.Error,
+		(id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		op.ID, op.Cluster, op.Instance, op.Image, op.OldGeneration, op.OldRuntimeID, op.Status, op.Phase, op.Error,
 		formatTime(op.StartedAt), formatTime(op.UpdatedAt))
 	return op, err
 }
@@ -758,9 +763,9 @@ func (s *GatewayStore) UpdateUpgradeOperation(id, phase, status, errMsg string) 
 func (s *GatewayStore) GetUpgradeOperation(id string) (UpgradeOperation, error) {
 	var op UpgradeOperation
 	var started, updated string
-	err := s.db.QueryRow(`SELECT id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at
+	err := s.db.QueryRow(`SELECT id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at
 		FROM upgrade_operations WHERE id = ?`, id).
-		Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.Status, &op.Phase, &op.Error, &started, &updated)
+		Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.OldRuntimeID, &op.Status, &op.Phase, &op.Error, &started, &updated)
 	if err != nil {
 		return UpgradeOperation{}, err
 	}
@@ -770,7 +775,7 @@ func (s *GatewayStore) GetUpgradeOperation(id string) (UpgradeOperation, error) 
 }
 
 func (s *GatewayStore) ListRunningUpgradeOperations() ([]UpgradeOperation, error) {
-	rows, err := s.db.Query(`SELECT id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at
+	rows, err := s.db.Query(`SELECT id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at
 		FROM upgrade_operations WHERE status = 'running' ORDER BY started_at`)
 	if err != nil {
 		return nil, err
@@ -780,7 +785,7 @@ func (s *GatewayStore) ListRunningUpgradeOperations() ([]UpgradeOperation, error
 	for rows.Next() {
 		var op UpgradeOperation
 		var started, updated string
-		if err := rows.Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration,
+		if err := rows.Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.OldRuntimeID,
 			&op.Status, &op.Phase, &op.Error, &started, &updated); err != nil {
 			return nil, err
 		}

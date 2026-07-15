@@ -8,13 +8,24 @@ import (
 )
 
 type AgentRegistrationHandler struct {
-	store    *GatewayStore
-	registry *AgentRegistry
-	lease    time.Duration
+	store       *GatewayStore
+	registry    *AgentRegistry
+	lease       time.Duration
+	acknowledge func(*GatewayAgent) error
 }
 
 func NewAgentRegistrationHandler(store *GatewayStore, registry *AgentRegistry, lease time.Duration) *AgentRegistrationHandler {
-	return &AgentRegistrationHandler{store: store, registry: registry, lease: lease}
+	return &AgentRegistrationHandler{
+		store:    store,
+		registry: registry,
+		lease:    lease,
+		acknowledge: func(session *GatewayAgent) error {
+			return session.writeJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"method":  "gateway/registered",
+			})
+		},
+	}
 }
 
 func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,20 +58,16 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		<-session.closed
 		return
 	}
-	if err := h.registry.Register(session); err != nil {
-		log.Printf("[gateway] agent registration failed: %s: %v", session.Key, err)
+	if err := h.acknowledge(session); err != nil {
+		log.Printf("[gateway] agent registration acknowledgement failed: %s: %v", session.Key, err)
 		_ = conn.Close()
 		<-session.closed
 		return
 	}
-	if err := session.writeJSON(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "gateway/registered",
-	}); err != nil {
-		log.Printf("[gateway] agent registration acknowledgement failed: %s: %v", session.Key, err)
+	if err := h.registry.Register(session); err != nil {
+		log.Printf("[gateway] agent registration failed: %s: %v", session.Key, err)
 		_ = conn.Close()
 		<-session.closed
-		_ = h.registry.Unregister(session)
 		return
 	}
 	log.Printf("[gateway] agent online: %s generation=%d remote=%s", session.Key, session.Generation, session.Remote)

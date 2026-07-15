@@ -40,12 +40,16 @@ func NewUpgradeCoordinator(store *GatewayStore, registry *AgentRegistry) *Upgrad
 	return &UpgradeCoordinator{store: store, registry: registry}
 }
 
-func (c *UpgradeCoordinator) Begin(cluster, instance, image string, oldGeneration uint64) (UpgradeOperation, error) {
+func (c *UpgradeCoordinator) Begin(cluster, instance, image string, oldGeneration uint64, oldRuntimeID string) (UpgradeOperation, error) {
+	if oldRuntimeID == "" {
+		return UpgradeOperation{}, fmt.Errorf("agent runtime identity is required for verified upgrade")
+	}
 	return c.store.CreateUpgradeOperation(UpgradeOperation{
 		Cluster:       cluster,
 		Instance:      instance,
 		Image:         image,
 		OldGeneration: oldGeneration,
+		OldRuntimeID:  oldRuntimeID,
 	})
 }
 
@@ -61,7 +65,7 @@ func (c *UpgradeCoordinator) MarkWaiting(op UpgradeOperation) error {
 }
 
 func (c *UpgradeCoordinator) WaitForReplacementPrepared(ctx context.Context, op UpgradeOperation) (*GatewayAgent, error) {
-	replacement := c.registry.WaitForNewerHeartbeat(ctx, op.Cluster, op.Instance, op.OldGeneration)
+	replacement := c.registry.WaitForReplacementHeartbeat(ctx, op.Cluster, op.Instance, op.OldGeneration, op.OldRuntimeID)
 	if replacement == nil {
 		errMsg := "replacement agent did not register and heartbeat before deadline"
 		if err := c.store.UpdateUpgradeOperation(op.ID, "replacement_timeout", "error", errMsg); err != nil {

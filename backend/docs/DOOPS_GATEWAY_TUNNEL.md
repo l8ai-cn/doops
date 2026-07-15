@@ -271,6 +271,14 @@ gateway 可以通过在线长连接对一批 agent 下发升级操作。第一�
 - Docker/nerdctl 容器：agent 拉取新镜像并返回明确状态；自动替换容器需要由 supervisor/编排层接管，避免 agent 在执行中杀掉自己。
 - 裸二进制：明确返回 unsupported，不做镜像升级。
 
+gateway 在转发升级请求前先把操作持久化为可恢复状态。升级成功必须同时满足：
+
+- 同一 `cluster/instance` 出现更高连接 generation；
+- 新连接声明的进程 runtime identity 与旧进程不同；
+- 新进程至少完成一次 heartbeat。
+
+因此网络抖动或同一进程重新建立 WebSocket 不会被当成升级成功。Gateway 在请求下发窗口重启后，也会继续等待符合条件的 replacement，而不是静默降级或直接报成功。
+
 示例：
 
 ```bash

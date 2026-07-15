@@ -76,6 +76,7 @@ type GatewayAgent struct {
 	Remote      string    `json:"remote"`
 	TokenID     string    `json:"token_id,omitempty"`
 	Generation  uint64    `json:"generation"`
+	RuntimeID   string    `json:"runtime_id,omitempty"`
 	ConnectedAt time.Time `json:"connected_at"`
 	LastSeen    time.Time `json:"last_seen"`
 	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
@@ -825,8 +826,14 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	defer agent.releaseForAction(action, resourceKey)
 	if waitForUpgradeReplacement {
 		var beginErr error
-		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation)
+		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)
 		if beginErr != nil {
+			finishAudit("error", beginErr.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, beginErr.Error()))
+			return nil
+		}
+		if beginErr = h.upgrades.MarkWaiting(upgradeOp); beginErr != nil {
+			_ = h.upgrades.Fail(upgradeOp, "persistence_failed", beginErr)
 			finishAudit("error", beginErr.Error(), "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32603, beginErr.Error()))
 			return nil
@@ -839,6 +846,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	finalErr := ""
 	upgradeAccepted := false
 	upgradeRejected := false
+	var upgradeTerminalRaw []byte
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
@@ -857,6 +865,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 					finalStatus = "error"
 					upgradeRejected = waitForUpgradeReplacement
 					finalErr = resultContentText(result)
+					if waitForUpgradeReplacement {
+						upgradeTerminalRaw, _ = json.Marshal(msg.Parsed)
+						return nil
+					}
 				} else if waitForUpgradeReplacement {
 					upgradeAccepted = true
 					return nil
@@ -865,6 +877,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
 				finalErr = fmt.Sprintf("%v", rpcErr)
+				if waitForUpgradeReplacement {
+					upgradeRejected = true
+					upgradeTerminalRaw, _ = json.Marshal(msg.Parsed)
+					return nil
+				}
 			}
 			raw, _ := json.Marshal(msg.Parsed)
 			if err := writeRaw(raw); err != nil {
@@ -875,36 +892,32 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	})
 	if waitForUpgradeReplacement && (upgradeAccepted || errors.Is(err, errGatewayAgentDisconnected)) {
-		if waitErr := h.upgrades.MarkWaiting(upgradeOp); waitErr != nil {
-			err = fmt.Errorf("persist upgrade waiting phase: %w", waitErr)
-		} else {
-			type upgradeResult struct {
-				replacement *GatewayAgent
-				err         error
+		type upgradeResult struct {
+			replacement *GatewayAgent
+			err         error
+		}
+		resultCh := make(chan upgradeResult, 1)
+		go func() {
+			waitCtx, cancelWait := context.WithTimeout(context.Background(), h.opts.OperationTimeout)
+			defer cancelWait()
+			replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
+			resultCh <- upgradeResult{replacement: replacement, err: waitErr}
+		}()
+		select {
+		case result := <-resultCh:
+			if result.err != nil {
+				err = result.err
+			} else {
+				err = nil
+				finalStatus = "success"
+				finalErr = ""
+				_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
+					"agent upgrade completed: %s/%s generation %d image %s",
+					cluster, instance, result.replacement.Generation, upgradeOp.Image,
+				)))
 			}
-			resultCh := make(chan upgradeResult, 1)
-			go func() {
-				waitCtx, cancelWait := context.WithTimeout(context.Background(), h.opts.OperationTimeout)
-				defer cancelWait()
-				replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
-				resultCh <- upgradeResult{replacement: replacement, err: waitErr}
-			}()
-			select {
-			case result := <-resultCh:
-				if result.err != nil {
-					err = result.err
-				} else {
-					err = nil
-					finalStatus = "success"
-					finalErr = ""
-					_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
-						"agent upgrade completed: %s/%s generation %d image %s",
-						cluster, instance, result.replacement.Generation, upgradeOp.Image,
-					)))
-				}
-			case <-opCtx.Done():
-				err = opCtx.Err()
-			}
+		case <-opCtx.Done():
+			err = opCtx.Err()
 		}
 	} else if waitForUpgradeReplacement && (err != nil || upgradeRejected) {
 		cause := err
@@ -915,6 +928,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		if persistErr := h.upgrades.Fail(upgradeOp, phase, cause); persistErr != nil {
 			err = persistErr
+		} else if len(upgradeTerminalRaw) > 0 {
+			err = writeRaw(upgradeTerminalRaw)
 		}
 	}
 	if err != nil {
@@ -1024,7 +1039,11 @@ func (a *GatewayAgent) initialize() error {
 		return err
 	}
 	select {
-	case <-ch:
+	case msg := <-ch:
+		if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
+			a.RuntimeID, _ = result["runtimeId"].(string)
+			a.RuntimeID = strings.TrimSpace(a.RuntimeID)
+		}
 		return nil
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("agent initialize timed out")

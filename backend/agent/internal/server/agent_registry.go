@@ -144,11 +144,14 @@ func (r *AgentRegistry) Wait(ctx context.Context, cluster, instance string, grac
 	}
 }
 
-func (r *AgentRegistry) WaitForNewerHeartbeat(ctx context.Context, cluster, instance string, generation uint64) *GatewayAgent {
+func (r *AgentRegistry) WaitForReplacementHeartbeat(ctx context.Context, cluster, instance string, generation uint64, oldRuntimeID string) *GatewayAgent {
 	key := tunnelKey(cluster, instance)
 	for {
 		r.mu.Lock()
-		if session := r.sessions[key]; session != nil && session.Generation > generation {
+		if session := r.sessions[key]; session != nil &&
+			session.Generation > generation &&
+			session.RuntimeID != "" &&
+			session.RuntimeID != oldRuntimeID {
 			session.stateMu.RLock()
 			heartbeatAt := session.HeartbeatAt
 			session.stateMu.RUnlock()

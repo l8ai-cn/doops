@@ -1207,8 +1207,12 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if err := conn.ReadJSON(&resp); err != nil {
 		t.Fatalf("read initialize: %v", err)
 	}
-	if _, ok := resp["result"]; !ok {
+	result, ok := resp["result"].(map[string]interface{})
+	if !ok {
 		t.Fatalf("initialize failed: %#v", resp)
+	}
+	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
+		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
 }
 

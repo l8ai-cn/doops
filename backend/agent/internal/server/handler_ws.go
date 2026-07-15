@@ -220,6 +220,7 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 						"name":    "doops-agent",
 						"version": "2.0",
 					},
+					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 					},
@@ -357,6 +358,16 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 	}
 
 	log.Printf("🔗 WS Client Disconnected: %s", remoteAddr)
+}
+
+var agentProcessRuntimeID = fmt.Sprintf("%s:%d:%d", processHostname(), os.Getpid(), time.Now().UnixNano())
+
+func processHostname() string {
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		return "unknown"
+	}
+	return strings.TrimSpace(hostname)
 }
 
 // notificationSender 抽象了发送 notifications/message 的能力。

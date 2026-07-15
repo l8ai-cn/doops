@@ -423,6 +423,7 @@ func TestGatewayStoreUpgradeOperationLifecycle(t *testing.T) {
 		Instance:      "local",
 		Image:         "registry.example/doops@sha256:abc",
 		OldGeneration: 3,
+		OldRuntimeID:  "runtime-old",
 	})
 	if err != nil {
 		t.Fatalf("create upgrade operation: %v", err)
@@ -439,5 +440,8 @@ func TestGatewayStoreUpgradeOperationLifecycle(t *testing.T) {
 	}
 	if got.Phase != "waiting_reconnect" || got.Status != "running" {
 		t.Fatalf("unexpected updated operation: %#v", got)
+	}
+	if got.OldRuntimeID != "runtime-old" {
+		t.Fatalf("upgrade operation lost runtime identity: %#v", got)
 	}
 }
