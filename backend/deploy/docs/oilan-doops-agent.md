@@ -30,6 +30,13 @@ The Deployment reads the gateway registration token from the declared
 `gateway.agentTokenSecret` reference and passes it to `doops-agent`. The token
 is bound to the declared gateway cluster and instance.
 
+The Deployment uses `RollingUpdate` with `maxUnavailable: 0` and
+`maxSurge: 1`. It does not use the host network or a host port. The replacement
+Pod becomes ready only after the Gateway acknowledges its reverse-tunnel
+registration; Kubernetes therefore keeps the previous Pod running until the
+replacement has a verified management path. The Gateway rejects reconnects
+from the superseded runtime identity while the old Pod is terminating.
+
 # Model Routing
 
 Model routing is not duplicated in the CI/CD environment registry.

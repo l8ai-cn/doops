@@ -9,15 +9,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 func (s *GatewayStore) encryptSecret(plaintext string) (string, error) {
-	plaintext = strings.TrimSpace(plaintext)
 	if plaintext == "" {
 		return "", nil
 	}
+	return s.encryptSecretEnvelope(plaintext, nil, "v1:")
+}
+
+func (s *GatewayStore) decryptSecret(ciphertext string) (string, error) {
+	return s.decryptSecretEnvelope(ciphertext, nil, "v1:")
+}
+
+func (s *GatewayStore) encryptSecretWithAAD(plaintext string, aad []byte) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	return s.encryptSecretEnvelope(plaintext, aad, "v2:")
+}
+
+func (s *GatewayStore) decryptSecretWithAAD(ciphertext string, aad []byte) (string, error) {
+	return s.decryptSecretEnvelope(ciphertext, aad, "v2:")
+}
+
+func (s *GatewayStore) encryptSecretEnvelope(plaintext string, aad []byte, prefix string) (string, error) {
 	gcm, err := s.secretGCM()
 	if err != nil {
 		return "", err
@@ -26,20 +43,20 @@ func (s *GatewayStore) encryptSecret(plaintext string) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	sealed := gcm.Seal(nil, nonce, []byte(plaintext), nil)
+	sealed := gcm.Seal(nil, nonce, []byte(plaintext), aad)
 	raw := append(nonce, sealed...)
-	return "v1:" + base64.RawStdEncoding.EncodeToString(raw), nil
+	return prefix + base64.RawStdEncoding.EncodeToString(raw), nil
 }
 
-func (s *GatewayStore) decryptSecret(ciphertext string) (string, error) {
+func (s *GatewayStore) decryptSecretEnvelope(ciphertext string, aad []byte, prefix string) (string, error) {
 	ciphertext = strings.TrimSpace(ciphertext)
 	if ciphertext == "" {
 		return "", nil
 	}
-	if !strings.HasPrefix(ciphertext, "v1:") {
+	if !strings.HasPrefix(ciphertext, prefix) {
 		return "", fmt.Errorf("unsupported secret ciphertext")
 	}
-	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(ciphertext, "v1:"))
+	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(ciphertext, prefix))
 	if err != nil {
 		return "", err
 	}
@@ -52,7 +69,7 @@ func (s *GatewayStore) decryptSecret(ciphertext string) (string, error) {
 	}
 	nonce := raw[:gcm.NonceSize()]
 	sealed := raw[gcm.NonceSize():]
-	plain, err := gcm.Open(nil, nonce, sealed, nil)
+	plain, err := gcm.Open(nil, nonce, sealed, aad)
 	if err != nil {
 		return "", err
 	}
@@ -72,33 +89,10 @@ func (s *GatewayStore) secretGCM() (cipher.AEAD, error) {
 }
 
 func (s *GatewayStore) secretKey() ([]byte, error) {
-	if raw := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_SECRET_KEY")); raw != "" {
-		sum := sha256.Sum256([]byte(raw))
-		return sum[:], nil
+	raw := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_SECRET_KEY"))
+	if raw == "" {
+		return nil, ErrSecretKeyUnavailable
 	}
-	path := s.secretKeyPath()
-	if raw, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(raw)) != "" {
-		sum := sha256.Sum256([]byte(strings.TrimSpace(string(raw))))
-		return sum[:], nil
-	}
-	secret := randomHex(32)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, []byte(secret+"\n"), 0600); err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256([]byte(secret))
+	sum := sha256.Sum256([]byte(raw))
 	return sum[:], nil
-}
-
-func (s *GatewayStore) secretKeyPath() string {
-	var dbPath string
-	if s != nil && s.db != nil {
-		_ = s.db.QueryRow(`PRAGMA database_list`).Scan(new(int), new(string), &dbPath)
-	}
-	if strings.TrimSpace(dbPath) == "" {
-		dbPath = "/var/lib/doops-gateway/gateway.db"
-	}
-	return filepath.Join(filepath.Dir(dbPath), "gateway.secret")
 }

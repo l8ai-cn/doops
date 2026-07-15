@@ -22,19 +22,26 @@ import (
 type GatewayAction string
 
 const (
-	ActionAll          GatewayAction = "*"
-	ActionExec         GatewayAction = "exec"
-	ActionAsk          GatewayAction = "ask"
-	ActionRead         GatewayAction = "read"
-	ActionWrite        GatewayAction = "write"
-	ActionPush         GatewayAction = "push"
-	ActionPull         GatewayAction = "pull"
-	ActionInfo         GatewayAction = "info"
-	ActionCheck        GatewayAction = "check"
-	ActionClean        GatewayAction = "clean"
-	ActionAgentUpgrade GatewayAction = "agent:upgrade"
-	ActionTargetsList  GatewayAction = "targets:list"
-	ActionAdmin        GatewayAction = "admin"
+	ActionAll                GatewayAction = "*"
+	ActionExec               GatewayAction = "exec"
+	ActionAsk                GatewayAction = "ask"
+	ActionRead               GatewayAction = "read"
+	ActionWrite              GatewayAction = "write"
+	ActionPush               GatewayAction = "push"
+	ActionPull               GatewayAction = "pull"
+	ActionInfo               GatewayAction = "info"
+	ActionCheck              GatewayAction = "check"
+	ActionClean              GatewayAction = "clean"
+	ActionAgentUpgrade       GatewayAction = "agent:upgrade"
+	ActionTargetsList        GatewayAction = "targets:list"
+	ActionCredentialCreate   GatewayAction = "credential:create"
+	ActionCredentialMetadata GatewayAction = "credential:metadata"
+	ActionCredentialGrant    GatewayAction = "credential:grant"
+	ActionCredentialUse      GatewayAction = "credential:use"
+	ActionCredentialRotate   GatewayAction = "credential:rotate"
+	ActionCredentialRevoke   GatewayAction = "credential:revoke"
+	ActionCredentialAudit    GatewayAction = "credential:audit"
+	ActionAdmin              GatewayAction = "admin"
 )
 
 var defaultGatewayUserActions = []GatewayAction{
@@ -48,6 +55,9 @@ var defaultGatewayUserActions = []GatewayAction{
 	ActionInfo,
 	ActionCheck,
 	ActionClean,
+	ActionCredentialCreate,
+	ActionCredentialMetadata,
+	ActionCredentialUse,
 }
 
 type TokenKind string
@@ -321,6 +331,105 @@ func (s *GatewayStore) migrate() error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_git_repos_created ON git_repos(created_at)`,
+		`CREATE TABLE IF NOT EXISTS credentials (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			scope TEXT NOT NULL,
+			owner_id TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'active',
+			created_by TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			revoked_at TEXT NOT NULL DEFAULT '',
+			UNIQUE(scope, owner_id, name),
+			FOREIGN KEY(owner_id) REFERENCES users(id),
+			FOREIGN KEY(created_by) REFERENCES users(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_credentials_owner ON credentials(owner_id, state, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_credentials_name ON credentials(name, state)`,
+		`CREATE TABLE IF NOT EXISTS credential_versions (
+			id TEXT PRIMARY KEY,
+			credential_id TEXT NOT NULL,
+			payload_ciphertext TEXT NOT NULL,
+			payload_digest TEXT NOT NULL,
+			state TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			promoted_at TEXT NOT NULL DEFAULT '',
+			revoked_at TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(credential_id) REFERENCES credentials(id),
+			FOREIGN KEY(created_by) REFERENCES users(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_versions_resource ON credential_versions(credential_id, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_versions_one_active
+			ON credential_versions(credential_id) WHERE state = 'active'`,
+		`CREATE TABLE IF NOT EXISTS credential_grants (
+			id TEXT PRIMARY KEY,
+			credential_id TEXT NOT NULL,
+			grantee_id TEXT NOT NULL,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			project TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			template TEXT NOT NULL,
+			namespace TEXT NOT NULL,
+			uses_json TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'active',
+			created_by TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			revoked_at TEXT NOT NULL DEFAULT '',
+			UNIQUE(credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json),
+			FOREIGN KEY(credential_id) REFERENCES credentials(id),
+			FOREIGN KEY(grantee_id) REFERENCES users(id),
+			FOREIGN KEY(created_by) REFERENCES users(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_grants_authorize
+			ON credential_grants(grantee_id, cluster, instance, project, environment, template, namespace, state)`,
+		`CREATE TABLE IF NOT EXISTS credential_verifications (
+			id TEXT PRIMARY KEY,
+			credential_id TEXT NOT NULL,
+			version_id TEXT NOT NULL,
+			grant_id TEXT NOT NULL,
+			use TEXT NOT NULL,
+			request_json TEXT NOT NULL,
+			evidence_json TEXT NOT NULL,
+			status TEXT NOT NULL,
+			verified_at TEXT NOT NULL,
+			UNIQUE(version_id, grant_id, use),
+			FOREIGN KEY(credential_id) REFERENCES credentials(id),
+			FOREIGN KEY(version_id) REFERENCES credential_versions(id),
+			FOREIGN KEY(grant_id) REFERENCES credential_grants(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_verifications_resource
+			ON credential_verifications(credential_id, version_id, status)`,
+		`CREATE TABLE IF NOT EXISTS credential_bundles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT 'personal',
+			owner_id TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT 'active',
+			created_by TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(owner_id, name),
+			FOREIGN KEY(owner_id) REFERENCES users(id),
+			FOREIGN KEY(created_by) REFERENCES users(id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS credential_bundle_items (
+			bundle_id TEXT NOT NULL,
+			credential_id TEXT NOT NULL,
+			use TEXT NOT NULL,
+			namespace TEXT NOT NULL DEFAULT '',
+			workload_json TEXT NOT NULL DEFAULT '{}',
+			registry_repository TEXT NOT NULL DEFAULT '',
+			registry_reference TEXT NOT NULL DEFAULT '',
+			required_keys_json TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY(bundle_id, credential_id, use),
+			FOREIGN KEY(bundle_id) REFERENCES credential_bundles(id),
+			FOREIGN KEY(credential_id) REFERENCES credentials(id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_bundle_items_resource ON credential_bundle_items(credential_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -338,6 +447,22 @@ func (s *GatewayStore) migrate() error {
 	}
 	if err := s.ensureColumn("upgrade_operations", "old_runtime_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		table      string
+		name       string
+		definition string
+	}{
+		{"credential_bundles", "scope", "TEXT NOT NULL DEFAULT 'personal'"},
+		{"credential_bundle_items", "namespace", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "workload_json", "TEXT NOT NULL DEFAULT '{}'"},
+		{"credential_bundle_items", "registry_repository", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "registry_reference", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "required_keys_json", "TEXT NOT NULL DEFAULT '[]'"},
+	} {
+		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
+			return err
+		}
 	}
 	return nil
 }

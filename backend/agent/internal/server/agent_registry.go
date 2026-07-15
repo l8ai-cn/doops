@@ -17,6 +17,7 @@ type AgentRegistry struct {
 	sessions    map[string]*GatewayAgent
 	generations map[string]uint64
 	changed     map[string]chan struct{}
+	retired     map[string][]string
 }
 
 func NewAgentRegistry(store *GatewayStore) (*AgentRegistry, error) {
@@ -35,6 +36,7 @@ func NewAgentRegistry(store *GatewayStore) (*AgentRegistry, error) {
 		sessions:    make(map[string]*GatewayAgent),
 		generations: make(map[string]uint64),
 		changed:     make(map[string]chan struct{}),
+		retired:     make(map[string][]string),
 	}
 	for _, status := range statuses {
 		registry.generations[tunnelKey(status.Cluster, status.Instance)] = status.Generation
@@ -45,6 +47,13 @@ func NewAgentRegistry(store *GatewayStore) (*AgentRegistry, error) {
 func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 	r.mu.Lock()
 	key := agent.Key
+	if runtimeIDRetired(r.retired[key], agent.RuntimeID) {
+		if r.sessions[key] != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("agent runtime %q was superseded for %s", agent.RuntimeID, key)
+		}
+		r.retired[key] = removeRetiredRuntimeID(r.retired[key], agent.RuntimeID)
+	}
 	old := r.sessions[key]
 	generation := r.generations[key] + 1
 	agent.Generation = generation
@@ -60,6 +69,9 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 		r.mu.Unlock()
 		return fmt.Errorf("persist agent online: %w", err)
 	}
+	if old != nil && old.RuntimeID != "" && old.RuntimeID != agent.RuntimeID {
+		r.retired[key] = appendRetiredRuntimeID(r.retired[key], old.RuntimeID)
+	}
 	r.generations[key] = generation
 	r.sessions[key] = agent
 	r.notifyLocked(key)
@@ -69,6 +81,40 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 		_ = old.conn.Close()
 	}
 	return nil
+}
+
+func runtimeIDRetired(retired []string, runtimeID string) bool {
+	if runtimeID == "" {
+		return false
+	}
+	for _, candidate := range retired {
+		if candidate == runtimeID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeRetiredRuntimeID(retired []string, runtimeID string) []string {
+	filtered := retired[:0]
+	for _, candidate := range retired {
+		if candidate != runtimeID {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
+func appendRetiredRuntimeID(retired []string, runtimeID string) []string {
+	if runtimeID == "" || runtimeIDRetired(retired, runtimeID) {
+		return retired
+	}
+	retired = append(retired, runtimeID)
+	const retainedRuntimeLimit = 8
+	if len(retired) > retainedRuntimeLimit {
+		retired = append([]string(nil), retired[len(retired)-retainedRuntimeLimit:]...)
+	}
+	return retired
 }
 
 func (r *AgentRegistry) Unregister(agent *GatewayAgent) error {

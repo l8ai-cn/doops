@@ -38,6 +38,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
   cicd        声明式 CI/CD workflow 入口 (run)
+  credential  管理 Gateway 凭据元数据与版本
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -196,7 +197,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			return
 		}
 		if len(cmdArgs) < 2 {
-			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			fmt.Println("       doops admin jobs <list|add|run|enable|disable|rm|issues> --target <gateway-target> [...]")
@@ -211,17 +213,21 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			return
 		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
-			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			os.Exit(1)
 		}
-		var target, gateway, token, user, label, expires, saveAs string
+		var target, gateway, token, kind, user, cluster, instance, label, expires, saveAs string
 		adminFlag := flag.NewFlagSet("admin token create", flag.ExitOnError)
 		adminFlag.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
 		adminFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
 		adminFlag.StringVar(&token, "token", "", "Gateway admin user token")
+		adminFlag.StringVar(&kind, "kind", "user", "Token kind: user or agent")
 		adminFlag.StringVar(&user, "user", "", "Gateway user name to issue a token for")
+		adminFlag.StringVar(&cluster, "cluster", "", "Agent token cluster")
+		adminFlag.StringVar(&instance, "instance", "", "Agent token instance")
 		adminFlag.StringVar(&label, "name", "", "Token label")
 		adminFlag.StringVar(&expires, "expires", "", "Optional token TTL, e.g. 720h")
 		adminFlag.StringVar(&saveAs, "save-as", "", "Optional configured target name to cache the issued token for")
@@ -240,15 +246,21 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				token = ResolveToken(server.Name, server.Token)
 			}
 		}
-		if gateway == "" || user == "" {
-			fmt.Println("Error: --gateway/--target and --user are required")
+		kind = strings.ToLower(strings.TrimSpace(kind))
+		if gateway == "" || (kind == "user" && strings.TrimSpace(user) == "") ||
+			(kind == "agent" && (strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "")) ||
+			(kind != "user" && kind != "agent") {
+			fmt.Println("Error: --gateway/--target and the selected token kind fields are required")
 			adminFlag.Usage()
 			os.Exit(1)
 		}
 		issued, err := GatewayAdminTokenCreate(gateway, token, gatewayAdminTokenCreateRequest{
-			User:    user,
-			Name:    label,
-			Expires: expires,
+			Kind:     kind,
+			User:     user,
+			Name:     label,
+			Cluster:  cluster,
+			Instance: instance,
+			Expires:  expires,
 		})
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -263,7 +275,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			}
 			fmt.Printf("Cached issued token for %s\n", saveAs)
 		}
-		fmt.Printf("username=%s\n", issued.Username)
+		fmt.Printf("token_type=%s\n", issued.TokenType)
+		if issued.Username != "" {
+			fmt.Printf("username=%s\n", issued.Username)
+		}
 		fmt.Printf("token_id=%s\n", issued.TokenID)
 		fmt.Printf("token=%s\n", issued.Token)
 		fmt.Println("warning=store this token now; gateway only keeps its hash")
@@ -306,6 +321,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "cicd":
 		if err := runCICDCommand(context.Background(), cmdArgs, servers, configErr, ss, *sessionName, *verbose); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "credential":
+		if err := runCredentialCommand(cmdArgs, servers, configErr, os.Stdin, os.Stdout); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -126,3 +126,34 @@ func TestGatewayAdminTokenCreatePostsVersionedEndpoint(t *testing.T) {
 		t.Fatalf("response mismatch: %#v", resp)
 	}
 }
+
+func TestGatewayAdminTokenCreateSupportsAgentRegistrationToken(t *testing.T) {
+	var gotBody gatewayAdminTokenCreateRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(gatewayAdminTokenCreateResponse{
+			Token:     "agent-token",
+			TokenID:   "tok_agent",
+			TokenType: "agent",
+		})
+	}))
+	defer ts.Close()
+
+	resp, err := GatewayAdminTokenCreate(ts.URL, "admin-token", gatewayAdminTokenCreateRequest{
+		Kind:     "agent",
+		Cluster:  "doops-edu",
+		Instance: "edu-coder",
+		Name:     "self-recovery",
+	})
+	if err != nil {
+		t.Fatalf("create agent token: %v", err)
+	}
+	if gotBody.Kind != "agent" || gotBody.Cluster != "doops-edu" || gotBody.Instance != "edu-coder" {
+		t.Fatalf("agent token request mismatch: %#v", gotBody)
+	}
+	if resp.TokenType != "agent" || resp.TokenID != "tok_agent" {
+		t.Fatalf("agent token response mismatch: %#v", resp)
+	}
+}

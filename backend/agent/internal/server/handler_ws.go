@@ -840,6 +840,30 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON,
 		)
 
+	case "doops_credential_plan":
+		result, err := handleCredentialPlanTool(argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
+	case "doops_credential_materialize":
+		result, err := handleCredentialMaterializeTool(ctx, argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
+	case "doops_credential_cleanup":
+		result, err := handleCredentialCleanupTool(ctx, argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_git_clone":
 		result, err := handleGitClone(argBytes)
 		if err != nil {

@@ -73,9 +73,12 @@ type gatewayLoginResponse struct {
 }
 
 type gatewayAdminTokenCreateRequest struct {
-	User    string `json:"user"`
-	Name    string `json:"name,omitempty"`
-	Expires string `json:"expires,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	User     string `json:"user,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Cluster  string `json:"cluster,omitempty"`
+	Instance string `json:"instance,omitempty"`
+	Expires  string `json:"expires,omitempty"`
 }
 
 type gatewayAdminTokenCreateResponse struct {
@@ -141,11 +144,26 @@ func GatewayLogin(gateway, username, password, label string) (string, error) {
 }
 
 func GatewayAdminTokenCreate(gateway, adminToken string, create gatewayAdminTokenCreateRequest) (gatewayAdminTokenCreateResponse, error) {
+	create.Kind = strings.ToLower(strings.TrimSpace(create.Kind))
 	create.User = strings.TrimSpace(create.User)
 	create.Name = strings.TrimSpace(create.Name)
+	create.Cluster = strings.TrimSpace(create.Cluster)
+	create.Instance = strings.TrimSpace(create.Instance)
 	create.Expires = strings.TrimSpace(create.Expires)
-	if create.User == "" {
-		return gatewayAdminTokenCreateResponse{}, fmt.Errorf("user is required")
+	if create.Kind == "" {
+		create.Kind = "user"
+	}
+	switch create.Kind {
+	case "user":
+		if create.User == "" {
+			return gatewayAdminTokenCreateResponse{}, fmt.Errorf("user is required for a user token")
+		}
+	case "agent":
+		if create.Cluster == "" || create.Instance == "" {
+			return gatewayAdminTokenCreateResponse{}, fmt.Errorf("cluster and instance are required for an agent token")
+		}
+	default:
+		return gatewayAdminTokenCreateResponse{}, fmt.Errorf("token kind must be user or agent")
 	}
 	createURL, err := gatewayAdminTokenCreateURL(gateway)
 	if err != nil {

@@ -317,6 +317,104 @@ func TestGatewayAgentCandidateAckFailureKeepsReadySession(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsSupersededRuntimeReconnect(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	registry, err := NewAgentRegistry(store)
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+
+	old := newGatewayAgentSession("dev", "local", "token", "old", nil, nil)
+	old.RuntimeID = "runtime-old"
+	if err := registry.Register(old); err != nil {
+		t.Fatalf("register old runtime: %v", err)
+	}
+	replacement := newGatewayAgentSession("dev", "local", "token", "new", nil, nil)
+	replacement.RuntimeID = "runtime-new"
+	if err := registry.Register(replacement); err != nil {
+		t.Fatalf("register replacement runtime: %v", err)
+	}
+
+	reconnect := newGatewayAgentSession("dev", "local", "token", "old-reconnect", nil, nil)
+	reconnect.RuntimeID = "runtime-old"
+	if err := registry.Register(reconnect); err == nil {
+		t.Fatal("superseded runtime reconnected and could replace the healthy candidate")
+	}
+	if current := registry.Get("dev", "local"); current != replacement {
+		t.Fatalf("superseded runtime replaced current session: current=%p replacement=%p", current, replacement)
+	}
+}
+
+func TestGatewayAllowsSupersededRuntimeToRecoverAfterCandidateDisconnects(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	registry, err := NewAgentRegistry(store)
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+
+	old := newGatewayAgentSession("dev", "local", "token", "old", nil, nil)
+	old.RuntimeID = "runtime-old"
+	if err := registry.Register(old); err != nil {
+		t.Fatalf("register old runtime: %v", err)
+	}
+	replacement := newGatewayAgentSession("dev", "local", "token", "new", nil, nil)
+	replacement.RuntimeID = "runtime-new"
+	if err := registry.Register(replacement); err != nil {
+		t.Fatalf("register replacement runtime: %v", err)
+	}
+	if err := registry.Unregister(replacement); err != nil {
+		t.Fatalf("unregister failed replacement: %v", err)
+	}
+
+	recovered := newGatewayAgentSession("dev", "local", "token", "old-recovered", nil, nil)
+	recovered.RuntimeID = "runtime-old"
+	if err := registry.Register(recovered); err != nil {
+		t.Fatalf("superseded runtime could not recover after candidate disconnect: %v", err)
+	}
+	if current := registry.Get("dev", "local"); current != recovered {
+		t.Fatalf("recovered runtime is not current: current=%p recovered=%p", current, recovered)
+	}
+}
+
+func TestGatewayKeepsCurrentRuntimeEligibleWhenCandidatePersistenceFails(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	registry, err := NewAgentRegistry(store)
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	current := newGatewayAgentSession("dev", "local", "token", "current", nil, nil)
+	current.RuntimeID = "runtime-current"
+	if err := registry.Register(current); err != nil {
+		t.Fatalf("register current runtime: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	candidate := newGatewayAgentSession("dev", "local", "token", "candidate", nil, nil)
+	candidate.RuntimeID = "runtime-candidate"
+	if err := registry.Register(candidate); err == nil {
+		t.Fatal("candidate registration unexpectedly succeeded with a closed store")
+	}
+	if runtimeIDRetired(registry.retired[current.Key], current.RuntimeID) {
+		t.Fatal("current runtime was retired before candidate persistence succeeded")
+	}
+	if got := registry.Get("dev", "local"); got != current {
+		t.Fatalf("candidate persistence failure replaced current runtime: got=%p current=%p", got, current)
+	}
+}
+
 func TestGatewayStartupReconcilesPersistedOnlineStatus(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -822,6 +920,7 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 }
 
 func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", "gateway-repo-test-key")
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2225,6 +2324,52 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
+	}
+}
+
+func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("credential-caller")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll},
+	}); err != nil {
+		t.Fatalf("grant user: %v", err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "credential-caller"})
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	mux := http.NewServeMux()
+	hub.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
+	defer client.Close()
+	for index, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+		id := float64(index + 2)
+		writeGatewayJSON(t, client, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  "tools/call",
+			"params": map[string]interface{}{
+				"name":      tool,
+				"arguments": map[string]interface{}{},
+			},
+		})
+		response := readUntilID(t, client, id)
+		rpcError, _ := response["error"].(map[string]interface{})
+		if rpcError["code"] != float64(-32003) {
+			t.Fatalf("%s was not rejected as internal-only: %#v", tool, response)
+		}
 	}
 }
 

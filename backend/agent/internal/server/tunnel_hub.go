@@ -39,7 +39,8 @@ type GatewayHub struct {
 	registration *AgentRegistrationHandler
 	client       *ClientService
 
-	scheduler *Scheduler
+	scheduler            *Scheduler
+	credentialMutationMu sync.Mutex
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -421,6 +422,10 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
+	mux.HandleFunc("/v1/credentials/prepare", h.HandleCredentialPrepare)
+	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
+	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
+	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
 	mux.HandleFunc("/v1/admin/users", h.HandleAdminUsers)
 	mux.HandleFunc("/v1/admin/users/password", h.HandleAdminUserPassword)
@@ -908,6 +913,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
+	if internalCredentialTool(params.Name) {
+		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
+		return nil
+	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
 		if operation == "apply" {
@@ -1138,6 +1147,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
+}
+
+func internalCredentialTool(tool string) bool {
+	return tool == "doops_credential_plan" ||
+		tool == "doops_credential_materialize" ||
+		tool == "doops_credential_cleanup"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -1875,6 +1890,12 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionClean
 	case "doops_agent_upgrade":
 		return ActionAgentUpgrade
+	case "doops_credential_plan":
+		return ActionCredentialMetadata
+	case "doops_credential_materialize":
+		return ActionCredentialUse
+	case "doops_credential_cleanup":
+		return ActionCredentialRevoke
 	case "doops_workspace_begin", "doops_workspace_chunk", "doops_workspace_commit":
 		return ActionPush
 	case "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
@@ -1900,6 +1921,14 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		}
 	case ActionAgentUpgrade:
 		return "target:" + cluster + "/" + instance
+	case ActionCredentialMetadata:
+		if sessionID := extractSession(args); sessionID != "" {
+			return "workspace:" + sessionID
+		}
+	case ActionCredentialUse:
+		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
+			return "credential:" + credentialID
+		}
 	}
 	return ""
 }

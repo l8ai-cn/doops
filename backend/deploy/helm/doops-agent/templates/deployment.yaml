@@ -8,7 +8,10 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: doops-agent
@@ -17,8 +20,7 @@ spec:
       labels:
         app: doops-agent
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      dnsPolicy: ClusterFirst
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
       imagePullSecrets:
@@ -62,7 +64,6 @@ spec:
           ports:
             - name: api
               containerPort: 42222
-              hostPort: 42222
               protocol: TCP
           startupProbe:
             exec:

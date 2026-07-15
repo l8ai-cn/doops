@@ -113,6 +113,17 @@ func runCICDCommand(
 		executionMode = "dry-run"
 		operation = "ask"
 	}
+	credentialRun, err := prepareWorkflowCredentials(ctx, *server, ResolveToken(server.Name, server.Token), credentialPrepareRequest{
+		Cluster:         server.Cluster,
+		Instance:        server.Instance,
+		SessionID:       sessionID,
+		WorkflowPath:    workflowPath,
+		WorkspaceCommit: workspaceCommit,
+		Mode:            executionMode,
+	})
+	if err != nil {
+		return fmt.Errorf("credential prepare: %w", err)
+	}
 	instruction, err := json.Marshal(map[string]interface{}{
 		"task":            "execute-doops-cicd-workflow",
 		"skill":           "$doops-cicd",
@@ -120,6 +131,10 @@ func runCICDCommand(
 		"workflowPath":    workflowPath,
 		"workspaceCommit": workspaceCommit,
 		"inputs":          request.Inputs,
+		"credentialRun": map[string]interface{}{
+			"id":               credentialRun.ID,
+			"materializations": credentialRun.Materializations,
+		},
 		"resultContract": map[string]interface{}{
 			"apiVersion":      workspaceManifestAPIVersion,
 			"kind":            "DeploymentRun",
