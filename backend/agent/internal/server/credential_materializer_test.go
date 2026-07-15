@@ -203,7 +203,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 		CredentialType: CredentialTypeGitToken,
 		Use:            CredentialUseGitCheckout,
 		Namespace:      "kz-ops",
-		Payload:        json.RawMessage(`{"url":"https://git.example.com/repo.git","username":"git","token":"git-canary-secret"}`),
+		Payload:        json.RawMessage(`{"url":"https://127.0.0.1/repo.git","username":"git","token":"git-canary-secret"}`),
 	})
 	if err != nil {
 		t.Fatalf("materialize Git credential: %v", err)
