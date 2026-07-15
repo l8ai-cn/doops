@@ -20,6 +20,59 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type temporaryHeartbeatError struct{}
+
+func (temporaryHeartbeatError) Error() string   { return "temporary heartbeat write timeout" }
+func (temporaryHeartbeatError) Timeout() bool   { return true }
+func (temporaryHeartbeatError) Temporary() bool { return true }
+
+type fakeWebSocketControlWriter struct {
+	writeErr error
+	closes   int
+}
+
+func (f *fakeWebSocketControlWriter) WriteControl(int, []byte, time.Time) error {
+	return f.writeErr
+}
+
+func (f *fakeWebSocketControlWriter) Close() error {
+	f.closes++
+	return nil
+}
+
+func TestWriteHeartbeatPingDistinguishesTemporaryBackpressureFromConnectionFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		writeErr   error
+		wantKeep   bool
+		wantCloses int
+	}{
+		{
+			name:       "temporary write timeout",
+			writeErr:   temporaryHeartbeatError{},
+			wantKeep:   true,
+			wantCloses: 0,
+		},
+		{
+			name:       "permanent write failure",
+			writeErr:   fmt.Errorf("connection closed"),
+			wantKeep:   false,
+			wantCloses: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &fakeWebSocketControlWriter{writeErr: tt.writeErr}
+			if got := writeHeartbeatPing(conn, nil, time.Second); got != tt.wantKeep {
+				t.Fatalf("keep connection = %t, want %t", got, tt.wantKeep)
+			}
+			if conn.closes != tt.wantCloses {
+				t.Fatalf("close calls = %d, want %d", conn.closes, tt.wantCloses)
+			}
+		})
+	}
+}
+
 func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)

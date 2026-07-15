@@ -83,6 +83,23 @@ const (
 	agentWSPingWriteTimeout = 3 * time.Second
 )
 
+type websocketControlWriter interface {
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+	Close() error
+}
+
+func writeHeartbeatPing(conn websocketControlWriter, payload []byte, timeout time.Duration) bool {
+	if err := conn.WriteControl(websocket.PingMessage, payload, time.Now().Add(timeout)); err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() && netErr.Temporary() {
+			return true
+		}
+		_ = conn.Close()
+		return false
+	}
+	return true
+}
+
 // HandleWebSocket 处理客户端发起的 WebSocket 升级请求。
 // 承担原本的 HTTP+SSE 职责，现在是全双工单端点通信。
 func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +149,7 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 			case <-pingDone:
 				return
 			case <-ticker.C:
-				deadline := time.Now().Add(agentWSPingWriteTimeout)
-				err := conn.WriteControl(websocket.PingMessage, nil, deadline)
-				if err != nil {
-					_ = conn.Close()
+				if !writeHeartbeatPing(conn, nil, agentWSPingWriteTimeout) {
 					return
 				}
 			}

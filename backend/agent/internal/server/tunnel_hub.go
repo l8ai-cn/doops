@@ -1354,10 +1354,7 @@ func (a *GatewayAgent) pingLoop(h *GatewayHub) {
 	for {
 		select {
 		case <-ticker.C:
-			deadline := time.Now().Add(10 * time.Second)
-			err := a.conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
-			if err != nil {
-				_ = a.conn.Close()
+			if !writeHeartbeatPing(a.conn, []byte("ping"), 10*time.Second) {
 				return
 			}
 			if h.store != nil {
