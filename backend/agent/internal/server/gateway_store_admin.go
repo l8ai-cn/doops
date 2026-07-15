@@ -64,11 +64,19 @@ func (s *GatewayStore) ListUsers() ([]UserSummary, error) {
 		u.Disabled = disabled != 0
 		u.HasPasswrd = strings.TrimSpace(passwordHash) != ""
 		u.CreatedAt, _ = parseTime(created)
-		u.GrantCount = s.countGrants(u.ID)
-		u.IsAdmin = s.UserHasAction(u.ID, ActionAdmin)
 		users = append(users, u)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range users {
+		users[i].GrantCount = s.countGrants(users[i].ID)
+		users[i].IsAdmin = s.UserHasAction(users[i].ID, ActionAdmin)
+	}
+	return users, nil
 }
 
 func (s *GatewayStore) countGrants(userID string) int {

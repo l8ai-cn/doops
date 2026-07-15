@@ -220,6 +220,78 @@ func TestGatewayStoreUserPasswordLogin(t *testing.T) {
 	}
 }
 
+func TestGatewayStoreListUsersDoesNotDeadlockSingleConnection(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	alice, err := store.CreateUser("alice")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := store.CreateUser("bob")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	if err := store.GrantUser(alice.ID, ScopeGrant{
+		Cluster:  "dev",
+		Instance: "node-1",
+		Actions:  []GatewayAction{ActionExec},
+	}); err != nil {
+		t.Fatalf("grant alice exec: %v", err)
+	}
+	if err := store.GrantUser(alice.ID, ScopeGrant{
+		Cluster:  "dev",
+		Instance: "node-2",
+		Actions:  []GatewayAction{ActionRead},
+	}); err != nil {
+		t.Fatalf("grant alice read: %v", err)
+	}
+	if err := store.GrantUser(bob.ID, ScopeGrant{
+		Cluster:  "*",
+		Instance: "*",
+		Actions:  []GatewayAction{ActionAdmin},
+	}); err != nil {
+		t.Fatalf("grant bob admin: %v", err)
+	}
+
+	type result struct {
+		users []UserSummary
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		users, err := store.ListUsers()
+		done <- result{users: users, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("list users: %v", got.err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+		if len(got.users) != 2 {
+			t.Fatalf("expected 2 users, got %#v", got.users)
+		}
+		byName := make(map[string]UserSummary, len(got.users))
+		for _, user := range got.users {
+			byName[user.Name] = user
+		}
+		if byName["alice"].GrantCount != 2 || byName["alice"].IsAdmin {
+			t.Fatalf("unexpected alice summary: %#v", byName["alice"])
+		}
+		if byName["bob"].GrantCount != 1 || !byName["bob"].IsAdmin {
+			t.Fatalf("unexpected bob summary: %#v", byName["bob"])
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ListUsers blocked while holding the only SQLite connection")
+	}
+}
+
 func TestGatewayStoreAuditCRUD(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
