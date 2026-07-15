@@ -64,6 +64,7 @@ var (
 const (
 	gatewayMessageBudgetMaxBytes = 128 << 20
 	gatewayMessageQueueMaxBytes  = 64 << 20
+	gatewayAgentTouchTimeout     = 2 * time.Second
 )
 
 type GatewayActiveOperation struct {
@@ -1122,7 +1123,10 @@ func (h *GatewayHub) unregisterAgent(agent *GatewayAgent) {
 	h.mu.Unlock()
 
 	if removed && h.store != nil {
-		_ = h.store.MarkAgentOffline(agent.Cluster, agent.Instance)
+		agent.stateMu.Lock()
+		lastSeen := agent.LastSeen
+		agent.stateMu.Unlock()
+		_ = h.store.MarkAgentOffline(agent.Cluster, agent.Instance, agent.ConnectedAt, lastSeen)
 	}
 }
 
@@ -1252,7 +1256,7 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 	defer a.conn.Close()
 	a.conn.SetReadDeadline(time.Now().Add(h.opts.AgentLease))
 	a.conn.SetPongHandler(func(string) error {
-		a.touch(h)
+		a.touch()
 		return a.conn.SetReadDeadline(time.Now().Add(h.opts.AgentLease))
 	})
 	for {
@@ -1263,7 +1267,7 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 			}
 			return
 		}
-		a.touch(h)
+		a.touch()
 		if msgType != websocket.TextMessage {
 			continue
 		}
@@ -1356,20 +1360,28 @@ func (a *GatewayAgent) pingLoop(h *GatewayHub) {
 				_ = a.conn.Close()
 				return
 			}
+			if h.store != nil {
+				a.stateMu.Lock()
+				lastSeen := a.LastSeen
+				a.stateMu.Unlock()
+				ctx, cancel := context.WithTimeout(context.Background(), gatewayAgentTouchTimeout)
+				err := h.store.TouchAgentContext(ctx, a.Cluster, a.Instance, a.ConnectedAt, lastSeen)
+				cancel()
+				if err != nil {
+					log.Printf("[gateway] persist agent last-seen failed: %s: %v", a.Key, err)
+				}
+			}
 		case <-a.closed:
 			return
 		}
 	}
 }
 
-func (a *GatewayAgent) touch(h *GatewayHub) {
+func (a *GatewayAgent) touch() {
 	lastSeen := time.Now().UTC()
 	a.stateMu.Lock()
 	a.LastSeen = lastSeen
 	a.stateMu.Unlock()
-	if h.store != nil {
-		_ = h.store.TouchAgent(a.Cluster, a.Instance, lastSeen)
-	}
 }
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -631,23 +632,24 @@ func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 	return err
 }
 
-func (s *GatewayStore) MarkAgentOffline(cluster, instance string) error {
+func (s *GatewayStore) MarkAgentOffline(cluster, instance string, connectedAt, lastSeen time.Time) error {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(`UPDATE agent_status
-		SET status = 'offline', updated_at = ?
-		WHERE cluster = ? AND instance = ?`,
-		formatTime(now), cluster, instance)
+		SET status = 'offline', last_seen = ?, updated_at = ?
+		WHERE cluster = ? AND instance = ? AND status = 'online' AND connected_at = ?`,
+		formatTime(lastSeen.UTC()), formatTime(now), cluster, instance, formatTime(connectedAt.UTC()))
 	return err
 }
 
-func (s *GatewayStore) TouchAgent(cluster, instance string, lastSeen time.Time) error {
+func (s *GatewayStore) TouchAgentContext(ctx context.Context, cluster, instance string, connectedAt, lastSeen time.Time) error {
 	if lastSeen.IsZero() {
 		lastSeen = time.Now().UTC()
 	}
-	_, err := s.db.Exec(`UPDATE agent_status
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_status
 		SET last_seen = ?, updated_at = ?
-		WHERE cluster = ? AND instance = ?`,
-		formatTime(lastSeen.UTC()), formatTime(time.Now().UTC()), cluster, instance)
+		WHERE cluster = ? AND instance = ? AND status = 'online' AND connected_at = ?`,
+		formatTime(lastSeen.UTC()), formatTime(time.Now().UTC()),
+		cluster, instance, formatTime(connectedAt.UTC()))
 	return err
 }
 

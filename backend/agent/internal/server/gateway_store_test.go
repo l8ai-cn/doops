@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -459,7 +460,12 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 		t.Fatalf("expected one online agent, got %#v", agents)
 	}
 
-	if err := store.MarkAgentOffline("dev", "local"); err != nil {
+	if err := store.MarkAgentOffline(
+		"dev",
+		"local",
+		agents[0].ConnectedAt,
+		agents[0].LastSeen,
+	); err != nil {
 		t.Fatalf("mark offline: %v", err)
 	}
 	agents, err = store.ListAgentStatus()
@@ -468,5 +474,81 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	}
 	if len(agents) != 1 || agents[0].Status != "offline" {
 		t.Fatalf("expected offline agent retained in store, got %#v", agents)
+	}
+}
+
+func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	oldConnectedAt := time.Now().UTC().Add(-time.Minute)
+	newConnectedAt := oldConnectedAt.Add(30 * time.Second)
+	newLastSeen := newConnectedAt.Add(time.Second)
+	if err := store.MarkAgentOnline(AgentStatus{
+		Cluster:     "dev",
+		Instance:    "local",
+		ConnectedAt: oldConnectedAt,
+		LastSeen:    oldConnectedAt,
+	}); err != nil {
+		t.Fatalf("mark old agent online: %v", err)
+	}
+	if err := store.MarkAgentOnline(AgentStatus{
+		Cluster:     "dev",
+		Instance:    "local",
+		ConnectedAt: newConnectedAt,
+		LastSeen:    newLastSeen,
+	}); err != nil {
+		t.Fatalf("mark replacement agent online: %v", err)
+	}
+	if err := store.TouchAgentContext(
+		context.Background(),
+		"dev",
+		"local",
+		oldConnectedAt,
+		oldConnectedAt.Add(10*time.Second),
+	); err != nil {
+		t.Fatalf("touch stale agent: %v", err)
+	}
+
+	agents, err := store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list replacement agent: %v", err)
+	}
+	if len(agents) != 1 || !agents[0].ConnectedAt.Equal(newConnectedAt) || !agents[0].LastSeen.Equal(newLastSeen) {
+		t.Fatalf("stale touch overwrote replacement agent: %#v", agents)
+	}
+
+	finalLastSeen := newConnectedAt.Add(10 * time.Second)
+	if err := store.MarkAgentOffline("dev", "local", newConnectedAt, finalLastSeen); err != nil {
+		t.Fatalf("mark replacement agent offline: %v", err)
+	}
+	offline, err := store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list offline agent: %v", err)
+	}
+	if len(offline) != 1 {
+		t.Fatalf("expected one offline agent, got %#v", offline)
+	}
+	if !offline[0].LastSeen.Equal(finalLastSeen) {
+		t.Fatalf("offline last-seen = %s, want %s", offline[0].LastSeen, finalLastSeen)
+	}
+	if err := store.TouchAgentContext(
+		context.Background(),
+		"dev",
+		"local",
+		newConnectedAt,
+		newConnectedAt.Add(20*time.Second),
+	); err != nil {
+		t.Fatalf("touch offline agent: %v", err)
+	}
+	offline, err = store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list offline agent after stale touch: %v", err)
+	}
+	if len(offline) != 1 || !offline[0].LastSeen.Equal(finalLastSeen) {
+		t.Fatalf("stale touch overwrote offline agent: %#v", offline)
 	}
 }

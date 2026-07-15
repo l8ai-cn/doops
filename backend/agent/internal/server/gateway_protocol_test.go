@@ -1209,6 +1209,88 @@ func TestGatewayAgentPingDoesNotWaitForDataWriteLock(t *testing.T) {
 	}
 }
 
+func TestGatewayAgentReadLoopKeepsPongResponsiveWhenStoreIsBusy(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	heldConn, err := store.db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("hold store connection: %v", err)
+	}
+	defer heldConn.Close()
+
+	serverConn := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer ts.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(ts.URL, "http"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	pong := make(chan struct{}, 1)
+	clientConn.SetPongHandler(func(string) error {
+		select {
+		case pong <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	go func() {
+		for {
+			if _, _, err := clientConn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	agent := &GatewayAgent{
+		Cluster:         "dev",
+		Instance:        "local",
+		Key:             "dev/local",
+		conn:            <-serverConn,
+		pending:         make(map[int64]*gatewayMessageQueue),
+		activeBySession: make(map[string]*gatewayMessageQueue),
+		closed:          make(chan struct{}),
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Second})
+	go agent.readLoop(hub)
+
+	if err := clientConn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "notifications/message",
+	}); err != nil {
+		t.Fatalf("write data message: %v", err)
+	}
+	if err := clientConn.WriteControl(
+		websocket.PingMessage,
+		[]byte("store-busy"),
+		time.Now().Add(time.Second),
+	); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+
+	select {
+	case <-pong:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("gateway read loop stopped processing ping while the store was busy")
+	}
+}
+
 func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
