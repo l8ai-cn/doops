@@ -88,8 +88,8 @@ type websocketControlWriter interface {
 	Close() error
 }
 
-func writeHeartbeatPing(conn websocketControlWriter, payload []byte, timeout time.Duration) bool {
-	if err := conn.WriteControl(websocket.PingMessage, payload, time.Now().Add(timeout)); err != nil {
+func writeHeartbeatControl(conn websocketControlWriter, messageType int, payload []byte, timeout time.Duration) bool {
+	if err := conn.WriteControl(messageType, payload, time.Now().Add(timeout)); err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() && netErr.Temporary() {
 			return true
@@ -98,6 +98,34 @@ func writeHeartbeatPing(conn websocketControlWriter, payload []byte, timeout tim
 		return false
 	}
 	return true
+}
+
+func writeHeartbeatPing(conn websocketControlWriter, payload []byte, timeout time.Duration) bool {
+	return writeHeartbeatControl(conn, websocket.PingMessage, payload, timeout)
+}
+
+func readWebSocketMessage(conn *websocket.Conn, onProgress func()) (int, []byte, error) {
+	messageType, reader, err := conn.NextReader()
+	if err != nil {
+		return 0, nil, err
+	}
+	var message bytes.Buffer
+	buffer := make([]byte, 32<<10)
+	for {
+		n, readErr := reader.Read(buffer)
+		if n > 0 {
+			_, _ = message.Write(buffer[:n])
+			if onProgress != nil {
+				onProgress()
+			}
+		}
+		if readErr == io.EOF {
+			return messageType, message.Bytes(), nil
+		}
+		if readErr != nil {
+			return 0, nil, readErr
+		}
+	}
 }
 
 // HandleWebSocket 处理客户端发起的 WebSocket 升级请求。
@@ -129,16 +157,11 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
 
-	// 自动配置 ping/pong 心跳，防止中间节点 (Nginx/SLB) 断开空闲连接。
-	// 反向隧道模式下，ping 失败必须主动关闭连接，确保 gateway 重启或网络
-	// 黑洞后 agent 退出本轮 ServeWebSocketConn 并进入外层重连循环。
 	conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
 	})
 
-	// Ping 心跳协程使用 done 信道显式退出（避免最长一个 ping 周期的 goroutine 泄漏）
 	pingDone := make(chan struct{})
 	defer close(pingDone)
 	go func() {
@@ -208,7 +231,9 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 
 	// 主读取循环
 	for {
-		messageType, message, err := conn.ReadMessage()
+		messageType, message, err := readWebSocketMessage(conn, func() {
+			_ = conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
+		})
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("WS error: %v", err)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -1288,6 +1289,71 @@ func TestGatewayAgentReadLoopKeepsPongResponsiveWhenStoreIsBusy(t *testing.T) {
 	case <-pong:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("gateway read loop stopped processing ping while the store was busy")
+	}
+}
+
+func TestGatewayAgentReadLoopAcknowledgesStreamingProgress(t *testing.T) {
+	serverConn := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer ts.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(ts.URL, "http"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	progressAck := make(chan struct{}, 1)
+	clientConn.SetPongHandler(func(payload string) error {
+		if payload == "read-progress" {
+			select {
+			case progressAck <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+	go func() {
+		for {
+			if _, _, err := clientConn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	agent := &GatewayAgent{
+		Key:             "dev/local",
+		conn:            <-serverConn,
+		pending:         make(map[int64]*gatewayMessageQueue),
+		activeBySession: make(map[string]*gatewayMessageQueue),
+		closed:          make(chan struct{}),
+	}
+	go agent.readLoop(NewGatewayHub(nil, GatewayHubOptions{AgentLease: time.Second}))
+
+	writer, err := clientConn.NextWriter(websocket.TextMessage)
+	if err != nil {
+		t.Fatalf("open message writer: %v", err)
+	}
+	if _, err := writer.Write(bytes.Repeat([]byte("x"), 64<<10)); err != nil {
+		t.Fatalf("write partial message: %v", err)
+	}
+	select {
+	case <-progressAck:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not acknowledge bytes read before the message completed")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close message writer: %v", err)
 	}
 }
 

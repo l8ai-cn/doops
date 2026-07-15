@@ -62,9 +62,11 @@ var (
 )
 
 const (
-	gatewayMessageBudgetMaxBytes = 128 << 20
-	gatewayMessageQueueMaxBytes  = 64 << 20
-	gatewayAgentTouchTimeout     = 2 * time.Second
+	gatewayMessageBudgetMaxBytes       = 128 << 20
+	gatewayMessageQueueMaxBytes        = 64 << 20
+	gatewayAgentTouchTimeout           = 2 * time.Second
+	gatewayReadProgressAckInterval     = 5 * time.Second
+	gatewayReadProgressAckWriteTimeout = 3 * time.Second
 )
 
 type GatewayActiveOperation struct {
@@ -103,6 +105,7 @@ type GatewayAgent struct {
 	stateMu         sync.RWMutex
 	conn            *websocket.Conn
 	writeMu         sync.Mutex
+	lastProgressAck time.Time
 	opSlot          chan struct{}
 	queueMu         sync.Mutex
 	queued          int
@@ -1260,14 +1263,20 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 		return a.conn.SetReadDeadline(time.Now().Add(h.opts.AgentLease))
 	})
 	for {
-		msgType, data, err := a.conn.ReadMessage()
+		refreshActivity := func() {
+			now := time.Now()
+			_ = a.conn.SetReadDeadline(now.Add(h.opts.AgentLease))
+			a.touch()
+			a.acknowledgeReadProgress(now)
+		}
+		msgType, data, err := readWebSocketMessage(a.conn, refreshActivity)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("[gateway] agent read failed: %s: %v", a.Key, err)
 			}
 			return
 		}
-		a.touch()
+		refreshActivity()
 		if msgType != websocket.TextMessage {
 			continue
 		}
@@ -1306,6 +1315,20 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 			}
 		}
 	}
+}
+
+func (a *GatewayAgent) acknowledgeReadProgress(now time.Time) {
+	if !a.lastProgressAck.IsZero() && now.Sub(a.lastProgressAck) < gatewayReadProgressAckInterval {
+		return
+	}
+	a.lastProgressAck = now
+	// An unsolicited Pong proves that the gateway consumed bytes before a large message finishes.
+	writeHeartbeatControl(
+		a.conn,
+		websocket.PongMessage,
+		[]byte("read-progress"),
+		gatewayReadProgressAckWriteTimeout,
+	)
 }
 
 func (a *GatewayAgent) cancelPending(queue *gatewayMessageQueue, async bool) <-chan struct{} {

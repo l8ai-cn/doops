@@ -73,6 +73,85 @@ func TestWriteHeartbeatPingDistinguishesTemporaryBackpressureFromConnectionFailu
 	}
 }
 
+func TestReadWebSocketMessageReportsProgressBeforeMessageCompletes(t *testing.T) {
+	serverConn := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer ts.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(ts.URL, "http"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+	receiver := <-serverConn
+	defer receiver.Close()
+
+	type readResult struct {
+		messageType int
+		body        []byte
+		err         error
+	}
+	progress := make(chan struct{}, 1)
+	result := make(chan readResult, 1)
+	go func() {
+		messageType, body, err := readWebSocketMessage(receiver, func() {
+			select {
+			case progress <- struct{}{}:
+			default:
+			}
+		})
+		result <- readResult{messageType: messageType, body: body, err: err}
+	}()
+
+	writer, err := clientConn.NextWriter(websocket.TextMessage)
+	if err != nil {
+		t.Fatalf("open message writer: %v", err)
+	}
+	body := bytes.Repeat([]byte("x"), 64<<10)
+	if _, err := writer.Write(body); err != nil {
+		t.Fatalf("write partial message: %v", err)
+	}
+
+	select {
+	case <-progress:
+	case <-time.After(time.Second):
+		t.Fatal("reader did not report progress before the message completed")
+	}
+	select {
+	case <-result:
+		t.Fatal("reader completed before the message writer closed")
+	default:
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close message writer: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("read message: %v", got.err)
+		}
+		if got.messageType != websocket.TextMessage {
+			t.Fatalf("message type = %d, want text", got.messageType)
+		}
+		if !bytes.Equal(got.body, body) {
+			t.Fatalf("message body has %d bytes, want %d", len(got.body), len(body))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reader did not complete after the message writer closed")
+	}
+}
+
 func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
