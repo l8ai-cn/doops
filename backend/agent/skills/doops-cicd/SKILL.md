@@ -146,6 +146,11 @@ dry-run mutation count.
 Every evidence item must cite the completed runtime tool call that produced it.
 The Gateway creates the runtime attestation from ACP tool-call events and
 computes the final result digest; Agent-authored text cannot substitute for it.
+Immediately before writing the final result, read the Gateway-designated
+runtime tool call catalog. Copy each evidence `toolCallId` exactly from a
+completed catalog entry and set `module` exactly to that entry's `toolName`.
+Never invent semantic aliases such as `yaml-validation`, `kubectl-get`, or
+`helm-template` when the runtime catalog reports another tool name.
 
 When the Ask request requires `response_format=json`, the Gateway appends the
 only permitted machine-result path to the prompt. Write exactly one JSON object

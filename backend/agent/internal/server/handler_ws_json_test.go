@@ -23,9 +23,13 @@ func TestAgentPromptJSONReturnsResultArtifactInStructuredContent(t *testing.T) {
 		t.Fatalf("write workspace commit: %v", err)
 	}
 	resultPath := filepath.Join(workspace, ".doops", "structured-result.json")
+	runtimeCallsPath := filepath.Join(workspace, ".doops", "runtime-tool-calls.json")
 	doagent := newJSONAgentPromptTestServer(t, "```json\n{\"ignored\":true}\n```", func(prompt string) {
 		if !strings.Contains(prompt, resultPath) {
 			t.Errorf("structured prompt must declare the result artifact path: %s", prompt)
+		}
+		if !strings.Contains(prompt, runtimeCallsPath) {
+			t.Errorf("structured prompt must declare the runtime tool call catalog path: %s", prompt)
 		}
 		if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
 			t.Fatalf("create result directory: %v", err)
@@ -300,17 +304,17 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 			default:
 				t.Fatalf("unexpected rpc method: %v", req["method"])
 			}
-			case "/events":
+		case "/events":
 			w.Header().Set("Content-Type", "text/event-stream")
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-				<-prompted
-				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"in_progress"}}}`)
-				fmt.Fprintln(w)
-				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"completed","resultText":"{\"revision\":\"immutable\"}"}}}`)
-				fmt.Fprintln(w)
-				fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
+			<-prompted
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"in_progress"}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"completed","resultText":"{\"revision\":\"immutable\"}"}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-json","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
 		default:

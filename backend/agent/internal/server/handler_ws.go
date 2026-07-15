@@ -984,6 +984,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	var structuredResultPath string
+	var runtimeToolCallsPath string
 	if responseFormat == "json" {
 		var err error
 		structuredResultPath, err = prepareDoagentStructuredResult(doopsSessionID)
@@ -991,7 +992,12 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result artifact: %v", err)))
 			return
 		}
-		instr = appendDoagentStructuredResultContract(instr, structuredResultPath)
+		runtimeToolCallsPath = filepath.Join(filepath.Dir(structuredResultPath), "runtime-tool-calls.json")
+		if err := writeDoagentToolTraceCatalog(runtimeToolCallsPath, nil); err != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare runtime tool call catalog: %v", err)))
+			return
+		}
+		instr = appendDoagentStructuredResultContract(instr, structuredResultPath, runtimeToolCallsPath)
 	}
 
 	// 查找已有的 doagent session 映射
@@ -1093,7 +1099,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
-	toolTraces := newDoagentToolTraceCollector()
+	toolTraces := newDoagentToolTraceCollector(runtimeToolCallsPath)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1684,10 +1690,13 @@ func ensureDoagentResultDirectory(path string) error {
 	return nil
 }
 
-func appendDoagentStructuredResultContract(instruction, resultPath string) string {
+func appendDoagentStructuredResultContract(instruction, resultPath, runtimeToolCallsPath string) string {
 	contract := instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
 		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
 		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
+		"Immediately before writing that object, read " + runtimeToolCallsPath + ". " +
+		"For every evidence item, copy toolCallId exactly from a completed entry in that catalog and set module exactly to that entry's toolName. " +
+		"Do not invent, abbreviate, alias, or predict runtime tool call identifiers. " +
 		"The terminal response is not used as the machine result."
 	return contract
 }

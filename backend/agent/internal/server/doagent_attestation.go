@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,12 +21,16 @@ type doagentToolTrace struct {
 }
 
 type doagentToolTraceCollector struct {
-	mu    sync.Mutex
-	calls map[string]doagentToolTrace
+	mu          sync.Mutex
+	calls       map[string]doagentToolTrace
+	catalogPath string
 }
 
-func newDoagentToolTraceCollector() *doagentToolTraceCollector {
-	return &doagentToolTraceCollector{calls: make(map[string]doagentToolTrace)}
+func newDoagentToolTraceCollector(catalogPath string) *doagentToolTraceCollector {
+	return &doagentToolTraceCollector{
+		calls:       make(map[string]doagentToolTrace),
+		catalogPath: catalogPath,
+	}
 }
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) (bool, bool, error) {
@@ -60,7 +66,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) (bool
 		}
 	}
 	c.calls[toolCallID] = trace
-	return false, false, nil
+	return false, false, c.publishLocked()
 }
 
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
@@ -76,6 +82,50 @@ func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 		return traces[i].ToolCallID < traces[j].ToolCallID
 	})
 	return traces
+}
+
+func (c *doagentToolTraceCollector) publishLocked() error {
+	if strings.TrimSpace(c.catalogPath) == "" {
+		return nil
+	}
+	traces := make([]doagentToolTrace, 0, len(c.calls))
+	for _, trace := range c.calls {
+		if trace.Status == "completed" && trace.ResultDigest != "" {
+			traces = append(traces, trace)
+		}
+	}
+	sort.Slice(traces, func(i, j int) bool {
+		return traces[i].ToolCallID < traces[j].ToolCallID
+	})
+	return writeDoagentToolTraceCatalog(c.catalogPath, traces)
+}
+
+func writeDoagentToolTraceCatalog(path string, traces []doagentToolTrace) error {
+	data, err := json.Marshal(map[string]interface{}{"toolCalls": traces})
+	if err != nil {
+		return fmt.Errorf("encode runtime tool call catalog: %w", err)
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".runtime-tool-calls-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create runtime tool call catalog: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		return fmt.Errorf("secure runtime tool call catalog: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return fmt.Errorf("write runtime tool call catalog: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close runtime tool call catalog: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("publish runtime tool call catalog: %w", err)
+	}
+	return nil
 }
 
 func attestDeploymentRun(

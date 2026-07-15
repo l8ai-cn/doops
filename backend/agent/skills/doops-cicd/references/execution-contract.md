@@ -118,6 +118,10 @@ Evidence must contain the runtime module identity, runtime `toolCallId`,
 observation time, declared subject and structured result. Do not store Secret
 values. Every evidence item must reference a completed tool call from this
 doagent turn.
+The Gateway supplies a session-local runtime tool call catalog alongside the
+result path. Read that catalog immediately before writing the result. Copy
+`toolCallId` exactly from a completed entry and set `module` exactly to that
+entry's `toolName`; semantic aliases and invented identifiers are invalid.
 
 `metadata.workspaceCommit` must equal the commit returned by the preceding
 workspace push. The Gateway adds `status.runtimeAttestation` from completed ACP
