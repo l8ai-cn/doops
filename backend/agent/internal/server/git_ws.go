@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-func (gw *Gateway) handleGitHTTPOverWS(reqID interface{}, params gitHTTPRequestParams, body io.Reader, writeJSON func(v interface{})) {
+func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, params gitHTTPRequestParams, body io.Reader, writeJSON func(v interface{})) {
 	if gw.gitHandler == nil {
 		writeJSON(api.JSONRPCResponse{
 			JSONRPC: "2.0",
@@ -34,7 +35,7 @@ func (gw *Gateway) handleGitHTTPOverWS(reqID interface{}, params gitHTTPRequestP
 	}
 
 	u := &url.URL{Path: params.Path, RawQuery: params.RawQuery}
-	req := &http.Request{
+	req := (&http.Request{
 		Method:        params.Method,
 		URL:           u,
 		Proto:         "HTTP/1.1",
@@ -46,7 +47,7 @@ func (gw *Gateway) handleGitHTTPOverWS(reqID interface{}, params gitHTTPRequestP
 		Host:          "doops-agent",
 		RemoteAddr:    "doops-gateway-tunnel",
 		RequestURI:    u.RequestURI(),
-	}
+	}).WithContext(ctx)
 	defer req.Body.Close()
 	req.Header.Del("Authorization")
 	req.Header.Del("X-Doops-Key")
@@ -62,6 +63,9 @@ func (gw *Gateway) handleGitHTTPOverWS(reqID interface{}, params gitHTTPRequestP
 				ID:      reqID,
 				Error:   &api.RPCError{Code: -32603, Message: fmt.Sprintf("git handler panic: %v", recovered)},
 			})
+			return
+		}
+		if ctx.Err() != nil {
 			return
 		}
 		rw.finish()

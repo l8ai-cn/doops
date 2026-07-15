@@ -595,6 +595,44 @@ func TestBackgroundTaskLogPathStaysInsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestWSGitResponseWriterFlushesSmallWritesImmediately(t *testing.T) {
+	var bodyFrames [][]byte
+	writer := newWSGitResponseWriter(float64(42), func(value interface{}) {
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal message: %v", err)
+		}
+		var message map[string]interface{}
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatalf("decode message: %v", err)
+		}
+		if method, _ := message["method"].(string); method != "git/body" {
+			return
+		}
+		params, _ := message["params"].(map[string]interface{})
+		dataB64, _ := params["data_b64"].(string)
+		if dataB64 == "" {
+			return
+		}
+		body, err := base64.StdEncoding.DecodeString(dataB64)
+		if err != nil {
+			t.Fatalf("decode body frame: %v", err)
+		}
+		bodyFrames = append(bodyFrames, body)
+	})
+
+	if _, err := writer.Write([]byte("progress")); err != nil {
+		t.Fatalf("write small body: %v", err)
+	}
+	writer.Flush()
+	if len(bodyFrames) != 1 {
+		t.Fatalf("expected one immediate body frame, got %d", len(bodyFrames))
+	}
+	if got := string(bodyFrames[0]); got != "progress" {
+		t.Fatalf("unexpected body frame: %q", got)
+	}
+}
+
 func TestAgentWebSocketHandlesGitHTTPOverTunnel(t *testing.T) {
 	gw := NewGateway("0")
 	gw.gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -674,6 +712,83 @@ func TestAgentWebSocketHandlesGitHTTPOverTunnel(t *testing.T) {
 	}
 	if body.String() != "git-agent-ok" {
 		t.Fatalf("unexpected git body: %q", body.String())
+	}
+}
+
+func TestAgentWebSocketCancelsGitHTTPOverTunnel(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	gw := NewGateway("0")
+	gw.gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(canceled)
+	})
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	id := float64(44)
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "git/http",
+		"params": map[string]interface{}{
+			"method":         "GET",
+			"path":           "/git/release.git/info/refs",
+			"raw_query":      "service=git-upload-pack",
+			"content_length": int64(0),
+		},
+	}); err != nil {
+		t.Fatalf("send git/http: %v", err)
+	}
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "git/body",
+		"params":  map[string]interface{}{"id": id, "eof": true},
+	}); err != nil {
+		t.Fatalf("send git/body eof: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("git handler did not start")
+	}
+
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "git/cancel",
+		"params":  map[string]interface{}{"id": id},
+	}); err != nil {
+		t.Fatalf("send git/cancel: %v", err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("git handler context was not canceled")
+	}
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	for {
+		var message map[string]interface{}
+		if err := conn.ReadJSON(&message); err != nil {
+			t.Fatalf("read git/cancel response: %v", err)
+		}
+		if gotID, _ := message["id"].(float64); gotID != id {
+			continue
+		}
+		result, _ := message["result"].(map[string]interface{})
+		if canceled, _ := result["canceled"].(bool); !canceled {
+			t.Fatalf("unexpected git/cancel response: %#v", message)
+		}
+		return
 	}
 }
 

@@ -46,7 +46,8 @@ type GatewayHub struct {
 	activeOps   map[string]*gatewayActiveOperation
 	activeSeq   uint64
 
-	scheduler *Scheduler
+	scheduler     *Scheduler
+	messageBudget *gatewayMessageBudget
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -54,7 +55,16 @@ func (h *GatewayHub) AttachScheduler(sched *Scheduler) {
 	h.scheduler = sched
 }
 
-var errGatewayClientDisconnected = errors.New("gateway client disconnected")
+var (
+	errGatewayClientDisconnected = errors.New("gateway client disconnected")
+	errGatewayMessageQueueClosed = errors.New("gateway message queue closed")
+	errGatewayMessageQueueFull   = errors.New("gateway message queue full")
+)
+
+const (
+	gatewayMessageBudgetMaxBytes = 128 << 20
+	gatewayMessageQueueMaxBytes  = 64 << 20
+)
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
@@ -100,9 +110,10 @@ type GatewayAgent struct {
 	readers         int
 	resources       map[string]*agentResourceSlot
 	pendingMu       sync.Mutex
-	pending         map[int64]chan gatewayWSMessage
-	active          chan gatewayWSMessage
-	activeBySession map[string]chan gatewayWSMessage
+	pending         map[int64]*gatewayMessageQueue
+	active          *gatewayMessageQueue
+	activeBySession map[string]*gatewayMessageQueue
+	messageBudget   *gatewayMessageBudget
 	closed          chan struct{}
 	reqID           int64
 }
@@ -132,6 +143,169 @@ type GatewayTarget struct {
 type gatewayWSMessage struct {
 	Raw    []byte
 	Parsed map[string]interface{}
+}
+
+type gatewayQueuedMessage struct {
+	message gatewayWSMessage
+	size    int64
+}
+
+type gatewayMessageBudget struct {
+	mu       sync.Mutex
+	used     int64
+	maxBytes int64
+}
+
+type gatewayMessageQueue struct {
+	mu           sync.Mutex
+	items        []gatewayQueuedMessage
+	queuedBytes  int64
+	maxBytes     int64
+	budget       *gatewayMessageBudget
+	notify       chan struct{}
+	requestID    int64
+	cancelMethod string
+	cancelOnce   sync.Once
+	cancelDone   chan struct{}
+	closed       bool
+	err          error
+}
+
+func newGatewayMessageBudget(maxBytes int64) *gatewayMessageBudget {
+	return &gatewayMessageBudget{maxBytes: maxBytes}
+}
+
+func (b *gatewayMessageBudget) reserve(size int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if size <= 0 || b.used+size > b.maxBytes {
+		return false
+	}
+	b.used += size
+	return true
+}
+
+func (b *gatewayMessageBudget) release(size int64) {
+	if size <= 0 {
+		return
+	}
+	b.mu.Lock()
+	b.used -= size
+	b.mu.Unlock()
+}
+
+func newGatewayMessageQueue(budget *gatewayMessageBudget, maxBytes int64, requestID int64, cancelMethod string) *gatewayMessageQueue {
+	if budget == nil {
+		panic("gateway message budget is not initialized")
+	}
+	if maxBytes <= 0 {
+		maxBytes = gatewayMessageQueueMaxBytes
+	}
+	return &gatewayMessageQueue{
+		maxBytes:     maxBytes,
+		budget:       budget,
+		notify:       make(chan struct{}, 1),
+		requestID:    requestID,
+		cancelMethod: cancelMethod,
+		cancelDone:   make(chan struct{}),
+	}
+}
+
+func (q *gatewayMessageQueue) enqueue(message gatewayWSMessage) error {
+	size := int64(len(message.Raw))*2 + 1024
+	if len(message.Raw) == 0 {
+		data, err := json.Marshal(message.Parsed)
+		if err != nil {
+			return fmt.Errorf("encode queued message: %w", err)
+		}
+		size = int64(len(data))*2 + 1024
+	}
+
+	q.mu.Lock()
+	if q.closed {
+		q.mu.Unlock()
+		return errGatewayMessageQueueClosed
+	}
+	if q.queuedBytes+size > q.maxBytes {
+		err := fmt.Errorf("%w: queued=%d incoming=%d limit=%d", errGatewayMessageQueueFull, q.queuedBytes, size, q.maxBytes)
+		released := q.failLocked(err)
+		q.mu.Unlock()
+		q.budget.release(released)
+		q.signal()
+		return err
+	}
+	if !q.budget.reserve(size) {
+		err := fmt.Errorf("%w: shared budget limit=%d", errGatewayMessageQueueFull, q.budget.maxBytes)
+		released := q.failLocked(err)
+		q.mu.Unlock()
+		q.budget.release(released)
+		q.signal()
+		return err
+	}
+	q.items = append(q.items, gatewayQueuedMessage{message: message, size: size})
+	q.queuedBytes += size
+	q.mu.Unlock()
+	q.signal()
+	return nil
+}
+
+func (q *gatewayMessageQueue) signal() {
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (q *gatewayMessageQueue) dequeue() (gatewayWSMessage, bool, error) {
+	q.mu.Lock()
+	if q.closed {
+		err := q.err
+		q.mu.Unlock()
+		return gatewayWSMessage{}, false, err
+	}
+	if len(q.items) == 0 {
+		q.mu.Unlock()
+		return gatewayWSMessage{}, false, nil
+	}
+	item := q.items[0]
+	q.items[0] = gatewayQueuedMessage{}
+	if len(q.items) == 1 {
+		q.items = nil
+	} else {
+		q.items = q.items[1:]
+	}
+	q.queuedBytes -= item.size
+	q.budget.release(item.size)
+	q.mu.Unlock()
+	return item.message, true, nil
+}
+
+func (q *gatewayMessageQueue) failLocked(err error) int64 {
+	q.closed = true
+	q.err = err
+	released := q.queuedBytes
+	q.queuedBytes = 0
+	for i := range q.items {
+		q.items[i] = gatewayQueuedMessage{}
+	}
+	q.items = nil
+	return released
+}
+
+func (q *gatewayMessageQueue) fail(err error) {
+	q.mu.Lock()
+	if q.closed {
+		q.mu.Unlock()
+		return
+	}
+	released := q.failLocked(err)
+	q.mu.Unlock()
+	q.budget.release(released)
+	q.signal()
+}
+
+func (q *gatewayMessageQueue) close() {
+	q.fail(errGatewayMessageQueueClosed)
 }
 
 type targetResponse struct {
@@ -218,11 +392,12 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	return &GatewayHub{
-		store:     store,
-		opts:      opts,
-		agents:    make(map[string]*GatewayAgent),
-		userOps:   make(map[string]int),
-		activeOps: make(map[string]*gatewayActiveOperation),
+		store:         store,
+		opts:          opts,
+		agents:        make(map[string]*GatewayAgent),
+		userOps:       make(map[string]int),
+		activeOps:     make(map[string]*gatewayActiveOperation),
+		messageBudget: newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	}
 }
 
@@ -468,9 +643,10 @@ func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) 
 		LastSeen:        time.Now().UTC(),
 		conn:            conn,
 		opSlot:          make(chan struct{}, 1),
-		pending:         make(map[int64]chan gatewayWSMessage),
+		pending:         make(map[int64]*gatewayMessageQueue),
 		resources:       make(map[string]*agentResourceSlot),
-		activeBySession: make(map[string]chan gatewayWSMessage),
+		activeBySession: make(map[string]*gatewayMessageQueue),
+		messageBudget:   h.messageBudget,
 		closed:          make(chan struct{}),
 	}
 	agent.opSlot <- struct{}{}
@@ -1037,7 +1213,7 @@ func writeJSONHTTP(w http.ResponseWriter, v interface{}) {
 
 func (a *GatewayAgent) initialize() error {
 	id := atomic.AddInt64(&a.reqID, 1)
-	ch := a.registerPending(id)
+	ch := a.registerPending(id, "")
 	defer a.unregisterPending(id)
 	if err := a.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -1053,13 +1229,21 @@ func (a *GatewayAgent) initialize() error {
 	}); err != nil {
 		return err
 	}
-	select {
-	case <-ch:
-		return nil
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("agent initialize timed out")
-	case <-a.closed:
-		return fmt.Errorf("agent connection closed")
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		if _, ok, queueErr := ch.dequeue(); queueErr != nil {
+			return queueErr
+		} else if ok {
+			return nil
+		}
+		select {
+		case <-ch.notify:
+		case <-timer.C:
+			return fmt.Errorf("agent initialize timed out")
+		case <-a.closed:
+			return fmt.Errorf("agent connection closed")
+		}
 	}
 }
 
@@ -1090,33 +1274,68 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 		msg := gatewayWSMessage{Raw: append([]byte(nil), data...), Parsed: parsed}
 		if id, ok := numericID(parsed["id"]); ok {
 			a.pendingMu.Lock()
-			ch := a.pending[id]
+			queue := a.pending[id]
 			a.pendingMu.Unlock()
-			if ch != nil {
-				a.deliverPending(msg, ch)
+			if queue != nil {
+				if err := queue.enqueue(msg); err != nil && !errors.Is(err, errGatewayMessageQueueClosed) {
+					log.Printf("[gateway] agent message queue failed: %s id=%d: %v", a.Key, id, err)
+					a.cancelPending(queue, true)
+				}
 				continue
 			}
 		}
 		if method, _ := parsed["method"].(string); method == "notifications/message" {
 			sessionID := sessionIDFromNotification(parsed)
 			a.pendingMu.Lock()
-			var ch chan gatewayWSMessage
+			var queue *gatewayMessageQueue
 			if sessionID != "" {
-				ch = a.activeBySession[sessionID]
+				queue = a.activeBySession[sessionID]
 			} else {
-				ch = a.active
+				queue = a.active
 			}
 			a.pendingMu.Unlock()
-			if ch != nil {
-				a.deliverPending(msg, ch)
+			if queue != nil {
+				if err := queue.enqueue(msg); err != nil && !errors.Is(err, errGatewayMessageQueueClosed) {
+					log.Printf("[gateway] agent notification queue failed: %s session=%q: %v", a.Key, sessionID, err)
+					a.cancelPending(queue, true)
+				}
 			}
 		}
 	}
 }
 
-func (a *GatewayAgent) deliverPending(msg gatewayWSMessage, ch chan gatewayWSMessage) {
+func (a *GatewayAgent) cancelPending(queue *gatewayMessageQueue, async bool) <-chan struct{} {
+	if queue == nil || queue.cancelMethod == "" {
+		return nil
+	}
+	send := func() {
+		defer close(queue.cancelDone)
+		if err := a.writeJSON(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  queue.cancelMethod,
+			"id":      queue.requestID,
+			"params":  map[string]interface{}{"id": queue.requestID},
+		}); err != nil {
+			log.Printf("[gateway] cancel failed: %s id=%d method=%s: %v", a.Key, queue.requestID, queue.cancelMethod, err)
+		}
+	}
+	queue.cancelOnce.Do(func() {
+		if async {
+			go send()
+			return
+		}
+		send()
+	})
+	return queue.cancelDone
+}
+
+func (a *GatewayAgent) waitPendingCancel(queue *gatewayMessageQueue) {
+	done := a.cancelPending(queue, false)
+	if done == nil {
+		return
+	}
 	select {
-	case ch <- msg:
+	case <-done:
 	case <-a.closed:
 	}
 }
@@ -1157,7 +1376,7 @@ func (a *GatewayAgent) touch(h *GatewayHub) {
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
 	id := atomic.AddInt64(&a.reqID, 1)
-	ch := a.registerPending(id)
+	ch := a.registerPending(id, "tools/cancel")
 	defer a.unregisterPending(id)
 	sessionID := extractSession(params.Arguments)
 	a.pendingMu.Lock()
@@ -1194,16 +1413,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	defer timer.Stop()
 	var forwardErr error
 	for {
-		select {
-		case <-ctx.Done():
-			_ = a.writeJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"method":  "tools/cancel",
-				"id":      id,
-				"params":  map[string]interface{}{"id": id},
-			})
-			return ctx.Err()
-		case msg := <-ch:
+		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
+			a.waitPendingCancel(ch)
+			return queueErr
+		} else if ok {
 			if msg.Parsed == nil {
 				continue
 			}
@@ -1220,13 +1433,16 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 					forwardErr = err
 				}
 			}
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			a.waitPendingCancel(ch)
+			return ctx.Err()
+		case <-ch.notify:
 		case <-timer.C:
-			_ = a.writeJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"method":  "tools/cancel",
-				"id":      id,
-				"params":  map[string]interface{}{"id": id},
-			})
+			a.waitPendingCancel(ch)
 			return fmt.Errorf("operation timed out")
 		case <-a.closed:
 			return fmt.Errorf("agent disconnected")
@@ -1234,18 +1450,22 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	}
 }
 
-func (a *GatewayAgent) registerPending(id int64) chan gatewayWSMessage {
-	ch := make(chan gatewayWSMessage, 256)
+func (a *GatewayAgent) registerPending(id int64, cancelMethod string) *gatewayMessageQueue {
+	queue := newGatewayMessageQueue(a.messageBudget, gatewayMessageQueueMaxBytes, id, cancelMethod)
 	a.pendingMu.Lock()
-	a.pending[id] = ch
+	a.pending[id] = queue
 	a.pendingMu.Unlock()
-	return ch
+	return queue
 }
 
 func (a *GatewayAgent) unregisterPending(id int64) {
 	a.pendingMu.Lock()
+	queue := a.pending[id]
 	delete(a.pending, id)
 	a.pendingMu.Unlock()
+	if queue != nil {
+		queue.close()
+	}
 }
 
 func (a *GatewayAgent) writeJSON(v interface{}) error {
@@ -1456,14 +1676,23 @@ func isConcurrentReadOnlyAction(action GatewayAction) bool {
 
 func (a *GatewayAgent) forceUnlock() {
 	a.pendingMu.Lock()
-	for id := range a.pending {
+	queues := make(map[*gatewayMessageQueue]struct{}, len(a.pending)+len(a.activeBySession)+1)
+	for id, queue := range a.pending {
+		queues[queue] = struct{}{}
 		delete(a.pending, id)
 	}
+	if a.active != nil {
+		queues[a.active] = struct{}{}
+	}
 	a.active = nil
-	for sessionID := range a.activeBySession {
+	for sessionID, queue := range a.activeBySession {
+		queues[queue] = struct{}{}
 		delete(a.activeBySession, sessionID)
 	}
 	a.pendingMu.Unlock()
+	for queue := range queues {
+		queue.close()
+	}
 	a.opsMu.Lock()
 	a.writers = 0
 	a.readers = 0

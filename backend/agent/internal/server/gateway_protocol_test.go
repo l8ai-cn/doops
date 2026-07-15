@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -1074,7 +1075,7 @@ func TestGatewayTargetBusySnapshotUsesOperationSlot(t *testing.T) {
 		Instance:  "local",
 		Key:       "dev/local",
 		opSlot:    make(chan struct{}, 1),
-		pending:   make(map[int64]chan gatewayWSMessage),
+		pending:   make(map[int64]*gatewayMessageQueue),
 		resources: make(map[string]*agentResourceSlot),
 	}
 	agent.opSlot <- struct{}{}
@@ -1102,7 +1103,7 @@ func TestGatewayTargetBusySnapshotUsesResourceLocks(t *testing.T) {
 		Instance:  "local",
 		Key:       "dev/local",
 		opSlot:    make(chan struct{}, 1),
-		pending:   make(map[int64]chan gatewayWSMessage),
+		pending:   make(map[int64]*gatewayMessageQueue),
 		resources: make(map[string]*agentResourceSlot),
 	}
 	agent.opSlot <- struct{}{}
@@ -1186,29 +1187,166 @@ func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 	}
 }
 
-func TestGatewayAgentDeliverPendingBlocksInsteadOfDropping(t *testing.T) {
-	agent := &GatewayAgent{closed: make(chan struct{})}
-	ch := make(chan gatewayWSMessage, 1)
-	ch <- gatewayWSMessage{Parsed: map[string]interface{}{"filled": true}}
-	done := make(chan struct{})
+func TestGatewayMessageQueueEnqueueDoesNotBlockAndPreservesOrder(t *testing.T) {
+	budget := newGatewayMessageBudget(2 << 20)
+	queue := newGatewayMessageQueue(budget, 1<<20, 1, "")
+	defer queue.close()
+
+	for i := 0; i < 512; i++ {
+		if err := queue.enqueue(gatewayWSMessage{
+			Parsed: map[string]interface{}{"sequence": float64(i)},
+		}); err != nil {
+			t.Fatalf("enqueue message %d: %v", i, err)
+		}
+	}
+	for i := 0; i < 512; i++ {
+		msg, ok, err := queue.dequeue()
+		if err != nil {
+			t.Fatalf("dequeue message %d: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("message %d was not delivered", i)
+		}
+		if sequence, _ := msg.Parsed["sequence"].(float64); sequence != float64(i) {
+			t.Fatalf("message %d arrived out of order: %#v", i, msg.Parsed)
+		}
+	}
+}
+
+func TestGatewayMessageQueueLimitFailsRequestAndReleasesBudget(t *testing.T) {
+	budget := newGatewayMessageBudget(4 << 10)
+	queue := newGatewayMessageQueue(budget, 1500, 1, "")
+	defer queue.close()
+
+	first := gatewayWSMessage{Raw: []byte("12345678")}
+	if err := queue.enqueue(first); err != nil {
+		t.Fatalf("enqueue first message: %v", err)
+	}
+	if err := queue.enqueue(gatewayWSMessage{Raw: []byte("9")}); !errors.Is(err, errGatewayMessageQueueFull) {
+		t.Fatalf("expected queue byte limit error, got %v", err)
+	}
+	if _, ok, err := queue.dequeue(); !errors.Is(err, errGatewayMessageQueueFull) || ok {
+		t.Fatalf("expected failed request state, got ok=%v err=%v", ok, err)
+	}
+	budget.mu.Lock()
+	used := budget.used
+	budget.mu.Unlock()
+	if used != 0 {
+		t.Fatalf("failed queue retained %d budget bytes", used)
+	}
+}
+
+func TestGatewayMessageQueueUsesSharedBudgetAcrossRequests(t *testing.T) {
+	budget := newGatewayMessageBudget(3000)
+	first := newGatewayMessageQueue(budget, 3000, 1, "")
+	second := newGatewayMessageQueue(budget, 3000, 2, "")
+	defer first.close()
+	defer second.close()
+
+	message := gatewayWSMessage{Raw: make([]byte, 400)}
+	if err := first.enqueue(message); err != nil {
+		t.Fatalf("enqueue first request: %v", err)
+	}
+	if err := second.enqueue(message); !errors.Is(err, errGatewayMessageQueueFull) {
+		t.Fatalf("expected shared budget error, got %v", err)
+	}
+	if _, ok, err := first.dequeue(); err != nil || !ok {
+		t.Fatalf("first request should remain readable, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestGatewayAgentReadLoopKeepsPingResponsiveWhenPendingConsumerStalls(t *testing.T) {
+	serverConn := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer ts.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(ts.URL, "http"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	pong := make(chan struct{}, 1)
+	clientConn.SetPongHandler(func(string) error {
+		select {
+		case pong <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	cancelSeen := make(chan struct{}, 1)
 	go func() {
-		agent.deliverPending(gatewayWSMessage{Parsed: map[string]interface{}{"id": float64(2)}}, ch)
-		close(done)
+		for {
+			messageType, data, err := clientConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if messageType != websocket.TextMessage {
+				continue
+			}
+			var message map[string]interface{}
+			if json.Unmarshal(data, &message) == nil && message["method"] == "tools/cancel" {
+				select {
+				case cancelSeen <- struct{}{}:
+				default:
+				}
+			}
+		}
 	}()
-	select {
-	case <-done:
-		t.Fatal("deliverPending returned while channel was full")
-	case <-time.After(20 * time.Millisecond):
+
+	pending := newGatewayMessageQueue(newGatewayMessageBudget(64<<10), 16<<10, 1, "tools/cancel")
+	agent := &GatewayAgent{
+		conn:            <-serverConn,
+		pending:         map[int64]*gatewayMessageQueue{1: pending},
+		activeBySession: make(map[string]*gatewayMessageQueue),
+		closed:          make(chan struct{}),
 	}
-	<-ch
+	hub := NewGatewayHub(nil, GatewayHubOptions{AgentLease: time.Second})
+	go agent.readLoop(hub)
+	defer func() {
+		pending.close()
+		_ = clientConn.Close()
+	}()
+
+	for i := 0; i < 32; i++ {
+		if err := clientConn.WriteJSON(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  map[string]interface{}{"sequence": i},
+		}); err != nil {
+			t.Fatalf("write pending response %d: %v", i, err)
+		}
+	}
+	if err := clientConn.WriteControl(
+		websocket.PingMessage,
+		[]byte("still-alive"),
+		time.Now().Add(time.Second),
+	); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+
 	select {
-	case <-done:
+	case <-pong:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("gateway read loop stopped processing ping while a pending consumer was stalled")
+	}
+	select {
+	case <-cancelSeen:
 	case <-time.After(time.Second):
-		t.Fatal("deliverPending did not resume after channel space was available")
+		t.Fatal("gateway did not cancel the stalled request after its queue exceeded the limit")
 	}
-	msg := <-ch
-	if id, _ := msg.Parsed["id"].(float64); id != 2 {
-		t.Fatalf("unexpected delivered message: %#v", msg.Parsed)
+	if _, ok, err := pending.dequeue(); !errors.Is(err, errGatewayMessageQueueFull) || ok {
+		t.Fatalf("expected only the stalled request to fail, got ok=%v err=%v", ok, err)
 	}
 }
 
@@ -1695,7 +1833,8 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
 	defer agentConn.Close()
 	requests := make(chan int, 2)
-	go serveStallingGitAgent(t, agentConn, requests)
+	cancels := make(chan int, 1)
+	go serveStallingGitAgent(t, agentConn, requests, cancels)
 
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	firstURL := gatewayGitTestURL(t, ts.URL, "dev", "local", "cancelled", userToken.Plaintext) + "/info/refs?service=git-upload-pack"
@@ -1719,6 +1858,11 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	case <-firstDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled git request did not return")
+	}
+	select {
+	case <-cancels:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not cancel the agent-side git handler")
 	}
 
 	secondURL := gatewayGitTestURL(t, ts.URL, "dev", "local", "second", userToken.Plaintext) + "/info/refs?service=git-upload-pack"
@@ -2282,7 +2426,7 @@ func serveFakeGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- strin
 	}
 }
 
-func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- int) {
+func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- int, cancels chan<- int) {
 	t.Helper()
 	var count int
 	for {
@@ -2323,6 +2467,8 @@ func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- i
 				"id":      msg["id"],
 				"result":  map[string]interface{}{"ok": true},
 			})
+		case "git/cancel":
+			cancels <- 1
 		}
 	}
 }

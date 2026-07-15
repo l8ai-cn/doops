@@ -157,6 +157,8 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 
 	gitBodyMu := sync.Mutex{}
 	gitBodyWriters := make(map[int64]*io.PipeWriter)
+	activeGitMu := sync.Mutex{}
+	activeGitCancels := make(map[int64]context.CancelFunc)
 	activeToolMu := sync.Mutex{}
 	activeToolCancels := make(map[int64]context.CancelFunc)
 	closeGitBody := func(id int64) {
@@ -169,6 +171,13 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 		}
 	}
 	defer func() {
+		activeGitMu.Lock()
+		gitCancels := activeGitCancels
+		activeGitCancels = make(map[int64]context.CancelFunc)
+		activeGitMu.Unlock()
+		for _, cancel := range gitCancels {
+			cancel()
+		}
 		activeToolMu.Lock()
 		cancels := activeToolCancels
 		activeToolCancels = make(map[int64]context.CancelFunc)
@@ -246,10 +255,45 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 			gitBodyMu.Lock()
 			gitBodyWriters[id] = pw
 			gitBodyMu.Unlock()
+			ctx, cancel := context.WithCancel(context.Background())
+			activeGitMu.Lock()
+			activeGitCancels[id] = cancel
+			activeGitMu.Unlock()
 			go func() {
+				defer func() {
+					activeGitMu.Lock()
+					delete(activeGitCancels, id)
+					activeGitMu.Unlock()
+					cancel()
+				}()
 				defer closeGitBody(id)
-				gw.handleGitHTTPOverWS(req.ID, params, pr, writeJSON)
+				gw.handleGitHTTPOverWS(ctx, req.ID, params, pr, writeJSON)
 			}()
+			continue
+		}
+
+		if req.Method == "git/cancel" {
+			var params struct {
+				ID int64 `json:"id"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			if params.ID == 0 {
+				if id, ok := numericID(req.ID); ok {
+					params.ID = id
+				}
+			}
+			activeGitMu.Lock()
+			cancel := activeGitCancels[params.ID]
+			activeGitMu.Unlock()
+			if cancel != nil {
+				cancel()
+				closeGitBody(params.ID)
+			}
+			writeJSON(api.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]interface{}{"canceled": cancel != nil},
+			})
 			continue
 		}
 

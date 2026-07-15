@@ -185,7 +185,7 @@ func gitActionForRequest(r *http.Request) GatewayAction {
 
 func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params gitHTTPRequestParams, timeout time.Duration) (int64, error) {
 	id := atomicAddGatewayRequestID(&a.reqID)
-	ch := a.registerPending(id)
+	ch := a.registerPending(id, "git/cancel")
 	defer a.unregisterPending(id)
 
 	if err := a.writeJSON(map[string]interface{}{
@@ -196,6 +196,12 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 	}); err != nil {
 		return 0, err
 	}
+	completed := false
+	defer func() {
+		if !completed {
+			a.waitPendingCancel(ch)
+		}
+	}()
 
 	bodyErrCh := make(chan error, 1)
 	go func() {
@@ -211,15 +217,9 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 	var wroteHeader bool
 	var bytesOut int64
 	for {
-		select {
-		case <-ctx.Done():
-			return bytesOut, ctx.Err()
-		case bodyErr := <-bodyErrCh:
-			bodyErrCh = nil
-			if bodyErr != nil {
-				return bytesOut, bodyErr
-			}
-		case msg := <-ch:
+		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
+			return bytesOut, queueErr
+		} else if ok {
 			if msg.Parsed == nil {
 				continue
 			}
@@ -266,8 +266,21 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 				return bytesOut, fmt.Errorf("%v", errObj)
 			}
 			if _, ok := msg.Parsed["result"]; ok {
+				completed = true
 				return bytesOut, nil
 			}
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return bytesOut, ctx.Err()
+		case bodyErr := <-bodyErrCh:
+			bodyErrCh = nil
+			if bodyErr != nil {
+				return bytesOut, bodyErr
+			}
+		case <-ch.notify:
 		case <-a.closed:
 			return bytesOut, fmt.Errorf("agent disconnected")
 		case <-timer.C:
