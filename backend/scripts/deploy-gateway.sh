@@ -159,7 +159,7 @@ sudo sha256sum '${REMOTE_BIN}'
 
 echo "[4/5] Restarting gateway from host root"
 "${SSH[@]}" "set -euo pipefail
-if command -v systemctl >/dev/null 2>&1 && sudo systemctl list-unit-files 2>/dev/null | grep -q '^doops-gateway\\.service'; then
+if command -v systemctl >/dev/null 2>&1 && sudo systemctl cat doops-gateway.service >/dev/null 2>&1; then
   sudo systemctl restart doops-gateway
 else
   old=\$(pgrep -f '^${REMOTE_BIN} serve' || true)
