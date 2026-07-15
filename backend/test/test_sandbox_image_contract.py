@@ -287,8 +287,11 @@ def test_agent_images_sync_semantic_skills_into_doagent_discovery_path():
         assert "DO_AGENT_SETTINGS" in entrypoint
         assert "runtime-settings.json" in entrypoint
         assert "for d in /app/skills/*/; do" in entrypoint
-        assert 'mkdir -p "/root/.agent/skills/$name"' in entrypoint
-        assert 'cp -rf "$d"* "/root/.agent/skills/$name/"' in entrypoint
+        assert entrypoint.count('destination="/root/.agent/skills/$name"') == 2
+        assert entrypoint.count('rm -rf "$destination"') == 2
+        assert entrypoint.count('mkdir -p "$destination"') == 2
+        assert entrypoint.count('cp -a "$d." "$destination/"') == 2
+        assert 'cp -rf "$d"* "/root/.agent/skills/$name/"' not in entrypoint
 
 
 def test_legacy_manual_agent_deploy_script_is_removed():

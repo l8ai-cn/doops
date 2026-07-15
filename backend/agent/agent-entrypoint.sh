@@ -87,8 +87,10 @@ if [ -d /opt/do-agent/skills-canonical ]; then
     for d in /opt/do-agent/skills-canonical/*/; do
         [ -d "$d" ] || continue
         name=$(basename "$d")
-        mkdir -p "/root/.agent/skills/$name"
-        cp -rf "$d"* "/root/.agent/skills/$name/" 2>/dev/null || true
+        destination="/root/.agent/skills/$name"
+        rm -rf "$destination"
+        mkdir -p "$destination"
+        cp -a "$d." "$destination/"
     done
     echo "✅ doagent skills: synced from /opt/do-agent/skills-canonical"
 fi
@@ -98,8 +100,10 @@ if [ -d /app/skills ]; then
     for d in /app/skills/*/; do
         [ -d "$d" ] || continue
         name=$(basename "$d")
-        mkdir -p "/root/.agent/skills/$name"
-        cp -rf "$d"* "/root/.agent/skills/$name/" 2>/dev/null || true
+        destination="/root/.agent/skills/$name"
+        rm -rf "$destination"
+        mkdir -p "$destination"
+        cp -a "$d." "$destination/"
     done
     # 复制系统提示词
     [ -f /app/skills/system_prompt.md ] && cp -f /app/skills/system_prompt.md /root/.agent/skills/ 2>/dev/null || true
