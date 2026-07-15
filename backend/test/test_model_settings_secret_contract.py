@@ -76,7 +76,12 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert deployment["kind"] == "Deployment"
     assert deployment["metadata"]["name"] == "doops-agent-live"
     assert deployment["metadata"]["namespace"] == "kz-ops"
-    assert deployment["spec"]["strategy"]["type"] == "Recreate"
+    assert deployment["spec"]["strategy"] == {
+        "type": "RollingUpdate",
+        "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
+    }
+    assert "hostNetwork" not in deployment["spec"]["template"]["spec"]
+    assert all("hostPort" not in port for port in container["ports"])
     assert (
         deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"]
         == "192.168.0.24"
