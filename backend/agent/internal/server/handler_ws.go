@@ -943,7 +943,7 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	case "", "ask":
 		return "auto", nil
 	case "apply":
-		return "bypassPermissions", nil
+		return "build", nil
 	default:
 		return "", fmt.Errorf("unsupported agent prompt operation: %s", operation)
 	}

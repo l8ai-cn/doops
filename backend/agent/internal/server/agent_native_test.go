@@ -20,7 +20,7 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 	}{
 		{name: "general", want: "auto"},
 		{name: "ask", operation: "ask", want: "auto"},
-		{name: "apply", operation: "apply", want: "bypassPermissions"},
+		{name: "apply", operation: "apply", want: "build"},
 		{name: "mode is not accepted", executionMode: "apply", wantErr: true},
 		{name: "unknown operation", operation: "custom", wantErr: true},
 	}
