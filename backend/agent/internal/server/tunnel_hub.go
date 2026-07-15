@@ -444,15 +444,6 @@ func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
 		return
 	}
-	auth, err := h.authenticateAgent(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if auth.Cluster != cluster || auth.Instance != instance {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

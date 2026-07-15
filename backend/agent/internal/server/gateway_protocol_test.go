@@ -117,28 +117,12 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
+func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	validToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
-	if err != nil {
-		t.Fatalf("create valid agent token: %v", err)
-	}
-	wrongScopeToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "other", Cluster: "dev", Instance: "other"})
-	if err != nil {
-		t.Fatalf("create wrong-scope agent token: %v", err)
-	}
-	user, err := store.CreateUser("alice")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	userToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err != nil {
-		t.Fatalf("create user token: %v", err)
-	}
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
@@ -147,34 +131,9 @@ func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, nil); err == nil {
-		t.Fatal("agent registration without token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		if resp == nil {
-			t.Fatalf("expected HTTP 401 without token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 401 without token, got %d", resp.StatusCode)
-	}
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}}); err == nil {
-		t.Fatal("agent registration with user token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		if resp == nil {
-			t.Fatalf("expected HTTP 401 with user token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 401 with user token, got %d", resp.StatusCode)
-	}
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + wrongScopeToken.Plaintext}}); err == nil {
-		t.Fatal("agent registration with mismatched agent token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusForbidden {
-		if resp == nil {
-			t.Fatalf("expected HTTP 403 with mismatched token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 403 with mismatched token, got %d", resp.StatusCode)
-	}
-
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + validToken.Plaintext}})
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
-		t.Fatalf("agent registration with matching token should connect: %v", err)
+		t.Fatalf("agent registration without token should connect: %v", err)
 	}
 	defer agentConn.Close()
 	go func() {
