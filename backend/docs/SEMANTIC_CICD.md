@@ -1,20 +1,19 @@
 # Semantic CI/CD
 
-DoOps CI/CD has one declarative reconciliation loop:
+DoOps CI/CD has one user-facing execution path:
 
 ```text
-DeploymentTemplate -> DeploymentPlan -> Push -> Ask -> ReconciliationResult
+DeploymentTemplate -> Push -> Ask($doops-cicd) -> DeploymentRun
 ```
 
-The template describes intent. `deploy/environments.yaml` resolves the physical
-environment profile. The plan is the immutable execution contract. `doops push`
-creates the session workspace, and `doops_agent_prompt` asks doagent to
-reconcile that plan. The CLI accepts completion only after it validates the
-structured result against the same plan.
+The repository workflow declares intent. `doops cicd run` validates the
+invocation, pushes the exact Git workspace to the selected Agent, and asks
+doagent to execute the `$doops-cicd` Skill. There is no second CI/CD RPC,
+generated shell pipeline, or hidden deployment fallback.
 
 ## Declaration
 
-Each repository keeps a versioned `DeploymentTemplate`.
+Each release workflow is a versioned `DeploymentTemplate`:
 
 ```yaml
 apiVersion: doops.sh/v2
@@ -25,105 +24,89 @@ spec:
   parameters:
     releaseId:
       required: true
-  plan:
-    release:
-      source:
-        repository: https://example.test/app.git
-        revision: ${inputs.releaseId}
-    target:
-      environment: oilan
-    desiredState:
-      application: example
-      delivery: immutable-release
-      configurationSource: deploy/environments.yaml
-      authorization: reconcile
-    acceptance:
-      requiredEvidence: [source-identity, runtime-state]
-      requiredFailureEvidence: [rollback-state]
-    policy:
-      mutation: require-explicit-approval
-      convergence: until-verified
-      failureMode: restore-last-known-good
-      maxAttempts: 3
-      maxNoProgress: 1
+  application: example
+  release:
+    source:
+      repository: https://example.test/app.git
+      revision: ${inputs.releaseId}
+      branch: main
+  environment: oilan
+  configurationSource: backend/deploy/environments.yaml
 ```
 
-Declarations must not contain scripts, commands, stages, physical target
-coordinates, Helm values, raw registry credentials, or an alternate deployment
-route. Those details are resolved from the repository environment registry into
-the generated plan.
-
-## Plan
-
-`doops cicd lint` validates the declaration. `doops cicd plan` resolves declared
-inputs and the environment profile and emits one `DeploymentPlan` with a
-canonical digest. The plan contains:
-
-- immutable source or manifest identity;
-- resolved environment profile and its digest;
-- artifact contract;
-- desired state and acceptance evidence;
-- explicit mutation, convergence, rollback, attempt, and no-progress policy.
-
-There is no signing key, public key, private key, attestation RPC, source URL
-override, or caller-supplied physical target.
+The declaration contains logical release intent. Physical targets, credentials,
+Helm values, registry bindings, and verification requirements remain in the
+versioned environment and deployment configuration referenced by the workflow.
 
 ## Execution
 
-`doops cicd run` requires `-session` and `--allow-mutate` unless it is a dry
-run. It resolves the plan target from the plan, checks the configured Gateway
-binding, then:
+`doops cicd run` requires:
 
-1. calls `doops push` for the repository root and session;
-2. calls `doops_agent_prompt` with the plan and `response_format=json`;
-3. validates the returned `ReconciliationResult`.
+- an explicit `-session`;
+- an explicit configured Gateway `-target`;
+- a workflow file inside a clean Git workspace;
+- declared `--set key=value` inputs.
 
-The Gateway is transport-neutral: `response_format=json` assigns one
-session-scoped result artifact under the synchronized workspace. It removes any
-stale artifact before prompting, requires doagent to write exactly one JSON
-object atomically, and returns that object as MCP `structuredContent`. Terminal
-text is never parsed as the machine result. The Gateway does not interpret
-CI/CD fields or implement a second release controller.
+The command performs these steps:
 
-The doagent owns semantic execution. It may choose the operational actions
-needed to reach the declared state, but cannot replace the plan with a fixed
-stage graph, command list, generated shell script, or another target.
+1. Push the repository snapshot to `/root/ws/<session>`.
+2. Capture the immutable workspace commit returned by the Agent.
+3. Send one structured `doops_agent_prompt` request selecting `$doops-cicd`.
+4. Bind the request to the pushed workspace commit.
+5. Use ordinary Ask for dry-run and the explicitly validated apply operation
+   for mutation.
+6. Wait for doagent's authoritative `turn_finished` event.
 
-The target image bundles the `semantic-deployment` Skill. Structured
-`DeploymentPlan` requests select that Skill, which defines the desired state,
-required evidence, recovery boundary, and `ReconciliationResult` contract
-without embedding a command workflow in the declaration.
+Apply is accepted only for the structured `$doops-cicd` instruction generated
+by the CLI. Ordinary prompts cannot request the mutation-capable mode.
 
 ## Result
 
-The machine result artifact is one object:
+Before its terminal response, doagent writes one JSON artifact to the
+Gateway-designated session path:
 
 ```json
 {
   "apiVersion": "doops.sh/v2",
-  "kind": "ReconciliationResult",
-  "planDigest": "sha256:...",
-  "status": "converged",
-  "attempts": 2,
-  "noProgressAttempts": 0,
-  "evidence": [],
-  "failureEvidence": []
+  "kind": "DeploymentRun",
+  "metadata": {
+    "workspaceCommit": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "spec": {
+    "mode": "dry-run"
+  },
+  "status": {
+    "phase": "planned",
+    "mutationCount": 0,
+    "capabilities": {},
+    "evidence": []
+  }
 }
 ```
 
-`status` is one of `converged`, `blocked`, or `failed`.
+The Gateway rejects missing, symlinked, oversized, Markdown-wrapped, or
+non-object artifacts. It binds every evidence item to a completed ACP tool call,
+adds runtime attestation, and computes `status.resultDigest`.
 
-- `converged` is valid only when every `requiredEvidence` item is present.
-- `blocked` and `failed` are valid only when every
-  `requiredFailureEvidence` item is present.
-- Attempts and no-progress attempts must be within the plan policy.
-- Any textual success message, missing evidence, mismatched digest, or invalid
-  JSON is a failure, not a successful release.
+The CLI accepts only `doops.sh/v2` `DeploymentRun` results whose:
+
+- workspace commit matches the pushed workspace;
+- mode matches the requested dry-run or apply operation;
+- phase is `planned`, `converged`, `blocked`, `failed`, or `outcome-unknown`;
+- mutation count is present and non-negative;
+- dry-run mutation count is zero;
+- result digest is a valid SHA-256 digest;
+- capability snapshot and evidence are present.
+
+Text such as `admitted`, `completed`, or `looks healthy` is not deployment
+evidence.
 
 ## CLI Artifacts
 
 `scripts/build-cli.sh --all` builds every supported CLI artifact with
-deterministic Go build settings and writes `skills/doops-cli/bin/checksums.txt`.
+deterministic Go build settings and writes
+`skills/doops-cli/bin/checksums.txt`.
+
 `scripts/install.sh` verifies the selected prebuilt binary against that
-manifest before installing it. `scripts/verify-cli-artifacts.sh` rebuilds and
-byte-compares every prebuilt artifact with the checked-in release set.
+manifest before installation. `scripts/verify-cli-artifacts.sh` rebuilds and
+byte-compares every checked-in CLI artifact.

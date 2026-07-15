@@ -1,55 +1,17 @@
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
-  name: oilan-agent-reconciliation
-  description: Reconcile one immutable Oilan doops agent release
+  name: oilan-agent-release
+  description: Release one immutable Oilan doops agent version
 spec:
   parameters:
     releaseId:
       required: true
-    reason:
-      required: true
-    repo:
-      default: https://github.com/l8ai-cn/doops.git
-    branch:
-      default: main
-  plan:
-    release:
-      source:
-        repository: ${inputs.repo}
-        revision: ${inputs.releaseId}
-        branch: ${inputs.branch}
-    target:
-      environment: oilan
-    desiredState:
-      application: doops-agent
-      delivery: declarative-agent-reconciliation
-      configurationSource: backend/deploy/environments.yaml
-      authorization: reconcile
-    acceptance:
-      requiredEvidence:
-        - source-identity
-        - image-set
-        - gitops-render
-        - runtime-state
-        - authorization-state
-        - public-contract
-        - post-deploy-log-scan
-        - release-manifest
-      requiredFailureEvidence:
-        - rollout-status
-        - pod-status
-        - termination-message
-        - pod-describe
-        - container-logs
-        - previous-container-logs
-        - service-endpoints
-        - helm-revision
-        - runtime-image-set
-        - rollback-state
-    policy:
-      mutation: require-explicit-approval
-      convergence: until-verified
-      failureMode: restore-last-known-good
-      maxAttempts: 3
-      maxNoProgress: 1
+  application: doops-agent
+  release:
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      revision: ${inputs.releaseId}
+      branch: main
+  environment: oilan
+  configurationSource: backend/deploy/environments.yaml

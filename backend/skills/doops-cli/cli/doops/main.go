@@ -36,8 +36,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
-  k8s         受限 Kubernetes 运维入口 (get/logs/rollout/scale/deploy-image/plan/apply-plan)
-  cicd        声明式 CI/CD workflow 入口 (lint/plan/run)
+  k8s         受限 Kubernetes 观察与运维入口
+  cicd        声明式 CI/CD workflow 入口 (run)
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -56,12 +56,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
   -help       显示此帮助信息
 
-声明式 CI/CD 闭环示例:
-  # run 先把当前仓库同步到 /root/ws/<session>，再通过 Ask 交给 doagent 执行和核验。
-  doops cicd lint -f deploy/workflows/test.yaml
-  doops cicd plan -f deploy/workflows/test.yaml --set releaseId=<immutable-release> --set reason=smoke
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --dry-run --set releaseId=<immutable-release> --set reason=smoke
-  doops -session test_ops cicd run -f deploy/workflows/test.yaml --allow-mutate --set releaseId=<immutable-release> --set reason=release
+	Agent 原生声明式 CI/CD 示例:
+	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
+	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --dry-run --set version=release-YYYYMMDD
+	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --set version=release-YYYYMMDD
 `)
 	}
 	flag.Parse()
@@ -283,17 +281,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		if req.Payload["operation"] == "plan-set-image" {
-			msg, err := runK8SRequest(nil, req, time.Now())
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println(msg)
-			RecordHistory(server.Name, "", fmt.Sprintf("k8s plan %s", req.PlanOut))
-			return
-		}
-
 		if *sessionName == "" {
 			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离 K8S 运维操作")
 			os.Exit(1)
@@ -307,7 +294,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		client.Token = token
 		defer client.Close()
 
-		msg, err := runK8SRequest(client, req, time.Now())
+		msg, err := runK8SRequest(client, req)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -318,31 +305,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
 	case "cicd":
-		newRunner := func(plan DeploymentPlan, sourceDirectory string) (deploymentAgenticExecutor, func(), error) {
-			requireConfig(configErr)
-			server := findServer(servers, plan.Spec.Target.ExecutionTarget)
-			if server == nil {
-				return nil, nil, fmt.Errorf("target %q not found; configure it with `doops add`", plan.Spec.Target.ExecutionTarget)
-			}
-			if err := validateCICDServerBinding(*server, plan); err != nil {
-				return nil, nil, err
-			}
-			if *sessionName == "" {
-				return nil, nil, fmt.Errorf("-session is required for `cicd run`")
-			}
-			if strings.TrimSpace(server.Gateway) == "" {
-				return nil, nil, fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
-			}
-			client := NewMCPClient(*server, ss, *sessionName, *verbose)
-			client.Token = ResolveToken(server.Name, server.Token)
-			runner, err := newAgenticDeploymentRunner(*server, sourceDirectory, *sessionName, client)
-			if err != nil {
-				client.Close()
-				return nil, nil, err
-			}
-			return runner, func() { client.Close() }, nil
-		}
-		if err := runCICDCommand(context.Background(), cmdArgs, newRunner); err != nil {
+		if err := runCICDCommand(context.Background(), cmdArgs, servers, configErr, ss, *sessionName, *verbose); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

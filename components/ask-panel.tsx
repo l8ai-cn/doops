@@ -30,25 +30,22 @@ const SETTINGS_PATH = "/root/.agent/settings.json"
 
 const QUICK_PROMPTS = [
   "检查节点状态并给出健康巡检报告",
-  "把仓库构建成镜像并滚动更新 deployment/app",
-  "回滚到上一个稳定版本",
+  "检查当前服务日志和健康探针，不执行变更",
+  "分析最近一次发布失败的真实原因，不执行回滚",
 ]
 
-function deployTemplate(sessionId: string) {
-  return `你正在部署仓库。只能在 /root/ws/${sessionId} 内工作。
-先检查项目结构；如果已有 deploy.sh，优先使用它。
-使用 BuildKit 构建镜像；Kubernetes 变更必须先 server-side dry-run，再真实 apply，
-等待 rollout 完成，并把最终报告写入 /root/ws/${sessionId}/doops-report.md。
-所有命令必须可追溯。`
+function releaseReadinessTemplate(sessionId: string) {
+  return `请只读检查 /root/ws/${sessionId} 的发布准备状态。
+确认仓库是否存在 doops.sh/v2 DeploymentTemplate、环境注册表引用、不可变 release identity 和验收条件。
+不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
+输出缺失项和应由控制端执行的 doops cicd run 命令参数。`
 }
 
-function deployAfterCloneTemplate(sessionId: string, repo: GitRepo) {
+function releaseReadinessAfterCloneTemplate(sessionId: string, repo: GitRepo) {
   return `仓库「${repo.name}」已通过 doops 克隆到 /root/ws/${sessionId}/repo。
-只能在 /root/ws/${sessionId} 内工作。
-1. 检查 repo/ 项目结构；如果已有 deploy.sh，优先使用它。
-2. 使用 BuildKit 构建镜像；Kubernetes 变更必须先 server-side dry-run，再真实 apply。
-3. 等待 rollout 完成，把最终报告写入 /root/ws/${sessionId}/doops-report.md。
-所有远端操作只能通过当前 doops agent 执行，不能要求 SSH 连接；所有命令必须可追溯。`
+请只读检查 repo/ 中的 doops.sh/v2 DeploymentTemplate、环境注册表引用、不可变 release identity 和验收条件。
+不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
+输出缺失项和应由控制端执行的 doops cicd run 命令参数。`
 }
 
 export function AskPanel({
@@ -236,7 +233,7 @@ export function AskPanel({
             : t,
         ),
       )
-      useQuick(deployAfterCloneTemplate(sessionId, repo))
+      useQuick(releaseReadinessAfterCloneTemplate(sessionId, repo))
     } catch (err) {
       setTurns((p) =>
         p.map((t) =>
@@ -338,7 +335,7 @@ export function AskPanel({
               <SparkIcon width={26} height={26} />
             </div>
             <p className="max-w-sm text-pretty text-center text-sm">
-              与 {target.instance} 上的 ACP 智能体多轮对话，下发运维 / 部署任务
+              与 {target.instance} 上的 ACP 智能体多轮对话，执行运维检查和问题诊断
             </p>
             <p className="text-xs">需要 ask 权限 · 上下文在同一 session 内保持</p>
             <div className="mt-2 flex max-w-md flex-col items-stretch gap-2">
@@ -352,10 +349,10 @@ export function AskPanel({
                 </button>
               ))}
               <button
-                onClick={() => useQuick(deployTemplate(sessionId))}
+                onClick={() => useQuick(releaseReadinessTemplate(sessionId))}
                 className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-left text-xs text-primary transition-colors hover:bg-primary/20"
               >
-                填入标准部署指令模板
+                检查发布准备状态
               </button>
             </div>
 
@@ -363,7 +360,7 @@ export function AskPanel({
               <div className="mt-3 w-full max-w-md">
                 <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
                   <GitIcon width={13} height={13} className="text-primary" />
-                  从已关联仓库部署
+                  检查已关联仓库
                 </p>
                 <div className="flex flex-col gap-1.5">
                   {repos.map((repo) => (

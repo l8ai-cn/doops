@@ -832,6 +832,46 @@ func workspacePath(sessionID string) (string, error) {
 	return filepath.Join(workspaceRoot(), sessionID), nil
 }
 
+func validateWorkspaceCommitBinding(sessionID, expectedCommit string) error {
+	expectedCommit = strings.TrimSpace(expectedCommit)
+	if expectedCommit == "" {
+		return nil
+	}
+	if !validWorkspaceGitCommit(expectedCommit) {
+		return fmt.Errorf("workspace commit must be a Git object ID")
+	}
+	workspace, err := workspacePath(sessionID)
+	if err != nil {
+		return err
+	}
+	ready, err := os.ReadFile(filepath.Join(workspace, ".doops-ready"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workspace is not ready for commit %s", expectedCommit)
+		}
+		return fmt.Errorf("read workspace ready commit: %w", err)
+	}
+	actualCommit := strings.TrimSpace(string(ready))
+	if !validWorkspaceGitCommit(actualCommit) {
+		return fmt.Errorf("workspace ready commit is invalid")
+	}
+	if actualCommit != expectedCommit {
+		return fmt.Errorf("workspace commit mismatch: got %s want %s", actualCommit, expectedCommit)
+	}
+	return nil
+}
+
+func validWorkspaceGitCommit(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	if strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 func uploadDir() string {
 	return filepath.Join(os.TempDir(), "doops-uploads")
 }

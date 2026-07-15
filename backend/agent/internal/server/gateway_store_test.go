@@ -444,11 +444,12 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	defer store.Close()
 
 	if err := store.MarkAgentOnline(AgentStatus{
-		Cluster:  "dev",
-		Instance: "local",
-		TokenID:  "tok_agent",
-		Remote:   "127.0.0.1:1234",
-		LastSeen: time.Now().UTC(),
+		Cluster:    "dev",
+		Instance:   "local",
+		TokenID:    "tok_agent",
+		Remote:     "127.0.0.1:1234",
+		Generation: 2,
+		LastSeen:   time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("mark online: %v", err)
 	}
@@ -456,23 +457,30 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list agents: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != "online" {
+	if len(agents) != 1 || agents[0].Status != "online" || agents[0].Generation != 2 {
 		t.Fatalf("expected one online agent, got %#v", agents)
 	}
 
-	if err := store.MarkAgentOffline(
-		"dev",
-		"local",
-		agents[0].ConnectedAt,
-		agents[0].LastSeen,
-	); err != nil {
+	if err := store.MarkAgentOffline("dev", "local", 1, agents[0].LastSeen.Add(-time.Minute)); err != nil {
+		t.Fatalf("mark stale generation offline: %v", err)
+	}
+	agents, err = store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list agents after stale offline: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != "online" {
+		t.Fatalf("stale generation must not mark current agent offline: %#v", agents)
+	}
+
+	finalLastSeen := agents[0].LastSeen.Add(time.Second)
+	if err := store.MarkAgentOffline("dev", "local", 2, finalLastSeen); err != nil {
 		t.Fatalf("mark offline: %v", err)
 	}
 	agents, err = store.ListAgentStatus()
 	if err != nil {
 		t.Fatalf("list agents after offline: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != "offline" {
+	if len(agents) != 1 || agents[0].Status != "offline" || !agents[0].LastSeen.Equal(finalLastSeen) {
 		t.Fatalf("expected offline agent retained in store, got %#v", agents)
 	}
 }
@@ -490,6 +498,7 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	if err := store.MarkAgentOnline(AgentStatus{
 		Cluster:     "dev",
 		Instance:    "local",
+		Generation:  1,
 		ConnectedAt: oldConnectedAt,
 		LastSeen:    oldConnectedAt,
 	}); err != nil {
@@ -498,6 +507,7 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	if err := store.MarkAgentOnline(AgentStatus{
 		Cluster:     "dev",
 		Instance:    "local",
+		Generation:  2,
 		ConnectedAt: newConnectedAt,
 		LastSeen:    newLastSeen,
 	}); err != nil {
@@ -507,7 +517,7 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 		context.Background(),
 		"dev",
 		"local",
-		oldConnectedAt,
+		1,
 		oldConnectedAt.Add(10*time.Second),
 	); err != nil {
 		t.Fatalf("touch stale agent: %v", err)
@@ -522,7 +532,7 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	}
 
 	finalLastSeen := newConnectedAt.Add(10 * time.Second)
-	if err := store.MarkAgentOffline("dev", "local", newConnectedAt, finalLastSeen); err != nil {
+	if err := store.MarkAgentOffline("dev", "local", 2, finalLastSeen); err != nil {
 		t.Fatalf("mark replacement agent offline: %v", err)
 	}
 	offline, err := store.ListAgentStatus()
@@ -539,7 +549,7 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 		context.Background(),
 		"dev",
 		"local",
-		newConnectedAt,
+		2,
 		newConnectedAt.Add(20*time.Second),
 	); err != nil {
 		t.Fatalf("touch offline agent: %v", err)
@@ -550,5 +560,40 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	}
 	if len(offline) != 1 || !offline[0].LastSeen.Equal(finalLastSeen) {
 		t.Fatalf("stale touch overwrote offline agent: %#v", offline)
+	}
+}
+
+func TestGatewayStoreUpgradeOperationLifecycle(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	op, err := store.CreateUpgradeOperation(UpgradeOperation{
+		Cluster:       "dev",
+		Instance:      "local",
+		Image:         "registry.example/doops@sha256:abc",
+		OldGeneration: 3,
+		OldRuntimeID:  "runtime-old",
+	})
+	if err != nil {
+		t.Fatalf("create upgrade operation: %v", err)
+	}
+	if op.Status != "running" || op.Phase != "requesting" {
+		t.Fatalf("unexpected initial operation: %#v", op)
+	}
+	if err := store.UpdateUpgradeOperation(op.ID, "waiting_reconnect", "running", ""); err != nil {
+		t.Fatalf("update upgrade operation: %v", err)
+	}
+	got, err := store.GetUpgradeOperation(op.ID)
+	if err != nil {
+		t.Fatalf("get upgrade operation: %v", err)
+	}
+	if got.Phase != "waiting_reconnect" || got.Status != "running" {
+		t.Fatalf("unexpected updated operation: %#v", got)
+	}
+	if got.OldRuntimeID != "runtime-old" {
+		t.Fatalf("upgrade operation lost runtime identity: %#v", got)
 	}
 }

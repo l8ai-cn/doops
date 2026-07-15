@@ -193,6 +193,8 @@ doops-agent \
 ```
 
 如果省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway 不会重放已中断的高危操作。
+`-gateway-url` 必须填写 doops-gateway 的 base URL，或显式填写 `/v1/agent/connect`；
+不要填写 `/ws`。`/ws` 是遗留直连 agent 端点，不是 agent 注册 gateway 的反向隧道端点。
 
 ### 裸二进制自举/排障方式
 
@@ -269,6 +271,14 @@ gateway 可以通过在线长连接对一批 agent 下发升级操作。第一�
 - Docker/nerdctl 容器：agent 拉取新镜像并返回明确状态；自动替换容器需要由 supervisor/编排层接管，避免 agent 在执行中杀掉自己。
 - 裸二进制：明确返回 unsupported，不做镜像升级。
 
+gateway 在转发升级请求前先把操作持久化为可恢复状态。升级成功必须同时满足：
+
+- 同一 `cluster/instance` 出现更高连接 generation；
+- 新连接声明的进程 runtime identity 与旧进程不同；
+- 新进程至少完成一次 heartbeat。
+
+因此网络抖动或同一进程重新建立 WebSocket 不会被当成升级成功。Gateway 在请求下发窗口重启后，也会继续等待符合条件的 replacement，而不是静默降级或直接报成功。
+
 示例：
 
 ```bash
@@ -301,6 +311,9 @@ doops -session upgrade_20260511 upgrade \
 - 源码入口是仓库一级目录 `gateway/`；`agent/cmd/gateway` 仅保留为兼容 wrapper。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
 - gateway 按 `cluster/instance` 和资源键隔离操作；不同 session/workspace 可并发，同一资源互斥。
+- `doops_agent_prompt` 使用普通 `ActionAsk` 和 session 资源锁。CI/CD 先通过
+  `doops push` 同步工作区，再由 `$doops-cicd` Skill 在 doagent 中执行；Gateway
+  不提供发布专用权限、metadata 或 workspace admission。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。

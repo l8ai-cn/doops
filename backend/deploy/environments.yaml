@@ -1,45 +1,51 @@
 artifactContract:
-  sourceRepository: https://github.com/l8ai-cn/doops.git
+  type: image-set
+  sourceRegistry: docker.cnb.cool/l8ai/ai
+  sourceRepository: https://cnb.cool/l8ai/ai/doops.sh.git
   sourceBranch: main
   services:
     - doops-agent
+  sourceArtifactNames:
+    doops-agent: doops.sh
   imageTagPattern: "^[0-9a-f]{40}$"
   imageReferenceFormat: repository@digest
-  helmImageBindings:
-    doops-agent: image
-  authz:
-    policyScope:
-      - cluster
-      - instance
-      - service
+verificationProfiles:
+  doops-agent-production:
+    requiredEvidence:
+      - source-identity
+      - image-set
+      - gitops-render
+      - runtime-state
+      - authorization-state
+      - public-contract
+      - post-deploy-log-scan
+      - release-manifest
 environments:
   oilan:
-    target: gw-edu-coder
-    cluster: doops-edu
-    instance: edu-coder
-    namespace: kz-ops
-    release: doops-agent-live
-    workload: deployment/doops-agent-live
-    container: doops-agent
-    modelRouting:
-      policy: single-model
-    modelSettings:
-      provider: minimax
-      model: minimax/MiniMax-M3
-      secretRef:
-        name: doagent-model-settings
-        key: settings.json
-    registry: docker.cnb.cool/l8ai/ai
-    releaseManifestRepository: https://github.com/l8ai-cn/doops.git
-    chart: backend/deploy/helm/doops-agent
-    values: backend/deploy/environments/oilan-values.yaml
-    deploymentMode: control-plane
-    healthChecks:
-      public:
-        - id: gateway-health
-          url: https://doops.l8ai.cn/health
-          expectedStatus: 200
-      workloads: []
-    authz:
-      appCode: DOOPS
-      environmentCode: OILAN
+    deploymentPlatform: linux/amd64
+    target:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+    executor:
+      type: helm
+      config:
+        namespace: kz-ops
+        release: doops-agent-live
+        workload: deployment/doops-agent-live
+        container: doops-agent
+        registry: docker.cnb.cool/l8ai/ai
+        releaseManifestRepository: https://cnb.cool/l8ai/ai/doops.sh.git
+        chart: backend/deploy/helm/doops-agent
+        values: backend/deploy/environments/oilan-values.yaml
+        imageBindings:
+          doops-agent: ""
+        healthChecks:
+          public:
+            - id: gateway-health
+              url: https://doops.l8ai.cn/health
+              expectedStatus: 200
+        authz:
+          appCode: DOOPS
+          environmentCode: OILAN
+    verificationProfile: doops-agent-production

@@ -1,0 +1,4 @@
+interface:
+  display_name: "DoOps CICD"
+  short_description: "Generate and execute agent-native deployment YAML"
+  default_prompt: "Use $doops-cicd to generate or execute a declarative deployment YAML through native DoOps modules."

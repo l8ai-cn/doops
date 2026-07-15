@@ -16,6 +16,10 @@
 
 ## 架构图
 
+Agent 原生 CI/CD 的权威职责边界见
+[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md)。DoOps 不实现另一套
+Agent 框架；上下文、规划、多 Agent、Skill 和工具调用由 doagent 原生引擎负责。
+
 ```mermaid
 flowchart LR
     U["用户 / IDE"] --> CLI["doops CLI / Skill"]
@@ -438,7 +442,7 @@ doops -session upgrade_20260511 upgrade \
   --dry-run
 ```
 
-去掉 `--dry-run` 后会对匹配的在线 `cluster/instance` 下发升级。K8s/DaemonSet 模式会执行 `kubectl set image` 和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。
+去掉 `--dry-run` 后会对匹配的在线 `cluster/instance` 下发升级。K8s/DaemonSet 模式会执行 `kubectl set image` 和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。gateway 会在下发前持久化升级操作，只有同一目标注册了不同进程身份并完成心跳后才判定升级完成；普通断线重连不会被误报为升级成功。
 
 ## 维护者说明
 

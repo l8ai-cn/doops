@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +12,215 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestWriteWorkspaceSourceManifestBindsImmutableRevision(t *testing.T) {
+	root := t.TempDir()
+	source := &WorkspaceSourceIdentity{
+		Repository: "https://cnb.cool/l8ai/example.git",
+		Revision:   strings.Repeat("a", 40),
+		Branch:     "main",
+	}
+
+	rel, err := writeWorkspaceSourceManifest(root, source)
+	if err != nil {
+		t.Fatalf("write source manifest: %v", err)
+	}
+	if rel != ".doops/source.json" {
+		t.Fatalf("unexpected source manifest path %q", rel)
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("read source manifest: %v", err)
+	}
+	var manifest workspaceSourceManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode source manifest: %v", err)
+	}
+	if manifest.APIVersion != workspaceManifestAPIVersion || manifest.Kind != "WorkspaceSource" {
+		t.Fatalf("unexpected source manifest type: %#v", manifest)
+	}
+	if manifest.Source != *source {
+		t.Fatalf("source manifest must preserve the declared immutable identity: %#v", manifest)
+	}
+}
+
+func TestWriteWorkspaceSourceManifestRejectsInvalidBranchWithoutTrimming(t *testing.T) {
+	for _, test := range []struct {
+		branch string
+		valid  bool
+	}{
+		{branch: "", valid: false},
+		{branch: " main", valid: false},
+		{branch: "main ", valid: false},
+		{branch: "main", valid: true},
+	} {
+		t.Run(fmt.Sprintf("%q", test.branch), func(t *testing.T) {
+			root := t.TempDir()
+			rel, err := writeWorkspaceSourceManifest(root, &WorkspaceSourceIdentity{
+				Repository: "https://cnb.cool/l8ai/example.git",
+				Revision:   strings.Repeat("a", 40),
+				Branch:     test.branch,
+			})
+			if test.valid {
+				if err != nil {
+					t.Fatalf("source manifest branch %q must be accepted: %v", test.branch, err)
+				}
+				if rel != workspaceSourceManifestPath {
+					t.Fatalf("unexpected source manifest path %q", rel)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("source manifest branch %q must be rejected", test.branch)
+			}
+			if rel != "" {
+				t.Fatalf("rejected source branch must not return a manifest path: %q", rel)
+			}
+			if _, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(workspaceSourceManifestPath))); !os.IsNotExist(statErr) {
+				t.Fatalf("rejected source branch must not generate a manifest, stat error: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestPushWorkspaceSnapshotRejectsInvalidBranchBeforeRemotePush(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+
+	_, err := pushWorkspaceSnapshotWithSource(
+		Server{Name: "test", Gateway: server.URL},
+		t.TempDir(),
+		"",
+		false,
+		nil,
+		"invalid-branch",
+		&WorkspaceSourceIdentity{
+			Repository: "https://cnb.cool/l8ai/example.git",
+			Revision:   strings.Repeat("a", 40),
+			Branch:     "main ",
+		},
+	)
+	if err == nil {
+		t.Fatal("invalid source branch must be rejected")
+	}
+	if requests != 0 {
+		t.Fatalf("invalid source branch must fail before remote push, got %d requests", requests)
+	}
+}
+
+func TestStageWorkspaceSnapshotCommitsSourceManifestWithoutDirtyingSource(t *testing.T) {
+	sourceRoot := t.TempDir()
+	runTestGit(t, sourceRoot, "init", "-b", "main")
+	runTestGit(t, sourceRoot, "config", "user.name", "doops")
+	runTestGit(t, sourceRoot, "config", "user.email", "doops@localhost")
+	if err := os.WriteFile(filepath.Join(sourceRoot, "README.md"), []byte("release\n"), 0o644); err != nil {
+		t.Fatalf("write source fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, ".gitignore"), []byte(".doops/\n"), 0o644); err != nil {
+		t.Fatalf("write source gitignore: %v", err)
+	}
+	runTestGit(t, sourceRoot, "add", "README.md", ".gitignore")
+	runTestGit(t, sourceRoot, "commit", "-m", "release")
+	revisionBytes, err := exec.Command("git", "-C", sourceRoot, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve source revision: %v", err)
+	}
+	source := &WorkspaceSourceIdentity{
+		Repository: "https://cnb.cool/l8ai/example.git",
+		Revision:   strings.TrimSpace(string(revisionBytes)),
+		Branch:     "main",
+	}
+	snapshotRoot := t.TempDir()
+
+	files, err := stageWorkspaceSnapshot(sourceRoot, snapshotRoot, nil, false, source)
+	if err != nil {
+		t.Fatalf("stage workspace snapshot: %v", err)
+	}
+	if !containsString(files, workspaceSourceManifestPath) {
+		t.Fatalf("source manifest must be part of the staged snapshot: %#v", files)
+	}
+	commit, err := createWorkspaceSnapshotCommit(snapshotRoot, source)
+	if err != nil {
+		t.Fatalf("create transport snapshot commit: %v", err)
+	}
+	tree, err := exec.Command(
+		"git",
+		"-C",
+		snapshotRoot,
+		"ls-tree",
+		"--name-only",
+		commit,
+		workspaceSourceManifestPath,
+	).Output()
+	if err != nil {
+		t.Fatalf("inspect snapshot commit: %v", err)
+	}
+	if strings.TrimSpace(string(tree)) != workspaceSourceManifestPath {
+		t.Fatalf("source manifest must be committed in the transport snapshot: %q", tree)
+	}
+	status, err := exec.Command("git", "-C", sourceRoot, "status", "--porcelain").Output()
+	if err != nil {
+		t.Fatalf("inspect source worktree: %v", err)
+	}
+	if strings.TrimSpace(string(status)) != "" {
+		t.Fatalf("snapshot metadata must not dirty the source worktree: %s", status)
+	}
+}
+
+func TestValidateWorkspaceCheckoutProofRequiresExactManifestBlob(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifestBlob := strings.Repeat("b", 40)
+	tests := []struct {
+		name  string
+		proof string
+		want  bool
+	}{
+		{
+			name: "matching bare tree and checkout",
+			proof: "ready:" + commit + "\n" +
+				"bare:" + commit + "\n" +
+				"tree:" + manifestBlob + "\n" +
+				"checkout:" + manifestBlob + "\n",
+		},
+		{
+			name: "bare branch differs",
+			proof: "ready:" + commit + "\n" +
+				"bare:" + strings.Repeat("c", 40) + "\n" +
+				"tree:" + manifestBlob + "\n" +
+				"checkout:" + manifestBlob + "\n",
+			want: true,
+		},
+		{
+			name: "checkout omits source manifest",
+			proof: "ready:" + commit + "\n" +
+				"bare:" + commit + "\n" +
+				"tree:" + manifestBlob + "\n",
+			want: true,
+		},
+		{
+			name: "checkout manifest differs from transport tree",
+			proof: "ready:" + commit + "\n" +
+				"bare:" + commit + "\n" +
+				"tree:" + manifestBlob + "\n" +
+				"checkout:" + strings.Repeat("c", 40) + "\n",
+			want: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateWorkspaceCheckoutProof(test.proof, commit, manifestBlob)
+			if test.want && err == nil {
+				t.Fatal("invalid remote workspace proof must be rejected")
+			}
+			if !test.want && err != nil {
+				t.Fatalf("matching remote workspace proof rejected: %v", err)
+			}
+		})
+	}
+}
 
 func TestStageSnapshotIncludesBuildDirectory(t *testing.T) {
 	root := t.TempDir()

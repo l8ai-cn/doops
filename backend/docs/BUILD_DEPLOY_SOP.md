@@ -1,7 +1,7 @@
 # Doops 构建与部署强制规范 (SOP)
 
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
-> 
+>
 > 本地开发机的架构（如 Apple Silicon ARM64）、网络环境（代理/污染）以及未清理的缓存，极易导致打出的 OCI 镜像体积过大、架构错配或携带不安全的凭据。
 > 所有线上与测试环境的 `doops-agent` 镜像，**必须且只能由 `main` 分支的 CNB CI 按标准流程构建、校验并推送。**
 
@@ -51,20 +51,20 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps `DeploymentTemplate` 消费该 digest 并完成环境同步、Helm 收敛与验证。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
 
 ```bash
 doops -session oilan-agent-bootstrap cicd run \
   -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
-  --allow-mutate \
-  --set releaseId=<main-commit-sha> \
-  --set reason=agent-bootstrap
+  -target <configured-doops-target> \
+  --dry-run \
+  --set releaseId=<main-commit-sha>
 ```
 
-The command creates a resolved `DeploymentPlan`, synchronizes the repository,
-then asks doagent to reconcile it. A textual completion is not evidence:
-completion requires a plan-matching `ReconciliationResult` with the declaration's
-required evidence.
+The command synchronizes the repository, then sends one ordinary Ask to doagent
+for the `$doops-cicd` Skill. The Skill writes the Gateway-designated JSON
+`DeploymentRun` artifact;
+text such as `admitted` is not evidence, and dry-run mutation count must be zero.
 
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。

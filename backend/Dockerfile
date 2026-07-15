@@ -1,5 +1,8 @@
 ARG DOOPS_AGENT_BASE_IMAGE=invalid.invalid/doops-agent-base-image-must-be-specified
 ARG DO_AGENT_VERSION
+ARG DO_AGENT_INDEX_DIGEST
+ARG DO_AGENT_PLATFORM
+ARG DO_AGENT_PLATFORM_DIGEST
 
 # Stage 1: Build doops-agent (Go gateway)
 FROM golang:1.24-alpine AS builder
@@ -15,8 +18,14 @@ RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
 FROM ${DOOPS_AGENT_BASE_IMAGE}
 ARG DOOPS_AGENT_BASE_IMAGE
 ARG DO_AGENT_VERSION
+ARG DO_AGENT_INDEX_DIGEST
+ARG DO_AGENT_PLATFORM
+ARG DO_AGENT_PLATFORM_DIGEST
 LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
 LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
+LABEL org.l8ai.doagent.index.digest="${DO_AGENT_INDEX_DIGEST}"
+LABEL org.l8ai.doagent.platform="${DO_AGENT_PLATFORM}"
+LABEL org.l8ai.doagent.platform.digest="${DO_AGENT_PLATFORM_DIGEST}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
 COPY --from=builder /app/agent/skills /app/skills

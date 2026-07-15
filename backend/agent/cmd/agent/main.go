@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -21,6 +22,15 @@ import (
 const (
 	defaultAgentTokenPath     = "/root/.doops/agent-token"
 	defaultAgentListenAddress = "0.0.0.0"
+)
+
+var (
+	reverseTunnelConnected int32
+	reverseTunnelDial      = websocket.DefaultDialer.Dial
+	reverseTunnelServeConn = func(gw *server.Gateway, conn *websocket.Conn, name string, onReady func()) {
+		gw.ServeWebSocketConnWithReady(conn, name, onReady)
+	}
+	reverseTunnelContinue = func() bool { return true }
 )
 
 func main() {
@@ -69,10 +79,11 @@ func main() {
 	}
 
 	http.HandleFunc("/ws", gw.HandleWebSocket) // 新增 WebSocket 端点
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
+	http.HandleFunc("/health", handleHealthLive)
+	http.HandleFunc("/health/live", handleHealthLive)
+	http.HandleFunc("/health/ready", handleHealthReady)
+
+	log.Printf("🚦 health endpoints: /health/live (always 200), /health/ready (200 when tunnel connected)")
 	gw.SetupGitHandler()
 
 	bindHost := strings.TrimSpace(*listen)
@@ -93,7 +104,35 @@ func main() {
 	}
 }
 
+func handleHealthLive(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func handleHealthReady(w http.ResponseWriter, r *http.Request) {
+	if isReverseTunnelConnected() {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+		return
+	}
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte("not ready"))
+}
+
+func isReverseTunnelConnected() bool {
+	return atomic.LoadInt32(&reverseTunnelConnected) == 1
+}
+
+func setReverseTunnelConnected(connected bool) {
+	if connected {
+		atomic.StoreInt32(&reverseTunnelConnected, 1)
+		return
+	}
+	atomic.StoreInt32(&reverseTunnelConnected, 0)
+}
+
 func runReverseTunnel(gw *server.Gateway, rawURL, token, cluster, instance string, reconnectDelay time.Duration) {
+	setReverseTunnelConnected(false)
 	if reconnectDelay <= 0 {
 		reconnectDelay = time.Second
 	}
@@ -109,6 +148,9 @@ func runReverseTunnel(gw *server.Gateway, rawURL, token, cluster, instance strin
 	}
 
 	for {
+		if reverseTunnelContinue != nil && !reverseTunnelContinue() {
+			return
+		}
 		tunnelURL, err := buildGatewayAgentURL(rawURL, cluster, instance)
 		if err != nil {
 			log.Printf("❌ invalid gateway URL %q: %v", rawURL, err)
@@ -123,7 +165,7 @@ func runReverseTunnel(gw *server.Gateway, rawURL, token, cluster, instance strin
 		}
 
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := websocket.DefaultDialer.Dial(tunnelURL, header)
+		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)
@@ -135,7 +177,12 @@ func runReverseTunnel(gw *server.Gateway, rawURL, token, cluster, instance strin
 		}
 
 		log.Printf("✅ reverse tunnel connected: cluster=%s instance=%s", cluster, instance)
-		gw.ServeWebSocketConn(conn, "doops-gateway:"+tunnelURL)
+		func() {
+			defer setReverseTunnelConnected(false)
+			reverseTunnelServeConn(gw, conn, "doops-gateway:"+tunnelURL, func() {
+				setReverseTunnelConnected(true)
+			})
+		}()
 		log.Printf("⚠️ reverse tunnel disconnected; reconnecting in %s", reconnectDelay)
 		time.Sleep(reconnectDelay)
 	}
@@ -164,6 +211,10 @@ func buildGatewayAgentURL(rawURL, cluster, instance string) (string, error) {
 	}
 	if u.Path == "" || u.Path == "/" {
 		u.Path = "/v1/agent/connect"
+	} else if strings.TrimRight(u.Path, "/") == "/v1/agent/connect" {
+		u.Path = "/v1/agent/connect"
+	} else {
+		return "", fmt.Errorf("invalid gateway URL path %q: use the doops-gateway base URL or /v1/agent/connect; /ws is the direct-agent endpoint", u.Path)
 	}
 	q := u.Query()
 	q.Set("cluster", cluster)
