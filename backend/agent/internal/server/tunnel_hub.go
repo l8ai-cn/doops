@@ -719,7 +719,13 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation != "" && operation != "ask" {
+		if operation == "apply" {
+			instruction := extractStringArg(params.Arguments, "instruction")
+			if err := validateDoagentApplyInstruction(instruction); err != nil {
+				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+				return nil
+			}
+		} else if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
