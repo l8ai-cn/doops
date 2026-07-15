@@ -73,6 +73,8 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
     assert "/usr/local/bin/do-agent acp-http --port" in entrypoint
     assert "buildkitd --containerd-worker=false" in entrypoint
     assert "tini -s -- /app/doops-agent" in entrypoint
+    assert "start_background /usr/local/bin/entrypoint.sh" not in entrypoint
+    assert "elif [ -x /usr/local/bin/entrypoint.sh ]" not in entrypoint
     assert "https://api.example.com/v1" not in entrypoint
 
 

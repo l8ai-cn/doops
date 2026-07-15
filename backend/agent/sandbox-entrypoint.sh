@@ -27,8 +27,6 @@ start_sandbox_services() {
         start_background /opt/tiger/run.sh
     elif [ -x /entrypoint.sh ]; then
         start_background /entrypoint.sh
-    elif [ -x /usr/local/bin/entrypoint.sh ]; then
-        start_background /usr/local/bin/entrypoint.sh
     else
         echo "ℹ️  sandbox base service launcher not found; continuing with doops runtime only"
     fi
