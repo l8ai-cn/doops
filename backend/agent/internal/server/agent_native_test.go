@@ -44,6 +44,29 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 	}
 }
 
+func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
+	valid := `{
+		"task":"execute-doops-cicd-workflow",
+		"skill":"$doops-cicd",
+		"executionMode":"apply"
+	}`
+	if err := validateDoagentApplyInstruction(valid); err != nil {
+		t.Fatalf("valid apply envelope rejected: %v", err)
+	}
+	for name, instruction := range map[string]string{
+		"plain prompt": "deploy this",
+		"wrong task":   `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
+		"wrong skill":  `{"task":"execute-doops-cicd-workflow","skill":"$shell","executionMode":"apply"}`,
+		"wrong mode":   `{"task":"execute-doops-cicd-workflow","skill":"$doops-cicd","executionMode":"dry-run"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateDoagentApplyInstruction(instruction); err == nil {
+				t.Fatal("non-CI/CD apply envelope must be rejected")
+			}
+		})
+	}
+}
+
 func TestDoagentPermissionRequestFailsClosedWithoutReply(t *testing.T) {
 	rpcCalled := make(chan struct{}, 1)
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

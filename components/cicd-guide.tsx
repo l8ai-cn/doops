@@ -100,7 +100,6 @@ doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
 doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
   -f <DEPLOYMENT_TEMPLATE> \\
   --target <ENVIRONMENT_TARGET> \\
-  --dry-run \\
   --set releaseId="$(git rev-parse HEAD)"`,
       }
     }
@@ -129,7 +128,6 @@ jobs:
           doops -session "release-\${GITHUB_SHA::12}" cicd run \\
             -f <DEPLOYMENT_TEMPLATE> \\
             --target <ENVIRONMENT_TARGET> \\
-            --dry-run \\
             --set releaseId="$GITHUB_SHA"`,
       }
     }
@@ -150,7 +148,6 @@ jobs:
       doops -session "release-$CI_COMMIT_SHORT_SHA" cicd run \\
         -f <DEPLOYMENT_TEMPLATE> \\
         --target <ENVIRONMENT_TARGET> \\
-        --dry-run \\
         --set releaseId="$CI_COMMIT_SHA"
   only:
     - main`,

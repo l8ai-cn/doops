@@ -1,7 +1,6 @@
 ---
 name: doops-cicd
 description: Generate, review, dry-run, and execute doops.sh/v2 DeploymentTemplate, SemanticRelease, and ServiceRelease YAML through the native doagent multi-agent engine and the DoOps modules exposed at runtime. Use for declarative build, artifact delivery, deployment, verification, rollback assessment, and release evidence tasks.
-conflicts: [pipeline, shell, k8s, image-build]
 ---
 
 # DoOps CICD
