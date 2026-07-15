@@ -1149,6 +1149,66 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 	}
 }
 
+func TestGatewayAgentPingDoesNotWaitForDataWriteLock(t *testing.T) {
+	serverConn := make(chan *websocket.Conn, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		serverConn <- conn
+	}))
+	defer ts.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(ts.URL, "http"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer clientConn.Close()
+
+	pingSeen := make(chan struct{}, 1)
+	clientConn.SetPingHandler(func(data string) error {
+		select {
+		case pingSeen <- struct{}{}:
+		default:
+		}
+		return clientConn.WriteControl(
+			websocket.PongMessage,
+			[]byte(data),
+			time.Now().Add(time.Second),
+		)
+	})
+	go func() {
+		for {
+			if _, _, err := clientConn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	agent := &GatewayAgent{
+		conn:   <-serverConn,
+		closed: make(chan struct{}),
+	}
+	defer agent.conn.Close()
+	agent.writeMu.Lock()
+	defer agent.writeMu.Unlock()
+	defer close(agent.closed)
+
+	go agent.pingLoop(NewGatewayHub(nil, GatewayHubOptions{
+		AgentLease: 30 * time.Millisecond,
+	}))
+	select {
+	case <-pingSeen:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("gateway ping waited for the data write lock")
+	}
+}
+
 func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

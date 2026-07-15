@@ -1351,9 +1351,7 @@ func (a *GatewayAgent) pingLoop(h *GatewayHub) {
 		select {
 		case <-ticker.C:
 			deadline := time.Now().Add(10 * time.Second)
-			a.writeMu.Lock()
 			err := a.conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
-			a.writeMu.Unlock()
 			if err != nil {
 				_ = a.conn.Close()
 				return

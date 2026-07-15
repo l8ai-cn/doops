@@ -133,9 +133,7 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 				return
 			case <-ticker.C:
 				deadline := time.Now().Add(agentWSPingWriteTimeout)
-				connMu.Lock()
 				err := conn.WriteControl(websocket.PingMessage, nil, deadline)
-				connMu.Unlock()
 				if err != nil {
 					_ = conn.Close()
 					return
