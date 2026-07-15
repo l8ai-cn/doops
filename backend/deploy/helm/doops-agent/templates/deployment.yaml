@@ -65,12 +65,14 @@ spec:
               hostPort: 42222
               protocol: TCP
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health/ready
               port: api
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health/live
               port: api
             initialDelaySeconds: 15
             periodSeconds: 10

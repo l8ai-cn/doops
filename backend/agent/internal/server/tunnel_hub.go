@@ -33,18 +33,11 @@ type GatewayHubOptions struct {
 }
 
 type GatewayHub struct {
-	store *GatewayStore
-	opts  GatewayHubOptions
-
-	mu      sync.RWMutex
-	agents  map[string]*GatewayAgent
-	opsMu   sync.Mutex
-	active  int
-	userOps map[string]int
-
-	activeOpsMu sync.Mutex
-	activeOps   map[string]*gatewayActiveOperation
-	activeSeq   uint64
+	store        *GatewayStore
+	opts         GatewayHubOptions
+	registry     *AgentRegistry
+	registration *AgentRegistrationHandler
+	client       *ClientService
 
 	scheduler *Scheduler
 }
@@ -55,6 +48,7 @@ func (h *GatewayHub) AttachScheduler(sched *Scheduler) {
 }
 
 var errGatewayClientDisconnected = errors.New("gateway client disconnected")
+var errGatewayAgentDisconnected = errors.New("agent disconnected")
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
@@ -81,8 +75,10 @@ type GatewayAgent struct {
 	Key         string    `json:"key"`
 	Remote      string    `json:"remote"`
 	TokenID     string    `json:"token_id,omitempty"`
+	Generation  uint64    `json:"generation"`
 	ConnectedAt time.Time `json:"connected_at"`
 	LastSeen    time.Time `json:"last_seen"`
+	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
 	Busy        bool      `json:"busy"`
 	Status      string    `json:"status,omitempty"`
 	BusyReason  string    `json:"busy_reason,omitempty"`
@@ -193,6 +189,10 @@ type gatewayAdminTokenCreateRequest struct {
 }
 
 func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
+	registry, err := NewAgentRegistry(store)
+	if err != nil {
+		panic(err)
+	}
 	if opts.AgentLease <= 0 {
 		opts.AgentLease = 90 * time.Second
 	}
@@ -217,13 +217,17 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.MaxQueuedPerTarget <= 0 {
 		opts.MaxQueuedPerTarget = 0
 	}
-	return &GatewayHub{
-		store:     store,
-		opts:      opts,
-		agents:    make(map[string]*GatewayAgent),
-		userOps:   make(map[string]int),
-		activeOps: make(map[string]*gatewayActiveOperation),
+	hub := &GatewayHub{
+		store:    store,
+		opts:     opts,
+		registry: registry,
 	}
+	hub.registration = NewAgentRegistrationHandler(store, registry, opts.AgentLease)
+	hub.client = NewClientService(store, registry, opts)
+	if err := hub.client.upgrades.ResumePending(opts.OperationTimeout); err != nil {
+		panic(err)
+	}
+	return hub
 }
 
 func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
@@ -332,7 +336,7 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	auditID, _ := h.store.StartAudit(AuditEvent{
+	auditID, err := h.store.StartAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        "*",
@@ -437,24 +441,25 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) {
-	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
-	if cluster == "" || instance == "" {
-		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
-		return
-	}
+func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {
+	return h.client.listActiveOperations()
+}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("[gateway] agent upgrade failed: %v", err)
-		return
-	}
+func (h *GatewayHub) cancelActiveOperation(id string) bool {
+	return h.client.cancelActiveOperation(id)
+}
+
+func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) {
+	h.registration.ServeHTTP(w, r)
+}
+
+func newGatewayAgentSession(cluster, instance, tokenID, remote string, conn *websocket.Conn) *GatewayAgent {
 	agent := &GatewayAgent{
 		Cluster:         cluster,
 		Instance:        instance,
 		Key:             tunnelKey(cluster, instance),
-		Remote:          r.RemoteAddr,
+		Remote:          remote,
+		TokenID:         tokenID,
 		ConnectedAt:     time.Now().UTC(),
 		LastSeen:        time.Now().UTC(),
 		conn:            conn,
@@ -465,22 +470,7 @@ func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) 
 		closed:          make(chan struct{}),
 	}
 	agent.opSlot <- struct{}{}
-
-	h.registerAgent(agent)
-	log.Printf("[gateway] agent online: %s remote=%s", agent.Key, agent.Remote)
-	go agent.readLoop(h)
-	go agent.pingLoop(h)
-
-	if err := agent.initialize(); err != nil {
-		log.Printf("[gateway] agent initialize failed: %s: %v", agent.Key, err)
-		conn.Close()
-		h.unregisterAgent(agent)
-		return
-	}
-
-	<-agent.closed
-	h.unregisterAgent(agent)
-	log.Printf("[gateway] agent offline: %s", agent.Key)
+	return agent
 }
 
 func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
@@ -607,6 +597,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
+	h.client.HandleClientRPC(w, r)
+}
+
+func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
 		h.writeUserAuthError(w, r)
@@ -661,17 +655,32 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	for {
-		msgType, data, err := conn.ReadMessage()
-		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("[gateway] client read failed: %v", err)
+	connCtx, cancelConn := context.WithCancel(r.Context())
+	defer cancelConn()
+	messages := make(chan []byte, 16)
+	go func() {
+		defer close(messages)
+		defer cancelConn()
+		for {
+			msgType, data, err := conn.ReadMessage()
+			if err != nil {
+				if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					log.Printf("[gateway] client read failed: %v", err)
+				}
+				return
 			}
-			return
+			if msgType != websocket.TextMessage {
+				continue
+			}
+			select {
+			case messages <- data:
+			case <-connCtx.Done():
+				return
+			}
 		}
-		if msgType != websocket.TextMessage {
-			continue
-		}
+	}()
+
+	for data := range messages {
 		var req api.JSONRPCRequest
 		if err := json.Unmarshal(data, &req); err != nil {
 			continue
@@ -693,7 +702,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 		case "tools/call":
-			if err := h.handleGatewayToolCall(auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
+			if err := h.handleGatewayToolCall(connCtx, auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
 				writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
 			}
 		default:
@@ -702,7 +711,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
+func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
 	var params api.ToolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
@@ -726,7 +735,7 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
 		return nil
 	}
-	auditID, _ := h.store.StartAudit(AuditEvent{
+	auditID, auditErr := h.store.StartAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        cluster,
@@ -736,15 +745,21 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
 		StartedAt:      time.Now().UTC(),
 	})
+	if auditErr != nil {
+		writeJSON(buildErrorResponse(req.ID, -32603, "start audit: "+auditErr.Error()))
+		return nil
+	}
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) {
-		_ = h.store.FinishAudit(auditID, AuditFinish{
+		if err := h.store.FinishAudit(auditID, AuditFinish{
 			Status:   status,
 			Error:    errMsg,
 			Tail:     tail,
 			BytesIn:  int64(len(params.Arguments)),
 			BytesOut: bytesOut,
 			EndedAt:  time.Now().UTC(),
-		})
+		}); err != nil {
+			log.Printf("[gateway] finish audit failed: id=%d: %v", auditID, err)
+		}
 	}
 	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
@@ -752,12 +767,27 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
-	agent := h.getAgent(cluster, instance)
+	agent := h.registry.Get(cluster, instance)
 	if agent == nil {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
 		finishAudit("offline", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
+	}
+	var upgradeOp UpgradeOperation
+	waitForUpgradeReplacement := false
+	upgradeImage := ""
+	if action == ActionAgentUpgrade {
+		var args agentUpgradeParams
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			errMsg := fmt.Sprintf("invalid agent upgrade params: %v", err)
+			finishAudit("error", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32602, errMsg))
+			return nil
+		}
+		mode := strings.TrimSpace(args.Mode)
+		waitForUpgradeReplacement = !args.DryRun && (mode == "" || mode == "auto" || mode == "k8s" || mode == "daemonset")
+		upgradeImage = strings.TrimSpace(args.Image)
 	}
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
@@ -766,7 +796,7 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		return nil
 	}
 	defer releaseLimit()
-	opCtx, cancelOp := context.WithCancel(context.Background())
+	opCtx, cancelOp := context.WithCancel(ctx)
 	defer cancelOp()
 	opID := h.registerActiveOperation(GatewayActiveOperation{
 		UserID:         auth.UserID,
@@ -793,11 +823,22 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	if waitForUpgradeReplacement {
+		var beginErr error
+		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation)
+		if beginErr != nil {
+			finishAudit("error", beginErr.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, beginErr.Error()))
+			return nil
+		}
+	}
 
 	tail := newAuditTailBuffer(8192)
 	var bytesOut int64
 	finalStatus := "success"
 	finalErr := ""
+	upgradeAccepted := false
+	upgradeRejected := false
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
@@ -811,23 +852,71 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		}
 		if id, ok := msg.Parsed["id"]; ok {
 			msg.Parsed["id"] = req.ID
-			raw, _ := json.Marshal(msg.Parsed)
-			if err := writeRaw(raw); err != nil {
-				return err
-			}
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
+					upgradeRejected = waitForUpgradeReplacement
+					finalErr = resultContentText(result)
+				} else if waitForUpgradeReplacement {
+					upgradeAccepted = true
+					return nil
 				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
 				finalErr = fmt.Sprintf("%v", rpcErr)
 			}
+			raw, _ := json.Marshal(msg.Parsed)
+			if err := writeRaw(raw); err != nil {
+				return err
+			}
 			_ = id
 		}
 		return nil
 	})
+	if waitForUpgradeReplacement && (upgradeAccepted || errors.Is(err, errGatewayAgentDisconnected)) {
+		if waitErr := h.upgrades.MarkWaiting(upgradeOp); waitErr != nil {
+			err = fmt.Errorf("persist upgrade waiting phase: %w", waitErr)
+		} else {
+			type upgradeResult struct {
+				replacement *GatewayAgent
+				err         error
+			}
+			resultCh := make(chan upgradeResult, 1)
+			go func() {
+				waitCtx, cancelWait := context.WithTimeout(context.Background(), h.opts.OperationTimeout)
+				defer cancelWait()
+				replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
+				resultCh <- upgradeResult{replacement: replacement, err: waitErr}
+			}()
+			select {
+			case result := <-resultCh:
+				if result.err != nil {
+					err = result.err
+				} else {
+					err = nil
+					finalStatus = "success"
+					finalErr = ""
+					_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
+						"agent upgrade completed: %s/%s generation %d image %s",
+						cluster, instance, result.replacement.Generation, upgradeOp.Image,
+					)))
+				}
+			case <-opCtx.Done():
+				err = opCtx.Err()
+			}
+		}
+	} else if waitForUpgradeReplacement && (err != nil || upgradeRejected) {
+		cause := err
+		phase := "request_failed"
+		if upgradeRejected {
+			phase = "request_rejected"
+			cause = fmt.Errorf("%s", firstNonEmptyString(finalErr, "agent rejected upgrade request"))
+		}
+		if persistErr := h.upgrades.Fail(upgradeOp, phase, cause); persistErr != nil {
+			err = persistErr
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -846,162 +935,40 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 	return nil
 }
 
-func (h *GatewayHub) acquireOperationSlot(userID string) (func(), error) {
-	h.opsMu.Lock()
-	defer h.opsMu.Unlock()
-	if h.active >= h.opts.MaxConcurrentOperations {
-		return nil, fmt.Errorf("global operation limit exceeded")
-	}
-	if h.userOps[userID] >= h.opts.MaxConcurrentPerUser {
-		return nil, fmt.Errorf("user operation limit exceeded")
-	}
-	h.active++
-	h.userOps[userID]++
-	return func() {
-		h.opsMu.Lock()
-		defer h.opsMu.Unlock()
-		h.active--
-		h.userOps[userID]--
-		if h.userOps[userID] <= 0 {
-			delete(h.userOps, userID)
-		}
-	}, nil
+func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
+	return h.registry.Register(agent)
 }
 
-func (h *GatewayHub) registerActiveOperation(op GatewayActiveOperation, cancel context.CancelFunc) string {
-	id := fmt.Sprintf("op-%d", atomic.AddUint64(&h.activeSeq, 1))
-	op.ID = id
-	op.StartedAt = time.Now().UTC()
-	h.activeOpsMu.Lock()
-	h.activeOps[id] = &gatewayActiveOperation{
-		GatewayActiveOperation: op,
-		cancel:                 cancel,
-	}
-	h.activeOpsMu.Unlock()
-	return id
-}
-
-func (h *GatewayHub) finishActiveOperation(id string) {
-	if id == "" {
-		return
-	}
-	h.activeOpsMu.Lock()
-	delete(h.activeOps, id)
-	h.activeOpsMu.Unlock()
-}
-
-func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {
-	now := time.Now().UTC()
-	h.activeOpsMu.Lock()
-	defer h.activeOpsMu.Unlock()
-	ops := make([]GatewayActiveOperation, 0, len(h.activeOps))
-	for _, op := range h.activeOps {
-		item := op.GatewayActiveOperation
-		item.AgeSeconds = int64(now.Sub(item.StartedAt).Seconds())
-		ops = append(ops, item)
-	}
-	sort.Slice(ops, func(i, j int) bool {
-		return ops[i].StartedAt.Before(ops[j].StartedAt)
-	})
-	return ops
-}
-
-func (h *GatewayHub) cancelActiveOperation(id string) bool {
-	h.activeOpsMu.Lock()
-	op := h.activeOps[id]
-	h.activeOpsMu.Unlock()
-	if op == nil {
-		return false
-	}
-	op.cancel()
-	return true
-}
-
-func (h *GatewayHub) registerAgent(agent *GatewayAgent) {
-	var old *GatewayAgent
-	h.mu.Lock()
-	old = h.agents[agent.Key]
-	h.agents[agent.Key] = agent
-	if h.store != nil {
-		_ = h.store.MarkAgentOnline(AgentStatus{
-			Cluster:     agent.Cluster,
-			Instance:    agent.Instance,
-			TokenID:     agent.TokenID,
-			Remote:      agent.Remote,
-			ConnectedAt: agent.ConnectedAt,
-			LastSeen:    agent.LastSeen,
-		})
-	}
-	h.mu.Unlock()
-
-	if old != nil && old.conn != nil {
-		_ = old.conn.Close()
-	}
-}
-
-func (h *GatewayHub) unregisterAgent(agent *GatewayAgent) {
-	removed := false
-	h.mu.Lock()
-	if current := h.agents[agent.Key]; current == agent {
-		delete(h.agents, agent.Key)
-		removed = true
-	}
-	h.mu.Unlock()
-
-	if removed && h.store != nil {
-		_ = h.store.MarkAgentOffline(agent.Cluster, agent.Instance)
-	}
+func (h *GatewayHub) unregisterAgent(agent *GatewayAgent) error {
+	return h.registry.Unregister(agent)
 }
 
 func (h *GatewayHub) getAgent(cluster, instance string) *GatewayAgent {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.agents[tunnelKey(cluster, instance)]
+	return h.registry.Get(cluster, instance)
 }
 
 func (h *GatewayHub) waitForAgent(ctx context.Context, cluster, instance string) *GatewayAgent {
-	if agent := h.getAgent(cluster, instance); agent != nil {
-		return agent
-	}
-	grace := h.opts.TargetReconnectGrace
-	if grace <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-timer.C:
-			return nil
-		case <-ticker.C:
-			if agent := h.getAgent(cluster, instance); agent != nil {
-				return agent
-			}
-		}
-	}
+	return h.registry.Wait(ctx, cluster, instance, h.opts.TargetReconnectGrace)
 }
 
 func (h *GatewayHub) ListTargets() []GatewayTarget {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	out := make([]GatewayTarget, 0, len(h.agents))
-	for _, a := range h.agents {
-		out = append(out, a.snapshot())
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
+	return h.registry.List()
 }
 
 func (h *GatewayHub) authenticateUser(r *http.Request) (TokenAuth, error) {
 	return h.store.VerifyUserToken(bearerToken(r))
 }
 
-func (h *GatewayHub) authenticateAgent(r *http.Request) (TokenAuth, error) {
-	return h.store.VerifyAgentToken(bearerToken(r))
+func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
+	return h.store.VerifyUserToken(bearerToken(r))
+}
+
+func (h *ClientService) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.store.VerifyAgentToken(bearerToken(r)); err == nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
 func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
@@ -1066,13 +1033,13 @@ func (a *GatewayAgent) initialize() error {
 	}
 }
 
-func (a *GatewayAgent) readLoop(h *GatewayHub) {
+func (a *GatewayAgent) readLoop(registry *AgentRegistry, lease time.Duration) {
 	defer close(a.closed)
 	defer a.conn.Close()
-	a.conn.SetReadDeadline(time.Now().Add(h.opts.AgentLease))
+	a.conn.SetReadDeadline(time.Now().Add(lease))
 	a.conn.SetPongHandler(func(string) error {
-		a.touch(h)
-		return a.conn.SetReadDeadline(time.Now().Add(h.opts.AgentLease))
+		a.heartbeat(registry)
+		return a.conn.SetReadDeadline(time.Now().Add(lease))
 	})
 	for {
 		msgType, data, err := a.conn.ReadMessage()
@@ -1082,7 +1049,7 @@ func (a *GatewayAgent) readLoop(h *GatewayHub) {
 			}
 			return
 		}
-		a.touch(h)
+		a.touch(registry)
 		if msgType != websocket.TextMessage {
 			continue
 		}
@@ -1124,21 +1091,28 @@ func (a *GatewayAgent) deliverPending(msg gatewayWSMessage, ch chan gatewayWSMes
 	}
 }
 
-func (a *GatewayAgent) pingLoop(h *GatewayHub) {
-	interval := h.opts.AgentLease / 3
+func (a *GatewayAgent) pingLoop(registry *AgentRegistry, lease time.Duration) {
+	interval := lease / 3
 	if interval <= 0 {
 		interval = 30 * time.Second
+	}
+	sendPing := func() error {
+		deadline := time.Now().Add(10 * time.Second)
+		a.writeMu.Lock()
+		err := a.conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
+		a.writeMu.Unlock()
+		return err
+	}
+	if err := sendPing(); err != nil {
+		_ = a.conn.Close()
+		return
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			deadline := time.Now().Add(10 * time.Second)
-			a.writeMu.Lock()
-			err := a.conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
-			a.writeMu.Unlock()
-			if err != nil {
+			if err := sendPing(); err != nil {
 				_ = a.conn.Close()
 				return
 			}
@@ -1148,13 +1122,24 @@ func (a *GatewayAgent) pingLoop(h *GatewayHub) {
 	}
 }
 
-func (a *GatewayAgent) touch(h *GatewayHub) {
-	lastSeen := time.Now().UTC()
+func (a *GatewayAgent) heartbeat(registry *AgentRegistry) {
+	now := time.Now().UTC()
+	a.stateMu.Lock()
+	a.HeartbeatAt = now
+	a.stateMu.Unlock()
+	a.touchAt(registry, now)
+}
+
+func (a *GatewayAgent) touch(registry *AgentRegistry) {
+	a.touchAt(registry, time.Now().UTC())
+}
+
+func (a *GatewayAgent) touchAt(registry *AgentRegistry, lastSeen time.Time) {
 	a.stateMu.Lock()
 	a.LastSeen = lastSeen
 	a.stateMu.Unlock()
-	if h.store != nil {
-		_ = h.store.TouchAgent(a.Cluster, a.Instance, lastSeen)
+	if err := registry.Touch(a, lastSeen); err != nil {
+		log.Printf("[gateway] agent heartbeat persistence failed: %s generation=%d: %v", a.Key, a.Generation, err)
 	}
 }
 
@@ -1232,7 +1217,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			})
 			return fmt.Errorf("operation timed out")
 		case <-a.closed:
-			return fmt.Errorf("agent disconnected")
+			return errGatewayAgentDisconnected
 		}
 	}
 }

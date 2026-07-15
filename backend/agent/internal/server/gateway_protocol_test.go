@@ -117,12 +117,28 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
+func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
+	validToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err != nil {
+		t.Fatalf("create valid agent token: %v", err)
+	}
+	wrongScopeToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "other", Cluster: "dev", Instance: "other"})
+	if err != nil {
+		t.Fatalf("create wrong-scope agent token: %v", err)
+	}
+	user, err := store.CreateUser("alice")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	userToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	if err != nil {
+		t.Fatalf("create user token: %v", err)
+	}
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
@@ -131,9 +147,34 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, nil); err == nil {
+		t.Fatal("agent registration without token should fail")
+	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		if resp == nil {
+			t.Fatalf("expected HTTP 401 without token, got nil response: %v", err)
+		}
+		t.Fatalf("expected HTTP 401 without token, got %d", resp.StatusCode)
+	}
+	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}}); err == nil {
+		t.Fatal("agent registration with user token should fail")
+	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		if resp == nil {
+			t.Fatalf("expected HTTP 401 with user token, got nil response: %v", err)
+		}
+		t.Fatalf("expected HTTP 401 with user token, got %d", resp.StatusCode)
+	}
+	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + wrongScopeToken.Plaintext}}); err == nil {
+		t.Fatal("agent registration with mismatched agent token should fail")
+	} else if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatalf("expected HTTP 403 with mismatched token, got nil response: %v", err)
+		}
+		t.Fatalf("expected HTTP 403 with mismatched token, got %d", resp.StatusCode)
+	}
+
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + validToken.Plaintext}})
 	if err != nil {
-		t.Fatalf("agent registration without token should connect: %v", err)
+		t.Fatalf("agent registration with matching token should connect: %v", err)
 	}
 	defer agentConn.Close()
 	go func() {
@@ -178,6 +219,87 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 		t.Fatalf("targets must still require user token, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	agentToken, err := store.CreateToken(CreateTokenRequest{
+		Kind:     TokenKindAgent,
+		Name:     "agent",
+		Cluster:  "dev",
+		Instance: "local",
+	})
+	if err != nil {
+		t.Fatalf("create agent token: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
+	headers := http.Header{"Authorization": []string{"Bearer " + agentToken.Plaintext}}
+	readyConn, _, err := websocket.DefaultDialer.Dial(agentWS, headers)
+	if err != nil {
+		t.Fatalf("dial ready agent: %v", err)
+	}
+	defer readyConn.Close()
+	go serveFakeAgent(t, readyConn)
+
+	var readyAgent *GatewayAgent
+	requireEventually(t, time.Second, func() bool {
+		readyAgent = gw.getAgent("dev", "local")
+		return readyAgent != nil
+	})
+
+	candidateConn, _, err := websocket.DefaultDialer.Dial(agentWS, headers)
+	if err != nil {
+		t.Fatalf("dial candidate agent: %v", err)
+	}
+	defer candidateConn.Close()
+
+	time.Sleep(100 * time.Millisecond)
+	if current := gw.getAgent("dev", "local"); current != readyAgent {
+		t.Fatalf("uninitialized candidate replaced ready session: current=%p ready=%p", current, readyAgent)
+	}
+}
+
+func TestGatewayStartupReconcilesPersistedOnlineStatus(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	if err := store.MarkAgentOnline(AgentStatus{
+		Cluster:    "dev",
+		Instance:   "local",
+		Generation: 7,
+	}); err != nil {
+		t.Fatalf("mark stale agent online: %v", err)
+	}
+
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+
+	statuses, err := store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list agent status: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Status != "offline" {
+		t.Fatalf("gateway startup must reconcile stale online status: %#v", statuses)
+	}
+	next := &GatewayAgent{Cluster: "dev", Instance: "local", Key: "dev/local", ConnectedAt: time.Now().UTC(), LastSeen: time.Now().UTC()}
+	if err := hub.registry.Register(next); err != nil {
+		t.Fatalf("register next session: %v", err)
+	}
+	if next.Generation != 8 {
+		t.Fatalf("generation must remain monotonic across gateway restart: got %d want 8", next.Generation)
+	}
 }
 
 func requireEventually(t *testing.T, timeout time.Duration, ok func() bool) {
@@ -1013,6 +1135,178 @@ func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
 	}
 }
 
+func TestGatewayAgentUpgradeCompletesAfterReplacementHeartbeat(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster:  "dev",
+		Instance: "local",
+		Actions:  []GatewayAction{ActionAgentUpgrade},
+	}); err != nil {
+		t.Fatalf("grant agent upgrade: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: 300 * time.Millisecond, OperationTimeout: 3 * time.Second})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	oldConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	upgradeSeen := make(chan struct{}, 1)
+	go serveUpgradeDisconnectingFakeAgent(oldConn, upgradeSeen)
+	requireEventually(t, time.Second, func() bool {
+		return gw.getAgent("dev", "local") != nil
+	})
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer client.Close()
+	args, _ := json.Marshal(map[string]interface{}{
+		"image":     "registry.example/doops@sha256:abc",
+		"mode":      "k8s",
+		"namespace": "oilan-system",
+		"workload":  "deployment/doops-agent-live",
+		"container": "doops-agent",
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(args)},
+	})
+	select {
+	case <-upgradeSeen:
+	case <-time.After(time.Second):
+		t.Fatal("old agent did not receive upgrade request")
+	}
+
+	replacement := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer replacement.Close()
+	go serveFakeAgent(t, replacement)
+
+	resp := readUntilID(t, client, 2)
+	if errObj, ok := resp["error"]; ok {
+		t.Fatalf("upgrade returned error after replacement heartbeat: %#v", errObj)
+	}
+	result := fmt.Sprint(resp["result"])
+	if !strings.Contains(result, "generation 2") {
+		t.Fatalf("upgrade response did not identify replacement generation: %#v", resp)
+	}
+}
+
+func TestGatewayAgentUpgradeContinuesAfterClientDisconnect(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAgentUpgrade},
+	}); err != nil {
+		t.Fatalf("grant agent upgrade: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: 300 * time.Millisecond, OperationTimeout: 3 * time.Second})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	oldConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	upgradeSeen := make(chan struct{}, 1)
+	go serveUpgradeDisconnectingFakeAgent(oldConn, upgradeSeen)
+	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") != nil })
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	args, _ := json.Marshal(map[string]interface{}{
+		"image": "registry.example/doops@sha256:def",
+		"mode":  "k8s",
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(args)},
+	})
+	select {
+	case <-upgradeSeen:
+	case <-time.After(time.Second):
+		t.Fatal("old agent did not receive upgrade request")
+	}
+
+	var operation UpgradeOperation
+	requireEventually(t, time.Second, func() bool {
+		operations, listErr := store.ListRunningUpgradeOperations()
+		if listErr != nil || len(operations) != 1 || operations[0].Phase != "waiting_reconnect" {
+			return false
+		}
+		operation = operations[0]
+		return true
+	})
+	_ = client.Close()
+
+	replacement := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer replacement.Close()
+	go serveFakeAgent(t, replacement)
+	requireEventually(t, 2*time.Second, func() bool {
+		stored, getErr := store.GetUpgradeOperation(operation.ID)
+		return getErr == nil && stored.Status == "success" && stored.Phase == "replacement_healthy"
+	})
+}
+
+func TestGatewayAgentUpgradeFailureDoesNotLeaveRunningOperation(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAgentUpgrade},
+	}); err != nil {
+		t.Fatalf("grant agent upgrade: %v", err)
+	}
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer agentConn.Close()
+	go serveUpgradeErrorFakeAgent(agentConn)
+	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") != nil })
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer client.Close()
+	args, _ := json.Marshal(map[string]interface{}{"image": "registry.example/doops@sha256:bad", "mode": "k8s"})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(args)},
+	})
+	resp := readUntilID(t, client, 2)
+	result, _ := resp["result"].(map[string]interface{})
+	if fmt.Sprint(result["isError"]) != "true" {
+		t.Fatalf("expected agent upgrade error result: %#v", resp)
+	}
+	operations, err := store.ListRunningUpgradeOperations()
+	if err != nil {
+		t.Fatalf("list running upgrade operations: %v", err)
+	}
+	if len(operations) != 0 {
+		t.Fatalf("failed upgrade left running operation: %#v", operations)
+	}
+}
+
 func TestGatewayActionMappingUsesDedicatedToolsForWorkspacePull(t *testing.T) {
 	if got := actionForTool("doops_workspace_pull_begin", nil); got != ActionPull {
 		t.Fatalf("expected workspace pull begin to map to pull, got %q", got)
@@ -1573,7 +1867,7 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 	readUntilID(t, clientA, 2)
 }
 
-func TestGatewayRPCDrainsDisconnectedClientBeforeReleasingTarget(t *testing.T) {
+func TestGatewayRPCCancelsOperationWhenClientDisconnects(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1608,31 +1902,10 @@ func TestGatewayRPCDrainsDisconnectedClientBeforeReleasingTarget(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	_ = clientA.Close()
 
-	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
-	defer clientB.Close()
-	writeGatewayJSON(t, clientB, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+	requireEventually(t, time.Second, func() bool {
+		return len(gw.listActiveOperations()) == 0
 	})
-	busy := readUntilID(t, clientB, 2)
-	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
-		t.Fatalf("expected disconnected operation to keep target busy until agent responds, got %#v", busy)
-	}
-
 	close(blockRelease)
-	time.Sleep(200 * time.Millisecond)
-	writeGatewayJSON(t, clientB, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
-	})
-	resp := readUntilID(t, clientB, 3)
-	if _, ok := resp["error"]; ok {
-		t.Fatalf("expected target to be released after drained response, got %#v", resp)
-	}
 }
 
 func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
@@ -2197,6 +2470,56 @@ func serveFakeAgent(t *testing.T, conn *websocket.Conn) {
 				"id":      msg["id"],
 				"result": map[string]interface{}{
 					"content": []map[string]interface{}{{"type": "text", "text": "ok " + params["name"].(string)}},
+				},
+			})
+		}
+	}
+}
+
+func serveUpgradeDisconnectingFakeAgent(conn *websocket.Conn, upgradeSeen chan<- struct{}) {
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		switch msg["method"] {
+		case "initialize":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+			})
+		case "tools/call":
+			select {
+			case upgradeSeen <- struct{}{}:
+			default:
+			}
+			_ = conn.Close()
+			return
+		}
+	}
+}
+
+func serveUpgradeErrorFakeAgent(conn *websocket.Conn) {
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		switch msg["method"] {
+		case "initialize":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+			})
+		case "tools/call":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result": map[string]interface{}{
+					"isError": true,
+					"content": []map[string]interface{}{{"type": "text", "text": "image pull failed"}},
 				},
 			})
 		}

@@ -8,7 +8,8 @@ agent restart is an explicit lifecycle transition rather than a failed user RPC.
 ## Scope
 
 - Keep the existing HTTP and WebSocket endpoints unchanged.
-- Keep the existing SQLite schema and user/agent token model unchanged.
+- Keep the existing user/agent token model unchanged.
+- Extend SQLite with agent session generations and durable upgrade operations.
 - Move ownership out of `GatewayHub` without adding a second network service.
 - Make registration freshness observable to user-call and upgrade flows.
 
@@ -19,7 +20,7 @@ agent restart is an explicit lifecycle transition rather than a failed user RPC.
 `AgentRegistry` owns the live `cluster/instance -> AgentSession` mapping and the persisted
 agent status. It provides:
 
-- register and replacement of an agent session;
+- register and replacement of an initialized, authenticated agent session;
 - unregister only when the disconnected session is still current;
 - heartbeat updates and online target snapshots;
 - lookup and bounded wait for a replacement session;
@@ -59,20 +60,17 @@ scheduler. It delegates instead of directly owning the agent map or session prot
 The current agent can apply a Kubernetes image change, but it cannot synchronously return the
 rollout result after Kubernetes terminates its pod. Upgrade handling therefore has two phases:
 
-1. The old session accepts the upgrade request and records an upgrade operation before the
-   workload image changes.
+1. The gateway records a durable upgrade operation before forwarding the workload image change.
 2. The operation completes only when the registry observes a replacement session for the same
-   `cluster/instance`, with a connection time later than the operation start and at least one
-   heartbeat.
+   `cluster/instance`, with a strictly newer server-side generation and at least one heartbeat.
 
 If no replacement satisfies those conditions before the configured deadline, the operation
 fails with an explicit re-registration timeout. A normal old-session disconnect during this
 window is not itself an upgrade failure.
 
-The Helm readiness probe must represent reverse-tunnel registration, not merely the local
-agent TCP listener. This is implemented through an agent-local registration state that becomes
-ready only after the gateway accepts the reverse tunnel and remains ready while the session is
-alive.
+The Helm readiness probe represents reverse-tunnel initialization, not merely the local agent
+TCP listener. The agent becomes ready only after it answers the gateway initialize request and
+remains ready while that reverse-tunnel session is alive. Liveness remains process-local.
 
 ## Error Handling
 

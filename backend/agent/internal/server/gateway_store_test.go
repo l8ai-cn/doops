@@ -371,11 +371,12 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	defer store.Close()
 
 	if err := store.MarkAgentOnline(AgentStatus{
-		Cluster:  "dev",
-		Instance: "local",
-		TokenID:  "tok_agent",
-		Remote:   "127.0.0.1:1234",
-		LastSeen: time.Now().UTC(),
+		Cluster:    "dev",
+		Instance:   "local",
+		TokenID:    "tok_agent",
+		Remote:     "127.0.0.1:1234",
+		Generation: 2,
+		LastSeen:   time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("mark online: %v", err)
 	}
@@ -383,11 +384,22 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list agents: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Status != "online" {
+	if len(agents) != 1 || agents[0].Status != "online" || agents[0].Generation != 2 {
 		t.Fatalf("expected one online agent, got %#v", agents)
 	}
 
-	if err := store.MarkAgentOffline("dev", "local"); err != nil {
+	if err := store.MarkAgentOffline("dev", "local", 1); err != nil {
+		t.Fatalf("mark stale generation offline: %v", err)
+	}
+	agents, err = store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list agents after stale offline: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Status != "online" {
+		t.Fatalf("stale generation must not mark current agent offline: %#v", agents)
+	}
+
+	if err := store.MarkAgentOffline("dev", "local", 2); err != nil {
 		t.Fatalf("mark offline: %v", err)
 	}
 	agents, err = store.ListAgentStatus()
@@ -396,5 +408,36 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	}
 	if len(agents) != 1 || agents[0].Status != "offline" {
 		t.Fatalf("expected offline agent retained in store, got %#v", agents)
+	}
+}
+
+func TestGatewayStoreUpgradeOperationLifecycle(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	op, err := store.CreateUpgradeOperation(UpgradeOperation{
+		Cluster:       "dev",
+		Instance:      "local",
+		Image:         "registry.example/doops@sha256:abc",
+		OldGeneration: 3,
+	})
+	if err != nil {
+		t.Fatalf("create upgrade operation: %v", err)
+	}
+	if op.Status != "running" || op.Phase != "requesting" {
+		t.Fatalf("unexpected initial operation: %#v", op)
+	}
+	if err := store.UpdateUpgradeOperation(op.ID, "waiting_reconnect", "running", ""); err != nil {
+		t.Fatalf("update upgrade operation: %v", err)
+	}
+	got, err := store.GetUpgradeOperation(op.ID)
+	if err != nil {
+		t.Fatalf("get upgrade operation: %v", err)
+	}
+	if got.Phase != "waiting_reconnect" || got.Status != "running" {
+		t.Fatalf("unexpected updated operation: %#v", got)
 	}
 }

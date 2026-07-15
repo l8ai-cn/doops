@@ -14,11 +14,48 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestAgentReverseTunnelReadyOnlyAfterGatewayRegistration(t *testing.T) {
+	gw := NewGateway("0")
+	ready := make(chan struct{})
+	var readyOnce sync.Once
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		gw.ServeWebSocketConnWithReady(conn, r.RemoteAddr, func() {
+			readyOnce.Do(func() { close(ready) })
+		})
+	}))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+	select {
+	case <-ready:
+		t.Fatal("initialize must not mark reverse tunnel ready before registry acknowledgement")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "gateway/registered",
+	}); err != nil {
+		t.Fatalf("send gateway registration acknowledgement: %v", err)
+	}
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("gateway registration acknowledgement did not mark reverse tunnel ready")
+	}
+}
 
 func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()

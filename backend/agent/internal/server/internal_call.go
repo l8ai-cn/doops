@@ -15,7 +15,11 @@ import (
 //
 // 注意：这是受信任的内部路径，不做 user RBAC 校验；调用方需自行保证来源可信。
 func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (string, error) {
-	agent := h.getAgent(cluster, instance)
+	return h.client.RunInternalToolCall(ctx, cluster, instance, tool, args)
+}
+
+func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (string, error) {
+	agent := h.registry.Get(cluster, instance)
 	if agent == nil {
 		return "", fmt.Errorf("target offline: %s/%s", cluster, instance)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"strconv"
@@ -25,6 +26,10 @@ type gitHTTPRequestParams struct {
 }
 
 func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
+	h.client.HandleGitHTTP(w, r)
+}
+
+func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	cluster, instance, session, rest, ok := parseGatewayGitPath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -44,7 +49,7 @@ func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance), http.StatusForbidden)
 		return
 	}
-	agent := h.waitForAgent(r.Context(), cluster, instance)
+	agent := h.registry.Wait(r.Context(), cluster, instance, h.opts.TargetReconnectGrace)
 	if agent == nil {
 		http.Error(w, fmt.Sprintf("target offline: %s/%s", cluster, instance), http.StatusBadGateway)
 		return
@@ -81,7 +86,7 @@ func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer agent.releaseForAction(action, resourceKey)
 
-	auditID, _ := h.store.StartAudit(AuditEvent{
+	auditID, err := h.store.StartAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        cluster,
@@ -91,6 +96,10 @@ func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		CommandSummary: r.Method + " " + r.URL.RequestURI(),
 		StartedAt:      time.Now().UTC(),
 	})
+	if err != nil {
+		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	status := "success"
 	errMsg := ""
 	bytesOut, relayErr := agent.relayGitHTTPRequest(opCtx, w, r, gitHTTPRequestParams{
@@ -111,16 +120,18 @@ func (h *GatewayHub) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
 	}
-	_ = h.store.FinishAudit(auditID, AuditFinish{
+	if err := h.store.FinishAudit(auditID, AuditFinish{
 		Status:   status,
 		Error:    errMsg,
 		BytesIn:  r.ContentLength,
 		BytesOut: bytesOut,
 		EndedAt:  time.Now().UTC(),
-	})
+	}); err != nil {
+		log.Printf("[gateway] finish git audit failed: id=%d: %v", auditID, err)
+	}
 }
 
-func (h *GatewayHub) authenticateGitUser(r *http.Request) (TokenAuth, error) {
+func (h *ClientService) authenticateGitUser(r *http.Request) (TokenAuth, error) {
 	if _, password, ok := r.BasicAuth(); ok && strings.TrimSpace(password) != "" {
 		return h.store.VerifyUserToken(password)
 	}

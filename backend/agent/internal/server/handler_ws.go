@@ -106,6 +106,10 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 // established WebSocket. It is used both by the normal inbound /ws endpoint
 // and by reverse tunnel mode, where the agent dials a public gateway first.
 func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
+	gw.ServeWebSocketConnWithReady(conn, remoteAddr, nil)
+}
+
+func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
 
@@ -159,6 +163,7 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 	gitBodyWriters := make(map[int64]*io.PipeWriter)
 	activeToolMu := sync.Mutex{}
 	activeToolCancels := make(map[int64]context.CancelFunc)
+	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
 		pw := gitBodyWriters[id]
@@ -220,6 +225,12 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 					},
 				},
 			})
+			continue
+		}
+		if req.Method == "gateway/registered" {
+			if onReady != nil {
+				readyOnce.Do(onReady)
+			}
 			continue
 		}
 

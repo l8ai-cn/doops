@@ -130,9 +130,23 @@ type AgentStatus struct {
 	TokenID     string
 	Remote      string
 	Status      string
+	Generation  uint64
 	ConnectedAt time.Time
 	LastSeen    time.Time
 	UpdatedAt   time.Time
+}
+
+type UpgradeOperation struct {
+	ID            string
+	Cluster       string
+	Instance      string
+	Image         string
+	OldGeneration uint64
+	Status        string
+	Phase         string
+	Error         string
+	StartedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type AuditFinish struct {
@@ -224,10 +238,23 @@ func (s *GatewayStore) migrate() error {
 			token_id TEXT NOT NULL DEFAULT '',
 			remote TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'offline',
+			generation INTEGER NOT NULL DEFAULT 0,
 			connected_at TEXT NOT NULL DEFAULT '',
 			last_seen TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY(cluster, instance)
+		)`,
+		`CREATE TABLE IF NOT EXISTS upgrade_operations (
+			id TEXT PRIMARY KEY,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			image TEXT NOT NULL,
+			old_generation INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			phase TEXT NOT NULL,
+			error TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -301,6 +328,9 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("git_repos", "password_ciphertext", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("agent_status", "generation", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	return nil
@@ -615,42 +645,52 @@ func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 		agent.LastSeen = now
 	}
 	_, err := s.db.Exec(`INSERT INTO agent_status
-		(cluster, instance, token_id, remote, status, connected_at, last_seen, updated_at)
-		VALUES (?, ?, ?, ?, 'online', ?, ?, ?)
+		(cluster, instance, token_id, remote, status, generation, connected_at, last_seen, updated_at)
+		VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?)
 		ON CONFLICT(cluster, instance) DO UPDATE SET
 			token_id = excluded.token_id,
 			remote = excluded.remote,
 			status = 'online',
+			generation = excluded.generation,
 			connected_at = excluded.connected_at,
 			last_seen = excluded.last_seen,
 			updated_at = excluded.updated_at`,
-		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote,
+		agent.Cluster, agent.Instance, agent.TokenID, agent.Remote, agent.Generation,
 		formatTime(agent.ConnectedAt.UTC()), formatTime(agent.LastSeen.UTC()), formatTime(now))
 	return err
 }
 
-func (s *GatewayStore) MarkAgentOffline(cluster, instance string) error {
+func (s *GatewayStore) MarkAgentOffline(cluster, instance string, generation uint64) error {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(`UPDATE agent_status
 		SET status = 'offline', updated_at = ?
-		WHERE cluster = ? AND instance = ?`,
-		formatTime(now), cluster, instance)
+		WHERE cluster = ? AND instance = ? AND generation = ?`,
+		formatTime(now), cluster, instance, generation)
 	return err
 }
 
-func (s *GatewayStore) TouchAgent(cluster, instance string, lastSeen time.Time) error {
+func (s *GatewayStore) MarkAllAgentsOffline() error {
+	now := time.Now().UTC()
+	_, err := s.db.Exec(`UPDATE agent_status
+		SET status = 'offline', updated_at = ?
+		WHERE status = 'online'`,
+		formatTime(now))
+	return err
+}
+
+func (s *GatewayStore) TouchAgent(cluster, instance string, generation uint64, lastSeen time.Time) error {
 	if lastSeen.IsZero() {
 		lastSeen = time.Now().UTC()
 	}
 	_, err := s.db.Exec(`UPDATE agent_status
 		SET last_seen = ?, updated_at = ?
-		WHERE cluster = ? AND instance = ?`,
-		formatTime(lastSeen.UTC()), formatTime(time.Now().UTC()), cluster, instance)
+		WHERE cluster = ? AND instance = ? AND generation = ? AND status = 'online'`,
+		formatTime(lastSeen.UTC()), formatTime(time.Now().UTC()), cluster, instance, generation)
 	return err
 }
 
 func (s *GatewayStore) ListAgentStatus() ([]AgentStatus, error) {
-	rows, err := s.db.Query(`SELECT cluster, instance, token_id, remote, status, connected_at, last_seen, updated_at
+	rows, err := s.db.Query(`SELECT cluster, instance, token_id, remote, status, generation, connected_at, last_seen, updated_at
 		FROM agent_status ORDER BY cluster, instance`)
 	if err != nil {
 		return nil, err
@@ -661,7 +701,7 @@ func (s *GatewayStore) ListAgentStatus() ([]AgentStatus, error) {
 		var agent AgentStatus
 		var connected, lastSeen, updated string
 		if err := rows.Scan(&agent.Cluster, &agent.Instance, &agent.TokenID, &agent.Remote,
-			&agent.Status, &connected, &lastSeen, &updated); err != nil {
+			&agent.Status, &agent.Generation, &connected, &lastSeen, &updated); err != nil {
 			return nil, err
 		}
 		if connected != "" {
@@ -676,6 +716,79 @@ func (s *GatewayStore) ListAgentStatus() ([]AgentStatus, error) {
 		agents = append(agents, agent)
 	}
 	return agents, rows.Err()
+}
+
+func (s *GatewayStore) CreateUpgradeOperation(op UpgradeOperation) (UpgradeOperation, error) {
+	if strings.TrimSpace(op.Cluster) == "" || strings.TrimSpace(op.Instance) == "" || strings.TrimSpace(op.Image) == "" {
+		return UpgradeOperation{}, fmt.Errorf("cluster, instance and image are required")
+	}
+	now := time.Now().UTC()
+	if op.ID == "" {
+		op.ID = "upg_" + randomHex(12)
+	}
+	if op.Status == "" {
+		op.Status = "running"
+	}
+	if op.Phase == "" {
+		op.Phase = "requesting"
+	}
+	if op.StartedAt.IsZero() {
+		op.StartedAt = now
+	}
+	op.UpdatedAt = now
+	_, err := s.db.Exec(`INSERT INTO upgrade_operations
+		(id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		op.ID, op.Cluster, op.Instance, op.Image, op.OldGeneration, op.Status, op.Phase, op.Error,
+		formatTime(op.StartedAt), formatTime(op.UpdatedAt))
+	return op, err
+}
+
+func (s *GatewayStore) UpdateUpgradeOperation(id, phase, status, errMsg string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(status) == "" {
+		return fmt.Errorf("id, phase and status are required")
+	}
+	_, err := s.db.Exec(`UPDATE upgrade_operations
+		SET phase = ?, status = ?, error = ?, updated_at = ?
+		WHERE id = ?`,
+		phase, status, errMsg, formatTime(time.Now().UTC()), id)
+	return err
+}
+
+func (s *GatewayStore) GetUpgradeOperation(id string) (UpgradeOperation, error) {
+	var op UpgradeOperation
+	var started, updated string
+	err := s.db.QueryRow(`SELECT id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at
+		FROM upgrade_operations WHERE id = ?`, id).
+		Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.Status, &op.Phase, &op.Error, &started, &updated)
+	if err != nil {
+		return UpgradeOperation{}, err
+	}
+	op.StartedAt, _ = parseTime(started)
+	op.UpdatedAt, _ = parseTime(updated)
+	return op, nil
+}
+
+func (s *GatewayStore) ListRunningUpgradeOperations() ([]UpgradeOperation, error) {
+	rows, err := s.db.Query(`SELECT id, cluster, instance, image, old_generation, status, phase, error, started_at, updated_at
+		FROM upgrade_operations WHERE status = 'running' ORDER BY started_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var operations []UpgradeOperation
+	for rows.Next() {
+		var op UpgradeOperation
+		var started, updated string
+		if err := rows.Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration,
+			&op.Status, &op.Phase, &op.Error, &started, &updated); err != nil {
+			return nil, err
+		}
+		op.StartedAt, _ = parseTime(started)
+		op.UpdatedAt, _ = parseTime(updated)
+		operations = append(operations, op)
+	}
+	return operations, rows.Err()
 }
 
 func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {

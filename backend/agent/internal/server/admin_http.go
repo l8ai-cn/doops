@@ -227,7 +227,7 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		info := instanceInfo{
 			Cluster:     st.Cluster,
 			Instance:    st.Instance,
-			Status:      st.Status,
+			Status:      "offline",
 			Remote:      st.Remote,
 			ConnectedAt: st.ConnectedAt,
 			LastSeen:    st.LastSeen,
