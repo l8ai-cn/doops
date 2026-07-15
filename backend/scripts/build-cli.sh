@@ -25,7 +25,7 @@ EOF
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLI_DIR="${REPO_ROOT}/skills/doops-cli"
 DEFAULT_OUT="${DOOPS_CLI_OUT:-${REPO_ROOT}/bin/doops}"
-RELEASE_DIR="${CLI_DIR}/bin"
+RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${CLI_DIR}/bin}"
 BUILD_ALL=false
 
 while [[ $# -gt 0 ]]; do
@@ -55,7 +55,7 @@ build_one() {
   (
     cd "${CLI_DIR}"
     CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-      go build -trimpath -ldflags="-s -w" -o "${out}" ./cli/doops/
+      go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${out}" ./cli/doops/
   )
 
   chmod +x "${out}"
@@ -74,4 +74,9 @@ if [[ "${BUILD_ALL}" == "true" ]]; then
   build_one "darwin" "arm64" "${RELEASE_DIR}/doops-darwin-arm64"
   build_one "linux" "amd64" "${RELEASE_DIR}/doops-linux-amd64"
   build_one "linux" "arm64" "${RELEASE_DIR}/doops-linux-arm64"
+  (
+    cd "${RELEASE_DIR}"
+    shasum -a 256 doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 > checksums.txt
+  )
+  echo "Checksums: ${RELEASE_DIR}/checksums.txt"
 fi

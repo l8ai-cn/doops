@@ -128,13 +128,20 @@ def test_bootstrap_job_uses_candidate_image_and_runs_helm_after_adoption():
     ]
 
 
-def test_bootstrap_job_with_generate_name_is_created_not_applied():
+def test_deployment_doc_excludes_manual_bootstrap_commands():
     deployment_doc = (
         ROOT / "deploy" / "docs" / "oilan-doops-agent.md"
     ).read_text(encoding="utf-8")
 
-    assert "kubectl create -f -" in deployment_doc
-    assert "kubectl apply -f -" not in deployment_doc
+    assert "doops cicd run" in deployment_doc
+    for forbidden in (
+        "kubectl create -f -",
+        "kubectl apply -f -",
+        "cicd submit",
+        "DOOPS_CICD_PLAN_SIGNING_KEY",
+        "Ed25519",
+    ):
+        assert forbidden not in deployment_doc
 
 
 def test_bootstrap_workflow_is_a_v2_deployment_template_without_commands():
@@ -146,6 +153,8 @@ def test_bootstrap_workflow_is_a_v2_deployment_template_without_commands():
     assert workflow["spec"]["plan"]["target"]["environment"] == "oilan"
     assert workflow["spec"]["plan"]["desiredState"]["delivery"] == "bootstrap-helm-agent"
     assert workflow["spec"]["plan"]["desiredState"]["configurationSource"] == "backend/deploy/environments.yaml"
+    assert workflow["spec"]["plan"]["policy"]["maxAttempts"] == 3
+    assert workflow["spec"]["plan"]["policy"]["maxNoProgress"] == 1
     assert registry["environments"]["oilan"]["target"] == "gw-oilan-node"
     assert registry["environments"]["oilan"]["chart"] == "backend/deploy/helm/doops-agent"
     assert registry["environments"]["oilan"]["values"] == "backend/deploy/environments/oilan-values.yaml"

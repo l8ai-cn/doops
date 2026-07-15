@@ -61,6 +61,11 @@ doops -session oilan-agent-bootstrap cicd run \
   --set reason=agent-bootstrap
 ```
 
+The command creates a resolved `DeploymentPlan`, synchronizes the repository,
+then asks doagent to reconcile it. A textual completion is not evidence:
+completion requires a plan-matching `ReconciliationResult` with the declaration's
+required evidence.
+
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。
 2. 在目标 Agent 的 BuildKit 中构建并推送 `doops.sh/base-light:<release>` 与 `doops.sh:<release>`。

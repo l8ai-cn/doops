@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -48,6 +47,8 @@ spec:
       mutation: require-explicit-approval
       convergence: until-verified
       failureMode: restore-last-known-good
+      maxAttempts: 3
+      maxNoProgress: 1
 `), 0o644); err != nil {
 		t.Fatalf("write template: %v", err)
 	}
@@ -125,11 +126,10 @@ spec:
 	if plan.Digest == "" || !strings.HasPrefix(plan.Digest, "sha256:") {
 		t.Fatalf("expected immutable plan digest, got %q", plan.Digest)
 	}
-	if err := attestDeploymentPlan(&plan, ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))); err != nil {
-		t.Fatalf("attest plan: %v", err)
-	}
-	if plan.Attestation == nil || plan.Attestation.PlanDigest != plan.Digest || plan.Attestation.Signature == "" {
-		t.Fatalf("expected signed deployment plan attestation, got %#v", plan.Attestation)
+	for _, field := range []string{"attestation", "signature", "signingKey"} {
+		if strings.Contains(string(encoded), `"`+field+`"`) {
+			t.Fatalf("encoded plan must not contain %q: %s", field, encoded)
+		}
 	}
 }
 
@@ -208,6 +208,8 @@ spec:
       mutation: require-explicit-approval
       convergence: until-verified
       failureMode: restore-last-known-good
+      maxAttempts: 3
+      maxNoProgress: 1
 `), 0o644); err != nil {
 		t.Fatalf("write template: %v", err)
 	}
@@ -460,9 +462,11 @@ func TestDeploymentPlanRejectsMismatchedConfiguredGatewayTarget(t *testing.T) {
 				RequiredFailureEvidence: []string{"rollback-state"},
 			},
 			Policy: CICDDeploymentPolicy{
-				Mutation:    deploymentMutationGate,
-				Convergence: deploymentConvergence,
-				FailureMode: deploymentFailureMode,
+				Mutation:      deploymentMutationGate,
+				Convergence:   deploymentConvergence,
+				FailureMode:   deploymentFailureMode,
+				MaxAttempts:   3,
+				MaxNoProgress: 1,
 			},
 		},
 	}

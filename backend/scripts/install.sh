@@ -88,7 +88,7 @@ detect_host_platform() {
 }
 
 install_cli() {
-  local platform prebuilt
+  local platform prebuilt checksums expected actual
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -99,10 +99,25 @@ EOF
     exit 1
   fi
   prebuilt="${REPO_ROOT}/skills/doops-cli/bin/doops-${platform}"
+  checksums="${REPO_ROOT}/skills/doops-cli/bin/checksums.txt"
 
   mkdir -p "$(dirname "${CLI_OUT}")"
 
   if [[ -f "${prebuilt}" ]]; then
+    if [[ ! -f "${checksums}" ]]; then
+      echo "Prebuilt checksum manifest not found: ${checksums}" >&2
+      exit 1
+    fi
+    expected="$(awk -v file="$(basename "${prebuilt}")" '$2 == file { print $1 }' "${checksums}")"
+    if [[ -z "${expected}" ]]; then
+      echo "Prebuilt checksum is missing for $(basename "${prebuilt}")" >&2
+      exit 1
+    fi
+    actual="$(shasum -a 256 "${prebuilt}" | awk '{print $1}')"
+    if [[ "${actual}" != "${expected}" ]]; then
+      echo "Prebuilt checksum mismatch for ${prebuilt}" >&2
+      exit 1
+    fi
     cp "${prebuilt}" "${CLI_OUT}"
     chmod +x "${CLI_OUT}"
     echo "  CLI installed from prebuilt artifact: ${prebuilt}"

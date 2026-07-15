@@ -62,10 +62,11 @@ type KubectlParams struct {
 
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。
 type AgentPromptParams struct {
-	SessionID   string `json:"session_id"`
-	Instruction string `json:"instruction"`
-	Model       string `json:"model,omitempty"`
-	Mode        string `json:"mode,omitempty"`
+	SessionID      string `json:"session_id"`
+	Instruction    string `json:"instruction"`
+	Model          string `json:"model,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
 }
 
 // GitCloneParams clones a configured repository into a session workspace.

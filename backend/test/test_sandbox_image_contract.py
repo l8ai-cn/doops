@@ -151,6 +151,7 @@ def test_doops_cicd_is_the_only_agent_release_definition():
     assert "kind: DeploymentTemplate" in workflow
     assert "stages:" not in workflow
     assert "requiredCommand:" not in workflow
+    assert "cicd submit" not in workflow
 
 
 def test_legacy_manual_agent_deploy_script_is_removed():

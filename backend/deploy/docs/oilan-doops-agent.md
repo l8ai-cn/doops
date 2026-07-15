@@ -36,9 +36,12 @@ behavior versioned.
 `doops cicd run` resolves a `DeploymentPlan` from the declaration, synchronizes
 the repository to `/root/ws/<session>`, then invokes Ask. doagent is the sole
 executor: it interprets the resolved target profile and artifact contract,
-reaches the declared desired state, and verifies every `requiredEvidence` item.
+reaches the declared desired state, and returns one
+`ReconciliationResult`. The CLI accepts the release only after its digest,
+attempt bounds, and every `requiredEvidence` item validate against the plan.
 
 On failure, doagent preserves the failure evidence, restores the last known good
-revision, and reports the blocking fact. There is no manual Helm, kubectl, SSH,
-shell-script, CNB, or dedicated CI/CD RPC release procedure for this
-environment.
+revision, and reports `blocked` or `failed` with every
+`requiredFailureEvidence` item. There is no manual Helm, kubectl, SSH,
+shell-script, CNB, signing key, or dedicated CI/CD RPC release procedure for
+this environment.
