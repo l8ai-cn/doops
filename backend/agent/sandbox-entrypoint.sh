@@ -3,16 +3,108 @@ set -euo pipefail
 
 PIDS_TO_CLEANUP=()
 cleanup() {
-    for pid in "${PIDS_TO_CLEANUP[@]}"; do
+    for pid in "${PIDS_TO_CLEANUP[@]-}"; do
         [ -n "$pid" ] || continue
         kill "$pid" 2>/dev/null || true
     done
 }
-trap cleanup EXIT INT TERM
+
+exit_on_signal() {
+    local status="$1"
+    trap - EXIT INT TERM
+    cleanup
+    exit "${status}"
+}
+
+trap cleanup EXIT
+trap 'exit_on_signal 130' INT
+trap 'exit_on_signal 143' TERM
 
 start_background() {
     "$@" &
     PIDS_TO_CLEANUP+=("$!")
+}
+
+flag_value() {
+    local flag="$1"
+    local fallback="$2"
+    shift 2
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            "$flag")
+                if [ "$#" -lt 2 ]; then
+                    echo "❌ missing value for ${flag}" >&2
+                    return 1
+                fi
+                printf '%s\n' "$2"
+                return 0
+                ;;
+            "$flag="*)
+                printf '%s\n' "${1#*=}"
+                return 0
+                ;;
+        esac
+        shift
+    done
+
+    printf '%s\n' "${fallback}"
+}
+
+tcp_ports_available() {
+    python3 - "$@" <<'PY'
+import errno
+import socket
+import sys
+
+sockets = []
+
+try:
+    for endpoint in sys.argv[1:]:
+        host, separator, raw_port = endpoint.rpartition(":")
+        if not separator or not host:
+            print(f"invalid TCP endpoint: {endpoint}", file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            port = int(raw_port)
+        except ValueError:
+            print(f"invalid TCP endpoint: {endpoint}", file=sys.stderr)
+            raise SystemExit(2)
+        probe = socket.socket()
+        probe.bind((host, port))
+        sockets.append(probe)
+except OSError as exc:
+    if exc.errno == errno.EADDRINUSE:
+        raise SystemExit(1)
+    print(f"cannot bind TCP endpoint: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+finally:
+    for probe in sockets:
+        probe.close()
+PY
+}
+
+wait_for_tcp_ports_free() {
+    local timeout="$1"
+    shift
+    local deadline=$((SECONDS + timeout))
+    local status
+
+    while true; do
+        if tcp_ports_available "$@"; then
+            return 0
+        else
+            status=$?
+        fi
+        if [ "${status}" -ne 1 ]; then
+            return "${status}"
+        fi
+        if [ "${SECONDS}" -ge "${deadline}" ]; then
+            echo "TCP ports are still in use: $*" >&2
+            return 1
+        fi
+        sleep 0.5
+    done
 }
 
 start_sandbox_services() {
@@ -89,16 +181,29 @@ configure_doagent() {
 }
 
 start_doagent() {
-    DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
     mkdir -p /root/ws
     echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
     start_background /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws
-    sleep 2
-    if kill -0 "${PIDS_TO_CLEANUP[-1]}" 2>/dev/null; then
-        echo "✅ doagent started (PID=${PIDS_TO_CLEANUP[-1]}, port=${DO_AGENT_PORT})"
-    else
-        echo "⚠️  doagent failed to start, doops_agent_prompt will not work"
-    fi
+    local doagent_pid="${PIDS_TO_CLEANUP[-1]}"
+    for _ in $(seq 1 30); do
+        if ! kill -0 "${doagent_pid}" 2>/dev/null; then
+            echo "❌ doagent exited before becoming healthy" >&2
+            return 1
+        fi
+        if curl -fsS --max-time 1 "http://127.0.0.1:${DO_AGENT_PORT}/health" \
+            >/dev/null 2>&1; then
+            if ! kill -0 "${doagent_pid}" 2>/dev/null; then
+                echo "❌ doagent exited before becoming healthy" >&2
+                return 1
+            fi
+            echo "✅ doagent started (PID=${doagent_pid}, port=${DO_AGENT_PORT})"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    echo "❌ doagent did not become healthy" >&2
+    return 1
 }
 
 start_buildkit() {
@@ -116,10 +221,15 @@ start_buildkit() {
     fi
 }
 
+DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
+DOOPS_LISTEN="$(flag_value -listen 0.0.0.0 "$@")"
+DOOPS_PORT="$(flag_value -port 42222 "$@")"
+
 start_sandbox_services
 configure_kubectl
 sync_skills
 configure_doagent
+wait_for_tcp_ports_free 120 "0.0.0.0:${DO_AGENT_PORT}" "${DOOPS_LISTEN}:${DOOPS_PORT}"
 start_doagent
 start_buildkit
 

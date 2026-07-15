@@ -64,16 +64,39 @@ spec:
               containerPort: 42222
               hostPort: 42222
               protocol: TCP
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health >/dev/null
+            failureThreshold: 40
+            periodSeconds: 5
+            timeoutSeconds: 2
           readinessProbe:
-            tcpSocket:
-              port: api
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health >/dev/null
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 2
           livenessProbe:
-            tcpSocket:
-              port: api
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health >/dev/null
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 2
           volumeMounts:
 {{ toYaml .Values.volumeMounts | indent 12 }}
       volumes:

@@ -104,6 +104,8 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 `doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`；每个环境通过独立 values 文件声明镜像、目标节点、挂载、Secret 与 gateway TLS 地址。禁止直接 `kubectl set image`、`kubectl rollout restart` 或从节点 SSH 更新运行中的 Agent。
 
+`hostNetwork` 更新必须等待旧实例释放 DoAgent 和 DoOps 监听端口。容器入口使用同一个 120 秒窗口等待两个端口；Chart 的 `startupProbe` 必须覆盖至少 200 秒，并同时验证当前容器内的 DoOps 进程和本地 health，避免误连宿主网络中的旧实例。DoAgent 未启动或健康检查失败时容器必须直接失败，不能只打印警告后继续。发布验收必须确认稳定窗口后的容器重启数仍为 0。
+
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
 

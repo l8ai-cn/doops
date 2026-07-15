@@ -1,4 +1,8 @@
 import re
+import signal
+import socket
+import subprocess
+import time
 from pathlib import Path
 
 
@@ -30,6 +34,16 @@ def top_level_block(text: str, key: str) -> str:
         if pos != -1:
             end = min(end, pos + 1)
     return text[start:end]
+
+
+def shell_function(text: str, name: str) -> str:
+    match = re.search(
+        rf"^{re.escape(name)}\(\) \{{\n.*?^\}}\n",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"missing shell function: {name}"
+    return match.group(0)
 
 
 def test_sandbox_dockerfile_is_light_update_layer_with_runtime_gates():
@@ -76,6 +90,136 @@ def test_sandbox_entrypoint_starts_doagent_buildkit_and_gateway():
     assert "start_background /usr/local/bin/entrypoint.sh" not in entrypoint
     assert "elif [ -x /usr/local/bin/entrypoint.sh ]" not in entrypoint
     assert "https://api.example.com/v1" not in entrypoint
+
+
+def test_sandbox_entrypoint_waits_for_ports_and_fails_closed():
+    entrypoint = read("agent/sandbox-entrypoint.sh")
+
+    assert 'DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"' in entrypoint
+    assert 'DOOPS_LISTEN="$(flag_value -listen 0.0.0.0 "$@")"' in entrypoint
+    assert 'DOOPS_PORT="$(flag_value -port 42222 "$@")"' in entrypoint
+    wait_call = (
+        'wait_for_tcp_ports_free 120 "0.0.0.0:${DO_AGENT_PORT}" '
+        '"${DOOPS_LISTEN}:${DOOPS_PORT}"'
+    )
+    assert wait_call in entrypoint
+    assert entrypoint.count("wait_for_tcp_ports_free ") == 1
+    assert entrypoint.index(
+        wait_call
+    ) < entrypoint.index("\nstart_doagent\n")
+    assert "doagent failed to start, doops_agent_prompt will not work" not in entrypoint
+    assert "doagent exited before becoming healthy" in entrypoint
+
+
+def test_port_waiter_rejects_an_occupied_port_and_accepts_a_free_port():
+    entrypoint = read("agent/sandbox-entrypoint.sh")
+    functions = "\n".join(
+        [
+            shell_function(entrypoint, "tcp_ports_available"),
+            shell_function(entrypoint, "wait_for_tcp_ports_free"),
+        ]
+    )
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+
+    occupied = subprocess.run(
+        ["bash"],
+        input=f"{functions}\nwait_for_tcp_ports_free 1 127.0.0.1:{port}\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    listener.close()
+
+    assert occupied.returncode != 0
+    assert "still in use" in occupied.stderr
+
+    free = subprocess.run(
+        ["bash"],
+        input=f"{functions}\nwait_for_tcp_ports_free 1 127.0.0.1:{port}\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert free.returncode == 0, free.stderr
+
+
+def test_port_waiter_is_interruptible_during_port_handoff():
+    entrypoint = read("agent/sandbox-entrypoint.sh")
+    preamble = entrypoint.split("start_sandbox_services() {", 1)[0]
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    process = subprocess.Popen(
+        ["bash"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdin is not None
+    process.stdin.write(
+        f"{preamble}\n"
+        f"wait_for_tcp_ports_free 120 127.0.0.1:{port}\n"
+    )
+    process.stdin.close()
+
+    time.sleep(0.5)
+    started = time.monotonic()
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=3)
+    elapsed = time.monotonic() - started
+    listener.close()
+
+    assert process.returncode == 143
+    assert elapsed < 1.5
+
+
+def test_port_waiter_rejects_an_invalid_endpoint_without_waiting():
+    entrypoint = read("agent/sandbox-entrypoint.sh")
+    functions = "\n".join(
+        [
+            shell_function(entrypoint, "tcp_ports_available"),
+            shell_function(entrypoint, "wait_for_tcp_ports_free"),
+        ]
+    )
+
+    invalid = subprocess.run(
+        ["bash"],
+        input=f"{functions}\nwait_for_tcp_ports_free 120 127.0.0.1:not-a-port\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=3,
+    )
+
+    assert invalid.returncode == 2
+    assert "invalid TCP endpoint" in invalid.stderr
+
+
+def test_agent_deployment_has_a_startup_probe_for_host_port_handoff():
+    deployment = read("deploy/helm/doops-agent/templates/deployment.yaml")
+
+    assert "startupProbe:" in deployment
+    startup_probe = deployment.split("startupProbe:", 1)[1].split(
+        "readinessProbe:", 1
+    )[0]
+    assert "exec:" in startup_probe
+    assert "pgrep -fc" in startup_probe
+    assert "curl -fsS --max-time 1 http://127.0.0.1:42222/health" in startup_probe
+    assert "failureThreshold: 40" in startup_probe
+    assert "periodSeconds: 5" in startup_probe
+    assert "tcpSocket:" not in deployment
+    assert deployment.count("pgrep -fc") == 3
+    assert deployment.count(
+        "curl -fsS --max-time 1 http://127.0.0.1:42222/health"
+    ) == 3
 
 
 def test_agent_entrypoints_do_not_require_registry_auth_for_public_images():
