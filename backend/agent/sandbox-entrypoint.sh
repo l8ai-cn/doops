@@ -156,12 +156,29 @@ sync_skills() {
 
 configure_kubectl() {
     mkdir -p /root/.kube
-    if [ -f /root/.kube/config ]; then
-        echo "✅ kubectl config: using volume-mounted /root/.kube/config"
-    else
+    local source=/root/.kube/config
+    if [ ! -f "${source}" ]; then
+        if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+            echo "❌ kubectl config: ${source} is required in Kubernetes" >&2
+            return 1
+        fi
         echo "⚠️  kubectl config: /root/.kube/config not found"
+        export KUBECONFIG="${source}"
+        return
     fi
-    export KUBECONFIG=/root/.kube/config
+    if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+        local runtime=/tmp/doops-kubeconfig
+        python3 /app/configure_kubeconfig.py \
+            "${source}" \
+            "${runtime}" \
+            "${KUBERNETES_SERVICE_HOST}" \
+            "${KUBERNETES_SERVICE_PORT_HTTPS:-443}"
+        export KUBECONFIG="${runtime}"
+        echo "✅ kubectl config: bound current admin context to the in-cluster API"
+        return
+    fi
+    export KUBECONFIG="${source}"
+    echo "✅ kubectl config: using volume-mounted /root/.kube/config"
 }
 
 configure_doagent() {

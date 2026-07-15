@@ -25,6 +25,7 @@ COPY --from=builder /app/agent/skills /app/skills
 COPY --from=builder /app/agent/agent-entrypoint.sh /app/agent-entrypoint.sh
 COPY --from=builder /app/agent/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh
 COPY --from=builder /app/agent/configure_doagent_settings.py /app/configure_doagent_settings.py
+COPY --from=builder /app/agent/configure_kubeconfig.py /app/configure_kubeconfig.py
 COPY --from=builder /app/deploy /app/deploy
 COPY --from=builder /app/README.md /app/self-docs/README.md
 COPY --from=builder /app/docs /app/self-docs/docs

@@ -12,6 +12,8 @@ CHART = ROOT / "deploy" / "helm" / "doops-agent"
 VALUES = ROOT / "deploy" / "environments" / "oilan-values.yaml"
 REGISTRY = ROOT / "deploy" / "environments.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
+KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
+SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
 IMAGE_DIGEST = "sha256:" + ("b" * 64)
 
 
@@ -67,6 +69,17 @@ def load_settings_module():
     return module
 
 
+def load_kubeconfig_module():
+    spec = importlib.util.spec_from_file_location(
+        "configure_kubeconfig",
+        KUBECONFIG_MODULE,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_oilan_agent_model_settings_are_secret_backed():
     deployment = render_oilan_chart()
     container = deployment["spec"]["template"]["spec"]["containers"][0]
@@ -100,6 +113,7 @@ def test_oilan_agent_model_settings_are_secret_backed():
     )
     assert '-listen "0.0.0.0"' in container["command"][-1]
     assert '-agent-token "$DOOPS_GATEWAY_AGENT_TOKEN"' in container["command"][-1]
+    assert "/app/configure_kubeconfig.py" in SANDBOX_ENTRYPOINT.read_text()
     probes = {
         name: container[name]["exec"]["command"][-1]
         for name in ("startupProbe", "readinessProbe", "livenessProbe")
@@ -136,6 +150,61 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
+
+
+def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(
+    tmp_path,
+):
+    module = load_kubeconfig_module()
+    source = tmp_path / "admin.conf"
+    destination = tmp_path / "runtime.conf"
+    source.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": "admin@cluster",
+                "contexts": [
+                    {
+                        "name": "admin@cluster",
+                        "context": {"cluster": "cluster", "user": "admin"},
+                    }
+                ],
+                "clusters": [
+                    {
+                        "name": "cluster",
+                        "cluster": {
+                            "server": "https://apiserver.cluster.local:6443",
+                            "certificate-authority-data": "certificate",
+                        },
+                    }
+                ],
+                "users": [
+                    {
+                        "name": "admin",
+                        "user": {
+                            "client-certificate-data": "client-certificate",
+                            "client-key-data": "client-key",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    module.configure_kubeconfig(
+        source,
+        destination,
+        "10.96.0.1",
+        "443",
+    )
+
+    runtime = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert runtime["clusters"][0]["cluster"]["server"] == "https://10.96.0.1:443"
+    assert runtime["contexts"][0]["context"]["user"] == "admin"
+    assert runtime["users"][0]["user"]["client-key-data"] == "client-key"
+    assert destination.stat().st_mode & 0o777 == 0o600
 
 
 def test_oilan_agent_chart_rejects_invalid_image_references():
