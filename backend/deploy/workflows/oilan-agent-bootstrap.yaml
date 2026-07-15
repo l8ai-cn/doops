@@ -10,7 +10,7 @@ spec:
   application: doops-agent
   release:
     source:
-      repository: https://github.com/l8ai-cn/doops.git
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
       revision: ${inputs.releaseId}
       branch: main
   environment: oilan

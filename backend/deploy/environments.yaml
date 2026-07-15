@@ -1,7 +1,7 @@
 artifactContract:
   type: image-set
   sourceRegistry: docker.cnb.cool/l8ai/ai
-  sourceRepository: https://github.com/l8ai-cn/doops.git
+  sourceRepository: https://cnb.cool/l8ai/ai/doops.sh.git
   sourceBranch: main
   services:
     - doops-agent
@@ -35,7 +35,7 @@ environments:
         workload: deployment/doops-agent-live
         container: doops-agent
         registry: docker.cnb.cool/l8ai/ai
-        releaseManifestRepository: https://github.com/l8ai-cn/doops.git
+        releaseManifestRepository: https://cnb.cool/l8ai/ai/doops.sh.git
         chart: backend/deploy/helm/doops-agent
         values: backend/deploy/environments/oilan-values.yaml
         imageBindings:
