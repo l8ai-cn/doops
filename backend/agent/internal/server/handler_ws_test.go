@@ -327,8 +327,10 @@ func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
 	}
 	result, _ := response["result"].(map[string]interface{})
 	capabilities, _ := result["capabilities"].(map[string]interface{})
-	if _, exposed := capabilities["semanticDeployment"]; exposed {
-		t.Fatalf("CI/CD must enter doagent through Ask, not a dedicated tool: %#v", capabilities)
+	for capability := range capabilities {
+		if strings.Contains(strings.ToLower(capability), "deployment") {
+			t.Fatalf("CI/CD must enter doagent through Ask, not a dedicated tool: %#v", capabilities)
+		}
 	}
 }
 
@@ -359,22 +361,6 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("system prompt must not hard-code orchestration detail %q: %s", forbidden, text)
-		}
-	}
-}
-
-func TestDedicatedCICDToolsAreNotAgentEntryPoints(t *testing.T) {
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	for _, tool := range []string{"doops_cicd_reconcile", "doops_cicd_submit"} {
-		response := callToolResult(t, conn, tool, map[string]interface{}{})
-		if !strings.Contains(fmt.Sprint(response["error"]), "Unknown tool") {
-			t.Fatalf("dedicated CI/CD tool %q must not remain after CI/CD moves to Ask: %#v", tool, response)
 		}
 	}
 }

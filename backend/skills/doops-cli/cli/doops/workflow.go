@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,15 +22,14 @@ type WorkspaceSourceIdentity struct {
 const workspaceManifestAPIVersion = "doops.sh/v2"
 
 type workflowCommand struct {
-	File        string
-	Target      string
-	Inputs      map[string]string
-	DryRun      bool
-	AllowMutate bool
+	File   string
+	Target string
+	Inputs map[string]string
+	DryRun bool
 }
 
 type workflowAgentCaller interface {
-	CallAndCapture(toolName string, arguments map[string]interface{}) (string, error)
+	CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error
 }
 
 var pushWorkflowWorkspace = pushWorkspaceSnapshot
@@ -66,7 +66,6 @@ func runCICDCommand(
 	flags.StringVar(&request.Target, "target", "", "configured DoOps target")
 	flags.Var(sets, "set", "workflow input override in key=value form")
 	flags.BoolVar(&request.DryRun, "dry-run", false, "observe without mutation")
-	flags.BoolVar(&request.AllowMutate, "allow-mutate", false, "authorize mutation")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -75,9 +74,6 @@ func runCICDCommand(
 	}
 	if strings.TrimSpace(request.Target) == "" {
 		return fmt.Errorf("-target is required; the CLI must not infer a deployment target")
-	}
-	if request.DryRun == request.AllowMutate {
-		return fmt.Errorf("exactly one of --dry-run or --allow-mutate is required")
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("-session is required for `cicd run`")
@@ -111,18 +107,19 @@ func runCICDCommand(
 		return fmt.Errorf("push workflow workspace returned an invalid commit")
 	}
 
-	executionMode := "dry-run"
-	if request.AllowMutate {
-		executionMode = "apply"
+	executionMode := "apply"
+	operation := "apply"
+	if request.DryRun {
+		executionMode = "dry-run"
+		operation = "ask"
 	}
 	instruction, err := json.Marshal(map[string]interface{}{
-		"task":               "execute-doops-cicd-workflow",
-		"skill":              "$doops-cicd",
-		"executionMode":      executionMode,
-		"mutationAuthorized": request.AllowMutate,
-		"workflowPath":       workflowPath,
-		"workspaceCommit":    workspaceCommit,
-		"inputs":             request.Inputs,
+		"task":            "execute-doops-cicd-workflow",
+		"skill":           "$doops-cicd",
+		"executionMode":   executionMode,
+		"workflowPath":    workflowPath,
+		"workspaceCommit": workspaceCommit,
+		"inputs":          request.Inputs,
 		"resultContract": map[string]interface{}{
 			"apiVersion":      workspaceManifestAPIVersion,
 			"kind":            "DeploymentRun",
@@ -132,15 +129,17 @@ func runCICDCommand(
 	if err != nil {
 		return fmt.Errorf("encode doops-cicd instruction: %w", err)
 	}
-	output, err := client.CallAndCapture("doops_agent_prompt", map[string]interface{}{
+	var result json.RawMessage
+	if err := client.CallStructured("doops_agent_prompt", map[string]interface{}{
 		"instruction":      string(instruction),
 		"response_format":  "json",
+		"operation":        operation,
 		"workspace_commit": workspaceCommit,
-	})
-	if err != nil {
+	}, &result); err != nil {
 		return fmt.Errorf("ask doops-cicd: %w", err)
 	}
-	if err := validateWorkflowResult(output, executionMode); err != nil {
+	output := string(result)
+	if err := validateWorkflowResult(output, executionMode, workspaceCommit); err != nil {
 		return fmt.Errorf("doops-cicd returned invalid execution evidence: %w", err)
 	}
 	if strings.TrimSpace(output) != "" {
@@ -223,16 +222,21 @@ func validWorkspaceCommit(value string) bool {
 	return true
 }
 
-func validateWorkflowResult(output, executionMode string) error {
+func validateWorkflowResult(output, executionMode, workspaceCommit string) error {
 	var result struct {
 		APIVersion string `json:"apiVersion"`
 		Kind       string `json:"kind"`
-		Spec       struct {
+		Metadata   struct {
+			WorkspaceCommit string `json:"workspaceCommit"`
+		} `json:"metadata"`
+		Spec struct {
 			Mode string `json:"mode"`
 		} `json:"spec"`
 		Status struct {
 			Phase         string          `json:"phase"`
 			MutationCount *int            `json:"mutationCount"`
+			ResultDigest  string          `json:"resultDigest"`
+			Capabilities  json.RawMessage `json:"capabilities"`
 			Evidence      json.RawMessage `json:"evidence"`
 		} `json:"status"`
 	}
@@ -246,6 +250,9 @@ func validateWorkflowResult(output, executionMode string) error {
 	}
 	if result.APIVersion != workspaceManifestAPIVersion || result.Kind != "DeploymentRun" {
 		return fmt.Errorf("result must be doops.sh/v2 DeploymentRun")
+	}
+	if result.Metadata.WorkspaceCommit != workspaceCommit {
+		return fmt.Errorf("result workspaceCommit does not match pushed workspace")
 	}
 	if result.Spec.Mode != executionMode {
 		return fmt.Errorf("result mode %q does not match requested mode %q", result.Spec.Mode, executionMode)
@@ -261,21 +268,39 @@ func validateWorkflowResult(output, executionMode string) error {
 	if executionMode == "dry-run" && *result.Status.MutationCount != 0 {
 		return fmt.Errorf("dry-run result must have mutationCount=0")
 	}
+	if !validWorkflowResultDigest(result.Status.ResultDigest) {
+		return fmt.Errorf("result resultDigest must be a sha256 digest")
+	}
+	if len(result.Status.Capabilities) == 0 || string(result.Status.Capabilities) == "null" {
+		return fmt.Errorf("result capabilities snapshot is required")
+	}
+	var capabilities map[string]interface{}
+	if err := json.Unmarshal(result.Status.Capabilities, &capabilities); err != nil {
+		return fmt.Errorf("decode result capabilities: %w", err)
+	}
+	if len(capabilities) == 0 {
+		return fmt.Errorf("result capabilities snapshot must not be empty")
+	}
 	if len(result.Status.Evidence) == 0 || string(result.Status.Evidence) == "null" {
 		return fmt.Errorf("result evidence is required")
 	}
 	var evidence []struct {
 		Subject    string          `json:"subject"`
 		Module     string          `json:"module"`
+		ToolCallID string          `json:"toolCallId"`
 		ObservedAt string          `json:"observedAt"`
 		Result     json.RawMessage `json:"result"`
 	}
 	if err := json.Unmarshal(result.Status.Evidence, &evidence); err != nil {
 		return fmt.Errorf("decode result evidence: %w", err)
 	}
+	if len(evidence) == 0 {
+		return fmt.Errorf("result evidence must contain at least one observation or execution fact")
+	}
 	for index, item := range evidence {
 		if strings.TrimSpace(item.Subject) == "" ||
 			strings.TrimSpace(item.Module) == "" ||
+			strings.TrimSpace(item.ToolCallID) == "" ||
 			strings.TrimSpace(item.ObservedAt) == "" ||
 			len(item.Result) == 0 ||
 			string(item.Result) == "null" {
@@ -283,4 +308,13 @@ func validateWorkflowResult(output, executionMode string) error {
 		}
 	}
 	return nil
+}
+
+func validWorkflowResultDigest(value string) bool {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, prefix))
+	return err == nil && len(decoded) == 32
 }

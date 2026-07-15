@@ -305,7 +305,7 @@ doops -session upgrade_20260511 upgrade \
 - gateway 按 `cluster/instance` 和资源键隔离操作；不同 session/workspace 可并发，同一资源互斥。
 - `doops_agent_prompt` 使用普通 `ActionAsk` 和 session 资源锁。CI/CD 先通过
   `doops push` 同步工作区，再由 `$doops-cicd` Skill 在 doagent 中执行；Gateway
-  不再提供 reconciliation 专用权限、metadata 或 workspace admission。
+  不提供发布专用权限、metadata 或 workspace admission。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。

@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type K8SRequest struct {
 	Target  string
 	Payload map[string]interface{}
-	PlanOut string
+}
+
+type k8sCaller interface {
+	Call(toolName string, arguments map[string]interface{}) error
 }
 
 func buildK8SRequest(args []string) (K8SRequest, error) {
@@ -28,7 +30,6 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 	req := K8SRequest{
 		Target:  opts["target"],
 		Payload: map[string]interface{}{},
-		PlanOut: opts["out"],
 	}
 	addString := func(key, value string) {
 		if strings.TrimSpace(value) != "" {
@@ -137,21 +138,6 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		}
 		req.Payload["operation"] = "set-image"
 		req.Payload["resource"] = positional[1]
-	case "plan":
-		if len(positional) < 3 || positional[1] != "deploy-image" {
-			return K8SRequest{}, fmt.Errorf("only plan deploy-image is supported")
-		}
-		if req.PlanOut == "" {
-			return K8SRequest{}, fmt.Errorf("plan requires --out")
-		}
-		req.Payload["operation"] = "plan-set-image"
-		req.Payload["resource"] = positional[2]
-	case "apply-plan":
-		if len(positional) < 2 {
-			return K8SRequest{}, fmt.Errorf("apply-plan requires path")
-		}
-		req.Payload["operation"] = "apply-plan"
-		req.Payload["plan"] = positional[1]
 	default:
 		return K8SRequest{}, fmt.Errorf("unsupported k8s command %q", positional[0])
 	}
@@ -161,41 +147,14 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 	return req, nil
 }
 
-func runK8SRequest(caller k8sCaller, req K8SRequest, now time.Time) (string, error) {
-	operation, _ := req.Payload["operation"].(string)
-	switch operation {
-	case "plan-set-image":
-		if now.IsZero() {
-			now = time.Now()
-		}
-		plan, err := newK8SDeployImagePlan(req, now)
-		if err != nil {
-			return "", err
-		}
-		if err := writeK8SChangePlan(req.PlanOut, plan); err != nil {
-			return "", err
-		}
-		return "wrote " + req.PlanOut, nil
-	case "apply-plan":
-		planPath, _ := req.Payload["plan"].(string)
-		plan, err := readK8SChangePlan(planPath)
-		if err != nil {
-			return "", err
-		}
-		confirm, _ := req.Payload["confirm"].(bool)
-		if err := applyK8SChangePlan(caller, req.Target, plan, confirm); err != nil {
-			return "", err
-		}
-		return "", nil
-	default:
-		if caller == nil {
-			return "", fmt.Errorf("k8s caller is required")
-		}
-		if err := caller.Call("doops_k8s", req.Payload); err != nil {
-			return "", err
-		}
-		return "", nil
+func runK8SRequest(caller k8sCaller, req K8SRequest) (string, error) {
+	if caller == nil {
+		return "", fmt.Errorf("k8s caller is required")
 	}
+	if err := caller.Call("doops_k8s", req.Payload); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 func parseK8SFlags(args []string) (map[string]string, []string, error) {
@@ -208,7 +167,6 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		"tail":      "",
 		"replicas":  "",
 		"timeout":   "",
-		"out":       "",
 		"for":       "",
 		"confirm":   "",
 	}
@@ -216,7 +174,7 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--target", "--namespace", "--container", "--image", "--output", "--tail", "--replicas", "--timeout", "--out", "--for":
+		case "--target", "--namespace", "--container", "--image", "--output", "--tail", "--replicas", "--timeout", "--for":
 			if i+1 >= len(args) {
 				return nil, nil, fmt.Errorf("%s requires a value", arg)
 			}

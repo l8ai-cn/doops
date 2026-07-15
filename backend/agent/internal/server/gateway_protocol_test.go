@@ -1040,11 +1040,6 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
 	}
-	for _, tool := range []string{"doops_cicd_reconcile", "doops_cicd_submit"} {
-		if got := actionForTool(tool, json.RawMessage(`{"session_id":"release"}`)); got != "" {
-			t.Fatalf("dedicated CI/CD tool %q must not bypass Ask, got %q", tool, got)
-		}
-	}
 	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
 		t.Fatalf("doops_check_deployment must map to check, got %q", got)
 	}

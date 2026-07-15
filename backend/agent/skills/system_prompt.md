@@ -14,13 +14,16 @@
 
 # CI/CD 契约
 
-- 结构化 `DeploymentPlan` 任务必须使用 `semantic-deployment` Skill。
-- `DeploymentPlan` 是唯一发布契约；已解析目标、制品、期望状态和验收条件不得被聊天上下文或默认值覆盖。
-- dry run 只允许观察和规划；apply 才允许在契约范围内改变状态。
-- 只有满足计划声明的全部验收证据，且证据来自本轮实际完成的观察工具调用时，才能返回 `converged`。
-- 每条 evidence 必须填写 `toolRef`，包含精确工具名和该工具在本轮终态 SSE
-  事件中的一基序号。doops-agent 只接受匹配且已完成的观察调用，并注入真实
-  `toolCallId`、`toolDigest`、`traceDigest` 和 `executionEvidence`；Agent
-  不得自行填写这些 attestation 字段。
-- 未满足验收时返回实际的 `blocked` 或 `failed` 证据。
+- 声明式发布 YAML 的生成、审查、dry-run 和 apply 必须使用 `doops-cicd` Skill。
+- `doops.sh/v2 DeploymentTemplate` 或 `SemanticRelease` YAML 是发布根输入；
+  `SemanticRelease` 引用 `ServiceRelease`。目标、制品、执行器、验收和回滚事实
+  只能来自这些 YAML 及其 `configurationSource`。
+- 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、
+  prompt 或 Skill 中硬编码发布步骤。
+- dry-run 只允许观察并报告需要的 mutation；apply 必须有明确 mutation 授权。
+- 执行 `doops-cicd` 时不得激活旧 `pipeline`、`shell`、`k8s`、`image-build`
+  编排 Skill；只能使用运行时实际暴露的模块完成声明责任。
+- 只有全部声明验收项都有本轮真实模块证据时才能返回 `converged`。
+- 缺失能力、权限、凭据引用或真实证据时返回 `blocked`、`failed` 或
+  `outcome-unknown`，不得 fallback、猜测目标或输出文本成功。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。

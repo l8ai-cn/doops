@@ -1,9 +1,12 @@
 artifactContract:
   type: image-set
+  sourceRegistry: docker.cnb.cool/l8ai/ai
   sourceRepository: https://github.com/l8ai-cn/doops.git
   sourceBranch: main
   services:
     - doops-agent
+  sourceArtifactNames:
+    doops-agent: doops.sh
   imageTagPattern: "^[0-9a-f]{40}$"
   imageReferenceFormat: repository@digest
 verificationProfiles:
@@ -19,6 +22,7 @@ verificationProfiles:
       - release-manifest
 environments:
   oilan:
+    deploymentPlatform: linux/amd64
     target:
       name: gw-edu-coder
       cluster: doops-edu
@@ -35,7 +39,7 @@ environments:
         chart: backend/deploy/helm/doops-agent
         values: backend/deploy/environments/oilan-values.yaml
         imageBindings:
-          doops-agent: image
+          doops-agent: ""
         healthChecks:
           public:
             - id: gateway-health

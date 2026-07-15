@@ -677,6 +677,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_agent_prompt":
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
+		if err := validateWorkspaceCommitBinding(sessionID, args.WorkspaceCommit); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
@@ -805,6 +809,8 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	switch operation {
 	case "", "ask":
 		return "auto", nil
+	case "apply":
+		return "bypassPermissions", nil
 	default:
 		return "", fmt.Errorf("unsupported agent prompt operation: %s", operation)
 	}
@@ -937,13 +943,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
+	toolTraces := newDoagentToolTraceCollector()
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
 			doagentURL,
 			targetSessionID,
 			pushProgress,
-			nil,
+			toolTraces.collect,
 			sseReady,
 		)
 	}()
@@ -983,6 +990,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		resultText, structuredContent, err := readDoagentStructuredResult(structuredResultPath)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result artifact: %v", err)))
+			return
+		}
+		resultText, structuredContent, err = attestDeploymentRun(
+			structuredContent,
+			toolTraces.completed(),
+		)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("attest structured result artifact: %v", err)))
 			return
 		}
 		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))

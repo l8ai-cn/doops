@@ -28,11 +28,6 @@ Skill 使用带 frontmatter 的 `SKILL.md`。安装位置由 doagent runtime 的
 ---
 name: labelu-release
 description: 验证并协调 LabelU 发布目标
-triggers:
-  keywords: [LabelU, 发布, DeploymentPlan]
-  regex: "LabelU.*发布|DeploymentPlan"
-phase: [analyze, translate, cleanup]
-priority: 100
 max_tokens: 1200
 requires: []
 conflicts: []
@@ -42,11 +37,11 @@ conflicts: []
 
 ## 目标
 
-将输入计划声明的 LabelU release 协调到目标环境，并返回可复查的运行状态证据。
+将输入 workflow 声明的 LabelU release 协调到目标环境，并返回可复查的运行状态证据。
 
 ## 输入边界
 
-- 只接受计划中已经解析的 target、artifact、desired state 和 acceptance。
+- 只接受 workflow 中已经声明的 target、artifact、desired state 和 acceptance。
 - 不根据项目名、域名、目录或历史环境补全目标。
 - 未声明的凭据、环境和 mutation 授权都视为阻塞事实。
 
@@ -64,15 +59,14 @@ conflicts: []
 
 ## 验收
 
-- 只有全部 required evidence 都来自实际观察时才能报告 converged。
-- 每条 evidence 必须用 `toolRef` 指定精确工具名和同名终态 SSE 事件的一基序号；
-  bridge 只接受匹配且已完成的观察调用，并注入真实 `toolCallId` 和对应工具摘要。
+- 只有全部 required evidence 都来自实际模块观察时才能报告 converged。
+- 不把 admission 文本、通用 attestation 或 Agent 自报完成当作 evidence。
 - 缺能力或权限时报告 blocked，并记录具体缺失事实。
 - mutation 后验收失败时，只能使用环境明确声明的可逆恢复能力。
 
 ## 输出
 
-返回调用契约要求的单个结构化对象，不返回 Markdown、命令清单或文本成功声明。
+返回调用契约要求的单个结构化结果，不返回 Markdown、命令清单或文本成功声明。
 ```
 
 ## 编写规则
@@ -102,4 +96,4 @@ Skill 可以引用运行时已经暴露的原子工具，但不应内嵌大段 s
 - 用一个成功场景和至少一个缺权限或缺能力场景验证行为。
 - 确认输出证据来自真实工具观察。
 - 确认 Skill 中没有具体环境坐标、凭据、固定命令序列和隐藏 fallback。
-- CI/CD Skill 还必须通过 `test/test_semantic_cicd_contract.py`。
+- CI/CD Skill 还必须通过 `test/test_doops_cicd_contract.py`。

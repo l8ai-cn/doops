@@ -50,19 +50,18 @@ the Agent does not infer one from historical workload configuration.
 
 # Execution And Verification
 
-`doops cicd run` requires an explicit target and exactly one of `--dry-run` or
-`--allow-mutate`. It synchronizes the repository to `/root/ws/<session>` with
+`doops cicd run` requires an explicit target and `--dry-run`. It synchronizes
+the repository to `/root/ws/<session>` with
 `doops push`, then invokes ordinary Ask with the `$doops-cicd` Skill and the
 resulting workspace commit. The Gateway uses the normal `ActionAsk` permission
-and session resource lock; it has no reconciliation-only admission path.
+and session resource lock.
 
 doagent is the sole Agent executor. It selects existing DoOps modules, observes
-the declared target, and writes a run-local `DeploymentRun` YAML. `planned`,
+the declared target, and writes the Gateway-designated JSON `DeploymentRun`
+artifact. `planned`,
 `converged`, `blocked`, `failed`, and `outcome-unknown` are valid phases.
 `admitted` text, generic attestation, or an Agent claim without structured
 observed data is not evidence. Dry-run mutation count must be zero.
 
 The bridge waits for doagent's authoritative `turn_finished` event and does
-not answer permission requests or synthesize deployment evidence. The
-reconciliation-only Go control plane, `doops_plan` MCP, dedicated CICD tools,
-shell/kubectl/SSH adapters, and manual CNB deployment events are removed.
+not answer permission requests or synthesize deployment evidence.

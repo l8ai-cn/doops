@@ -90,8 +90,8 @@ DeploymentTemplate -> doops push -> Ask -> doagent -> $doops-cicd -> DeploymentR
 ```
 
 CLI 只负责显式 workflow/target、工作区同步和任务信封。doops-agent 不实现
-reconciliation admission、typed tool registry 或 execution attestation；Skill 通过
-现有 DoOps 模块执行并在 session 工作区写入 run-local YAML 结果。
+发布专用 admission、tool registry 或证据注入；Skill 通过现有 DoOps 模块执行并在
+session 工作区写入 Gateway 指定的单一 JSON 结构化结果。
 
 ## 安全原则
 

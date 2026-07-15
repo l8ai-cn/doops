@@ -57,7 +57,8 @@ DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 - doops-agent 不自动回复 `permission.updated`。
 - Skill 选择和多 Agent 调度由 doagent 完成。
 - system prompt 和 Skill 不写死环境命令、target 坐标或固定回滚实现。
-- CI/CD 只使用 `doops.sh/v2` 的 `DeploymentPlan` 与 `ReconciliationResult`。
+- CI/CD 只使用 `doops.sh/v2` 的 `DeploymentTemplate -> doops push -> Ask ->
+  doops-cicd -> DeploymentRun` Agent-native 链路。
 
 ## 工作区与状态
 

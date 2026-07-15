@@ -93,12 +93,14 @@ doops add \\
 
 doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
   -f <DEPLOYMENT_TEMPLATE> \\
+  --target <ENVIRONMENT_TARGET> \\
   --dry-run \\
   --set releaseId="$(git rev-parse HEAD)"
 
 doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
   -f <DEPLOYMENT_TEMPLATE> \\
-  --allow-mutate \\
+  --target <ENVIRONMENT_TARGET> \\
+  --dry-run \\
   --set releaseId="$(git rev-parse HEAD)"`,
       }
     }
@@ -126,7 +128,8 @@ jobs:
             --token "$DOOPS_API_KEY"
           doops -session "release-\${GITHUB_SHA::12}" cicd run \\
             -f <DEPLOYMENT_TEMPLATE> \\
-            --allow-mutate \\
+            --target <ENVIRONMENT_TARGET> \\
+            --dry-run \\
             --set releaseId="$GITHUB_SHA"`,
       }
     }
@@ -146,7 +149,8 @@ jobs:
         --token "$DOOPS_API_KEY"
       doops -session "release-$CI_COMMIT_SHORT_SHA" cicd run \\
         -f <DEPLOYMENT_TEMPLATE> \\
-        --allow-mutate \\
+        --target <ENVIRONMENT_TARGET> \\
+        --dry-run \\
         --set releaseId="$CI_COMMIT_SHA"
   only:
     - main`,
@@ -163,8 +167,8 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线只调用 DoOps v2 声明式发布入口。目标环境、执行器、制品和验收条件由
-          DeploymentTemplate 与环境注册表解析，不能在流水线中另写部署命令。
+          流水线只调用 DoOps v2 声明式入口。目标环境由显式 target 和环境注册表确定，
+          由 doops-cicd Skill 通过 Ask 执行并产出结构化运行证据。
         </p>
       </div>
 
@@ -301,9 +305,9 @@ jobs:
           工作原理
         </h2>
         <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-          <li>CLI 严格解析 DeploymentTemplate 和环境注册表，生成带摘要的 DeploymentPlan。</li>
-          <li>CLI 同步精确代码快照，网关校验 target、权限、工作区提交和资源锁。</li>
-          <li>doagent 协调目标状态，CLI 只接受与计划和真实工具观察绑定的结构化结果。</li>
+          <li>CLI 校验 workflow 和显式 target，同步精确代码快照后通过 Ask 调用 doagent。</li>
+          <li>Gateway 校验权限、工作区提交和 session 资源边界。</li>
+          <li>doagent 执行 doops-cicd Skill，输出 DeploymentRun 和真实模块观察结果。</li>
         </ol>
       </section>
     </div>

@@ -1,8 +1,8 @@
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
-  name: oilan-agent-reconciliation
-  description: Reconcile one immutable Oilan doops agent release
+  name: oilan-agent-release
+  description: Release one immutable Oilan doops agent version
 spec:
   parameters:
     releaseId:

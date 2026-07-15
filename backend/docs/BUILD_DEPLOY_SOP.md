@@ -1,7 +1,7 @@
 # Doops 构建与部署强制规范 (SOP)
 
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
-> 
+>
 > 本地开发机的架构（如 Apple Silicon ARM64）、网络环境（代理/污染）以及未清理的缓存，极易导致打出的 OCI 镜像体积过大、架构错配或携带不安全的凭据。
 > 所有线上与测试环境的 `doops-agent` 镜像，**必须且只能由 `main` 分支的 CNB CI 按标准流程构建、校验并推送。**
 
@@ -56,12 +56,14 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 ```bash
 doops -session oilan-agent-bootstrap cicd run \
   -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
-  --allow-mutate \
+  -target <configured-doops-target> \
+  --dry-run \
   --set releaseId=<main-commit-sha>
 ```
 
 The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill writes a run-local `DeploymentRun` YAML;
+for the `$doops-cicd` Skill. The Skill writes the Gateway-designated JSON
+`DeploymentRun` artifact;
 text such as `admitted` is not evidence, and dry-run mutation count must be zero.
 
 **DoOps Agent 执行顺序：**

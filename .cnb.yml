@@ -60,6 +60,9 @@ main:
               --platform linux/amd64 \
               --build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}" \
               --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
+              --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
+              --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
+              --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
               --label org.opencontainers.image.revision="${CNB_COMMIT}" \
               --label org.opencontainers.image.version="${RELEASE_TAG}" \
               -f backend/Dockerfile.base.light \
@@ -72,6 +75,9 @@ main:
               --platform linux/amd64 \
               --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
               --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
+              --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
+              --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
+              --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
               --label org.opencontainers.image.revision="${CNB_COMMIT}" \
               --label org.opencontainers.image.version="${RELEASE_TAG}" \
               -f backend/Dockerfile \
