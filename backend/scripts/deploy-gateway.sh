@@ -32,7 +32,7 @@ Required local capabilities:
   ssh, scp, curl, jq, sha256sum.
 
 Required remote capabilities:
-  sudo, systemctl, sha256sum, pgrep, curl.
+  sudo, systemctl, sha256sum, pgrep, curl, python3.
 EOF
 }
 
@@ -148,8 +148,10 @@ LOCAL_SHA="$(sha256sum "${LOCAL_BIN}" | awk '{print $1}')"
 DEPLOY_ID="${LOCAL_SHA:0:12}-$$-$(date -u +%Y%m%dT%H%M%SZ)"
 REMOTE_TMP="/tmp/doops-gateway-deploy-${DEPLOY_ID}"
 REMOTE_LOCK="/run/lock/doops-gateway-deploy.lock"
-SSH=(ssh -p "${SSH_PORT}" "${SSH_USER}@${HOST}")
-SCP=(scp -P "${SSH_PORT}")
+SSH_CONTROL_PATH="/tmp/doops-gateway-ssh-${DEPLOY_ID}"
+SSH_OPTIONS=(-o ControlMaster=auto -o ControlPersist=30 -o "ControlPath=${SSH_CONTROL_PATH}")
+SSH=(ssh "${SSH_OPTIONS[@]}" -p "${SSH_PORT}" "${SSH_USER}@${HOST}")
+SCP=(scp "${SSH_OPTIONS[@]}" -P "${SSH_PORT}")
 STATE_DIR="$(mktemp -d)"
 trap 'rm -rf "${STATE_DIR}"' EXIT
 BASELINE_TARGETS="${STATE_DIR}/baseline-targets"
@@ -208,6 +210,7 @@ ls -lh '${DB_PATH}'
 command -v sudo >/dev/null
 command -v systemctl >/dev/null
 command -v sha256sum >/dev/null
+command -v python3 >/dev/null
 sudo -n systemctl is-active --quiet doops-gateway
 sudo -n systemctl cat doops-gateway.service >/dev/null
 "
@@ -289,8 +292,41 @@ if ! {
     grep -q '/etc/doops-gateway.env';
 }; then
   legacy_secret='$(dirname "${DB_PATH}")/gateway.secret'
-  sudo -n test -s \"\$legacy_secret\"
-  secret=\$(sudo -n cat \"\$legacy_secret\")
+  if sudo -n test -s \"\$legacy_secret\"; then
+    secret=\$(sudo -n cat \"\$legacy_secret\")
+  else
+    encrypted_rows=\$(sudo -n python3 -c '
+import sqlite3
+import sys
+
+connection = sqlite3.connect(f\"file:{sys.argv[1]}?mode=ro\", uri=True)
+
+def encrypted_rows(table, column):
+    exists = connection.execute(
+        \"SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?\",
+        (\"table\", table),
+    ).fetchone()
+    if not exists:
+        return 0
+    columns = {row[1] for row in connection.execute(f\"PRAGMA table_info({table})\")}
+    if column not in columns:
+        return 0
+    return connection.execute(
+        f\"SELECT count(*) FROM {table} WHERE {column} <> ?\",
+        (\"\",),
+    ).fetchone()[0]
+
+print(
+    encrypted_rows(\"git_repos\", \"password_ciphertext\")
+    + encrypted_rows(\"credential_versions\", \"payload_ciphertext\")
+)
+' '${DB_PATH}')
+    if [[ \"\$encrypted_rows\" != '0' ]]; then
+      echo 'gateway encrypted data exists but no legacy secret key is available' >&2
+      exit 1
+    fi
+    secret=\$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+  fi
   test -n \"\$secret\"
   printf 'DOOPS_GATEWAY_SECRET_KEY=%s\n' \"\$secret\" |
     sudo -n tee /etc/doops-gateway.env >/dev/null
