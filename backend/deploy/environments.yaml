@@ -21,14 +21,52 @@ verificationProfiles:
       - post-deploy-log-scan
       - release-manifest
 environments:
-  oilan:
+  oilan-release-runner-bootstrap:
     deploymentPlatform: linux/amd64
     target:
       name: gw-edu-coder
       cluster: doops-edu
       instance: edu-coder
+    deploymentTarget:
+      name: gw-edu-release-runner
+      cluster: doops-edu
+      instance: release-runner
     executor:
       type: helm
+      lifecycle: in-process
+      config:
+        namespace: kz-ops
+        release: doops-release-runner
+        workload: deployment/doops-release-runner
+        container: doops-agent
+        registry: docker.cnb.cool/l8ai/ai
+        releaseManifestRepository: https://cnb.cool/l8ai/ai/doops.sh.git
+        chart: backend/deploy/helm/doops-agent
+        values: backend/deploy/environments/oilan-release-runner-values.yaml
+        imageBindings:
+          doops-agent: ""
+        healthChecks:
+          public:
+            - id: gateway-health
+              url: https://doops.l8ai.cn/health
+              expectedStatus: 200
+        authz:
+          appCode: DOOPS
+          environmentCode: OILAN
+    verificationProfile: doops-agent-production
+  oilan:
+    deploymentPlatform: linux/amd64
+    target:
+      name: gw-edu-release-runner
+      cluster: doops-edu
+      instance: release-runner
+    deploymentTarget:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+    executor:
+      type: helm
+      lifecycle: detached-kubernetes-job
       config:
         namespace: kz-ops
         release: doops-agent-live
@@ -38,6 +76,14 @@ environments:
         releaseManifestRepository: https://cnb.cool/l8ai/ai/doops.sh.git
         chart: backend/deploy/helm/doops-agent
         values: backend/deploy/environments/oilan-values.yaml
+        detachedJob:
+          nodeSelector:
+            kubernetes.io/hostname: 192.168.0.24
+          kubeconfigHostPath: /etc/kubernetes/admin.conf
+          agentHomeHostPath: /var/lib/doops-release-runner-home
+          timeout: 10m
+          executorImageRepository: docker.cnb.cool/l8ai/ai/doops.sh
+          executorImageDigest: sha256:7898919c294688a2eb25f4b588ad7b1517ed47f6c4f2094ce97e15407209a1fd
         imageBindings:
           doops-agent: ""
         healthChecks:

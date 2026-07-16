@@ -36,6 +36,21 @@ mentions a responsibility.
 - Execute rollback only when the declaration provides a rollback capability and
   the run has actually mutated state.
 
+## Self-Hosted Agent Release
+
+An executor declaring `lifecycle: detached-kubernetes-job` must run Helm only
+inside the generated Kubernetes Job. The coordinator may create that one Job
+but must not invoke `helm upgrade`, `helm install` or equivalent mutation in
+its own process. The Job uses a separately declared, previously verified
+executor image and passes the immutable candidate digest only to Helm for the
+target workload. It uses the control Agent's declared host paths and exact
+workspace chart, then runs `helm upgrade --install --atomic --wait`. Its active
+deadline must exceed the Helm timeout by the declared rollback buffer. This
+keeps Helm alive while Kubernetes replaces the Agent Pod.
+The workflow's control target must use a different Gateway cluster/instance
+identity from the workload being replaced. If those identities match, stop
+before creating the Job.
+
 ## Shared Release Convergence
 
 For a semantic composition, selected-service artifact resolution, target
@@ -122,6 +137,14 @@ The Gateway supplies a session-local runtime tool call catalog alongside the
 result path. Read that catalog immediately before writing the result. Copy
 `toolCallId` exactly from a completed entry and set `module` exactly to that
 entry's `toolName`; semantic aliases and invented identifiers are invalid.
+Evidence is eligible only when the completed call carries
+`doops.tool-attestation/v1` from the trusted `doops_plan` reconciliation
+context. Generic Bash, filesystem, browser and unattested MCP calls are
+ineligible. An eligible runtime call must output exactly one JSON object shaped
+as `{"subject":"...","observedAt":"...","data":{...}}`. The evidence `result`
+must be that complete object without rewriting. The Gateway canonicalizes and
+compares it to the actual runtime output, and also requires the outer
+`subject` and `observedAt` to match.
 
 `metadata.workspaceCommit` must equal the commit returned by the preceding
 workspace push. The Gateway adds `status.runtimeAttestation` from completed ACP

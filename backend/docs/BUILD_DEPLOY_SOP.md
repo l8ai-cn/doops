@@ -73,6 +73,12 @@ text such as `admitted` is not evidence, and dry-run mutation count must be zero
 4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
 5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
 
+Agent 自身发布必须由独立的稳定 control Agent 执行。Oilan 使用
+`doops-edu/release-runner` 运行 Ask 和 detached Helm Job，被升级对象是
+`doops-edu/edu-coder`。两者的 Gateway cluster/instance identity 不得相同；
+禁止让 `doops-agent-live` 内的 Helm 进程升级其所在 Deployment，否则新 Pod
+接管连接时会终止旧进程并留下 `pending-install`。
+
 ### 双镜像构建原则
 
 发布时维护两类镜像：

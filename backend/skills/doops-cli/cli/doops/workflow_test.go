@@ -186,6 +186,10 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		instruction["workflowPath"] != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" {
 		t.Fatalf("unexpected Skill instruction: %#v", instruction)
 	}
+	runID, _ := instruction["runId"].(string)
+	if !strings.HasPrefix(runID, "release-test-") || runID == "release-test" {
+		t.Fatalf("workflow run id must identify one invocation: %#v", instruction)
+	}
 	credentialRun, ok := instruction["credentialRun"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("credential run is missing from instruction: %#v", instruction)
@@ -223,6 +227,20 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		resultContract["kind"] != "DeploymentRun" ||
 		resultContract["requireEvidence"] != true {
 		t.Fatalf("unexpected structured result contract: %#v", resultContract)
+	}
+}
+
+func TestGenerateWorkflowRunIDIsUniqueWithinOneSession(t *testing.T) {
+	first, err := generateWorkflowRunID("release-test")
+	if err != nil {
+		t.Fatalf("generate first run id: %v", err)
+	}
+	second, err := generateWorkflowRunID("release-test")
+	if err != nil {
+		t.Fatalf("generate second run id: %v", err)
+	}
+	if first == second || !strings.HasPrefix(first, "release-test-") || !strings.HasPrefix(second, "release-test-") {
+		t.Fatalf("run ids must be unique and session-bound: first=%q second=%q", first, second)
 	}
 }
 

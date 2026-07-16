@@ -1117,7 +1117,7 @@ func credentialPayloadAAD(credentialID, versionID string, credentialType Credent
 
 func (s *GatewayStore) canManageCredential(resource CredentialResource, actorID string, action GatewayAction) bool {
 	if resource.Scope == CredentialScopePersonal {
-		return resource.OwnerID == actorID || s.UserHasAction(actorID, action)
+		return resource.OwnerID == actorID
 	}
 	return s.UserHasAction(actorID, action)
 }

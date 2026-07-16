@@ -24,7 +24,14 @@ func TestAgentPromptJSONReturnsResultArtifactInStructuredContent(t *testing.T) {
 	}
 	resultPath := filepath.Join(workspace, ".doops", "structured-result.json")
 	runtimeCallsPath := filepath.Join(workspace, ".doops", "runtime-tool-calls.json")
-	doagent := newJSONAgentPromptTestServer(t, "```json\n{\"ignored\":true}\n```", func(prompt string) {
+	doagent := newJSONAgentPromptTestServer(t, "```json\n{\"ignored\":true}\n```", func(prompt string, params map[string]interface{}) {
+		allowed, ok := params["allowedTools"].([]interface{})
+		if !ok || len(allowed) != 0 {
+			t.Errorf("plain JSON prompt must disable all tools: %#v", params)
+		}
+		if _, ok := params["trustedReconciliationContext"]; ok {
+			t.Errorf("plain JSON prompt must not carry trusted reconciliation context: %#v", params)
+		}
 		if !strings.Contains(prompt, resultPath) {
 			t.Errorf("structured prompt must declare the result artifact path: %s", prompt)
 		}
@@ -46,8 +53,12 @@ func TestAgentPromptJSONReturnsResultArtifactInStructuredContent(t *testing.T) {
 						"module":"doops-source-observer",
 						"toolCallId":"tool-source",
 						"observedAt":"2026-07-15T00:00:00Z",
-					"result":{"revision":"immutable"}
-				}]
+						"result":{
+							"subject":"source",
+							"observedAt":"2026-07-15T00:00:00Z",
+							"data":{"revision":"immutable"}
+						}
+					}]
 			}
 		}`), 0o600); err != nil {
 			t.Fatalf("write structured result: %v", err)
@@ -103,7 +114,7 @@ func TestAgentPromptJSONRejectsEvidenceWithoutCompletedToolCall(t *testing.T) {
 		t.Fatalf("write workspace commit: %v", err)
 	}
 	resultPath := filepath.Join(workspace, ".doops", "structured-result.json")
-	doagent := newJSONAgentPromptTestServer(t, "done", func(string) {
+	doagent := newJSONAgentPromptTestServer(t, "done", func(string, map[string]interface{}) {
 		if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
 			t.Fatalf("create result directory: %v", err)
 		}
@@ -193,6 +204,61 @@ func TestAgentPromptRejectsWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
 	}
 }
 
+func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "instruction-workspace-mismatch"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	workspaceCommit := strings.Repeat("a", 40)
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(workspaceCommit+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace commit: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+		t.Fatalf("create deployment directory: %v", err)
+	}
+	writeTrustedAdmissionFixture(t, workspace)
+	doagentRequests := 0
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doagentRequests++
+		t.Fatalf("instruction workspace mismatch must fail before contacting doagent: %s", r.URL.Path)
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": sessionID,
+		"instruction": `{
+			"task":"execute-doops-cicd-workflow",
+			"skill":"$doops-cicd",
+			"executionMode":"dry-run",
+			"runId":"instruction-workspace-mismatch-0123456789abcdef",
+			"workflowPath":"deploy/release.yaml",
+			"workspaceCommit":"` + strings.Repeat("b", 40) + `",
+			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
+			"credentialRun":{"id":"credrun_123","materializations":[]},
+			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+		}`,
+		"response_format":  "json",
+		"workspace_commit": workspaceCommit,
+	})
+	if result["error"] == nil {
+		t.Fatalf("instruction workspace mismatch must fail: %#v", result)
+	}
+	if doagentRequests != 0 {
+		t.Fatalf("instruction workspace mismatch contacted doagent %d times", doagentRequests)
+	}
+}
+
 func TestAgentPromptJSONRejectsMissingResultArtifact(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
@@ -260,7 +326,7 @@ func TestAgentPromptJSONRejectsUnsupportedResponseFormat(t *testing.T) {
 	}
 }
 
-func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt func(string)) *httptest.Server {
+func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt func(string, map[string]interface{})) *httptest.Server {
 	t.Helper()
 	prompted := make(chan struct{})
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +363,7 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
 				if onPrompt != nil {
-					onPrompt(prompt)
+					onPrompt(prompt, params)
 				}
 				close(prompted)
 				w.WriteHeader(http.StatusAccepted)
@@ -312,7 +378,7 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 			<-prompted
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"in_progress"}}}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"completed","resultText":"{\"revision\":\"immutable\"}"}}}`)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tool-source","toolName":"doops-source-observer","title":"Observe source","status":"completed","content":[{"type":"content","content":{"type":"text","text":"{\"subject\":\"source\",\"observedAt\":\"2026-07-15T00:00:00Z\",\"data\":{\"revision\":\"immutable\"}}"}}],"attestationSchemaVersion":"doops.tool-attestation/v1","contextSchemaVersion":"doops.reconciliation-context/v1","operationId":"op_0123456789abcdef0123456789abcdef","contextDigest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","planDigest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","planBindingDigest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","executionMode":"dry-run","mutationAuthorized":false,"capabilityKey":"source-identity","attestedTool":"ObserveWorkspaceSource","evidenceKind":"source-identity","evidenceSubject":"source","canonicalScope":{"repository":"example"},"scopeDigest":"sha256:5555555555555555555555555555555555555555555555555555555555555555","inputDigest":"sha256:6666666666666666666666666666666666666666666666666666666666666666","resultDigest":"sha256:7777777777777777777777777777777777777777777777777777777777777777"}}}`)
 			fmt.Fprintln(w)
 			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-json","status":"completed","stopReason":"end_turn"}}}`)

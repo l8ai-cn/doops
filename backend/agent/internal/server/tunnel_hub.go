@@ -1102,21 +1102,17 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
 			resultCh <- upgradeResult{replacement: replacement, err: waitErr}
 		}()
-		select {
-		case result := <-resultCh:
-			if result.err != nil {
-				err = result.err
-			} else {
-				err = nil
-				finalStatus = "success"
-				finalErr = ""
-				_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
-					"agent upgrade completed: %s/%s generation %d image %s",
-					cluster, instance, result.replacement.Generation, upgradeOp.Image,
-				)))
-			}
-		case <-opCtx.Done():
-			err = opCtx.Err()
+		result := <-resultCh
+		if result.err != nil {
+			err = result.err
+		} else {
+			err = nil
+			finalStatus = "success"
+			finalErr = ""
+			_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
+				"agent upgrade completed: %s/%s generation %d image %s",
+				cluster, instance, result.replacement.Generation, upgradeOp.Image,
+			)))
 		}
 	} else if waitForUpgradeReplacement && (err != nil || upgradeRejected) {
 		cause := err

@@ -519,6 +519,53 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	}
 }
 
+func TestPlatformCredentialAdministratorCannotManageAnotherUsersPersonalCredential(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	store := openCredentialTestStore(t)
+	owner := createCredentialTestUser(t, store, "owner")
+	operator := createCredentialTestUser(t, store, "operator")
+	deployer := createCredentialTestUser(t, store, "deployer")
+	if err := store.GrantUser(operator.ID, ScopeGrant{
+		Cluster: "*", Instance: "*",
+		Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate, ActionCredentialRevoke},
+	}); err != nil {
+		t.Fatalf("grant credential administration: %v", err)
+	}
+
+	credential, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "personal-registry", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry,
+		OwnerID: owner.ID, CreatedBy: owner.ID,
+	})
+	if err != nil {
+		t.Fatalf("create personal credential: %v", err)
+	}
+	if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: credential.ID,
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"operator","password":"forbidden"}`),
+		CreatedBy:    operator.ID,
+		Activate:     true,
+	}); !errors.Is(err, ErrCredentialForbidden) {
+		t.Fatalf("operator rotate personal credential error = %v, want ErrCredentialForbidden", err)
+	}
+	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+		CredentialID: credential.ID,
+		GranteeID:    deployer.ID,
+		Cluster:      "doops-edu",
+		Instance:     "edu-coder",
+		Project:      "oilan",
+		Environment:  "production",
+		Template:     "oilan-agent-release",
+		Namespace:    "kz-ops",
+		Uses:         []CredentialUse{CredentialUseImagePull},
+		CreatedBy:    operator.ID,
+	}); !errors.Is(err, ErrCredentialForbidden) {
+		t.Fatalf("operator grant personal credential error = %v, want ErrCredentialForbidden", err)
+	}
+	if err := store.RevokeCredential(credential.ID, operator.ID); !errors.Is(err, ErrCredentialForbidden) {
+		t.Fatalf("operator revoke personal credential error = %v, want ErrCredentialForbidden", err)
+	}
+}
+
 func openCredentialTestStore(t *testing.T) *GatewayStore {
 	t.Helper()
 	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))

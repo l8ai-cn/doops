@@ -1,0 +1,24 @@
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: oilan-release-runner-bootstrap
+  description: Bootstrap the stable Oilan release control Agent
+spec:
+  parameters:
+    releaseId:
+      required: true
+  application: doops-release-runner
+  release:
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      revision: ${inputs.releaseId}
+      branch: main
+  environment: oilan-release-runner-bootstrap
+  configurationSource: backend/deploy/environments.yaml
+  credentialRefs:
+    - name: doops-release-runner-runtime
+      use: opaqueSecret
+      namespace: kz-ops
+      workload:
+        kind: Deployment
+        name: doops-release-runner

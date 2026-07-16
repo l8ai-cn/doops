@@ -800,6 +800,29 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
 		}
+		var admission *trustedReconciliationAdmission
+		if args.ResponseFormat == "json" {
+			var instruction struct {
+				Task            string `json:"task"`
+				WorkflowPath    string `json:"workflowPath"`
+				WorkspaceCommit string `json:"workspaceCommit"`
+			}
+			if err := json.Unmarshal([]byte(args.Instruction), &instruction); err == nil &&
+				instruction.Task == "execute-doops-cicd-workflow" &&
+				strings.TrimSpace(instruction.WorkflowPath) != "" &&
+				strings.TrimSpace(instruction.WorkspaceCommit) != "" {
+				built, err := buildTrustedReconciliationAdmission(
+					sessionID,
+					args.Instruction,
+					instruction.WorkspaceCommit,
+				)
+				if err != nil {
+					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+					return
+				}
+				admission = &built
+			}
+		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
 			if args.ResponseFormat != "" {
@@ -835,6 +858,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode: nativeMode,
+				Admission:  admission,
 			},
 			pushProgress,
 			writeJSON,
@@ -968,6 +992,7 @@ func validateDoagentApplyInstruction(instruction string) error {
 
 type agentPromptExecutionContext struct {
 	NativeMode string
+	Admission  *trustedReconciliationAdmission
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1000,10 +1025,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		instr = appendDoagentStructuredResultContract(instr, structuredResultPath, runtimeToolCallsPath)
 	}
 
-	// 查找已有的 doagent session 映射
-	gw.sessionMapMu.RLock()
-	entry := gw.sessionMap[doopsSessionID]
-	gw.sessionMapMu.RUnlock()
+	// Machine-result prompts use a fresh doagent session so their tool trace
+	// catalog and turn_finished boundary cannot include a previous turn.
+	var entry *sessionEntry
+	if responseFormat != "json" {
+		gw.sessionMapMu.RLock()
+		entry = gw.sessionMap[doopsSessionID]
+		gw.sessionMapMu.RUnlock()
+	}
 
 	var targetSessionID string
 	if entry != nil {
@@ -1015,6 +1044,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	// 首次会话：创建 doagent session 并注入系统提示词
 	if targetSessionID == "" {
+		requestedSessionID := doopsSessionID
+		if responseFormat == "json" {
+			requestedSessionID = fmt.Sprintf("%s-json-%d", doopsSessionID, time.Now().UnixNano())
+		}
 		var systemPrompt string
 		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
 		for _, sp := range sysPromptPaths {
@@ -1030,7 +1063,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"id":      "create-" + doopsSessionID,
 			"method":  "session/new",
 			"params": map[string]interface{}{
-				"sessionId":    doopsSessionID,
+				"sessionId":    requestedSessionID,
 				"systemPrompt": systemPrompt,
 				"cwd":          "/root/ws/" + doopsSessionID,
 			},
@@ -1050,12 +1083,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 
-		gw.sessionMapMu.Lock()
-		gw.sessionMap[doopsSessionID] = &sessionEntry{
-			doagentSessionID: targetSessionID,
-			lastUsed:         time.Now(),
+		if responseFormat != "json" {
+			gw.sessionMapMu.Lock()
+			gw.sessionMap[doopsSessionID] = &sessionEntry{
+				doagentSessionID: targetSessionID,
+				lastUsed:         time.Now(),
+			}
+			gw.sessionMapMu.Unlock()
 		}
-		gw.sessionMapMu.Unlock()
 		log.Printf("🔗 Bound Doops Session %s -> doagent Session %s", doopsSessionID, targetSessionID)
 	}
 
@@ -1116,14 +1151,17 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	// session/prompt 的同步响应只代表 admission；终态仍以 SSE turn_finished 为准。
+	promptParams := buildDoagentPromptParams(
+		targetSessionID,
+		instr,
+		execution.Admission,
+		responseFormat == "json",
+	)
 	if _, err := doagentRPC(doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "prompt-" + doopsSessionID,
 		"method":  "session/prompt",
-		"params": map[string]interface{}{
-			"sessionId": targetSessionID,
-			"prompt":    instr,
-		},
+		"params":  promptParams,
 	}); err != nil {
 		sseCancel()
 		<-sseDone

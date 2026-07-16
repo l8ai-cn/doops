@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -124,10 +125,15 @@ func runCICDCommand(
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
 	}
-	instruction, err := json.Marshal(map[string]interface{}{
+	runID, err := generateWorkflowRunID(sessionID)
+	if err != nil {
+		return fmt.Errorf("generate workflow run id: %w", err)
+	}
+	instructionEnvelope := map[string]interface{}{
 		"task":            "execute-doops-cicd-workflow",
 		"skill":           "$doops-cicd",
 		"executionMode":   executionMode,
+		"runId":           runID,
 		"workflowPath":    workflowPath,
 		"workspaceCommit": workspaceCommit,
 		"inputs":          request.Inputs,
@@ -140,17 +146,19 @@ func runCICDCommand(
 			"kind":            "DeploymentRun",
 			"requireEvidence": true,
 		},
-	})
+	}
+	instruction, err := json.Marshal(instructionEnvelope)
 	if err != nil {
 		return fmt.Errorf("encode doops-cicd instruction: %w", err)
 	}
 	var result json.RawMessage
-	if err := client.CallStructured("doops_agent_prompt", map[string]interface{}{
+	callArguments := map[string]interface{}{
 		"instruction":      string(instruction),
 		"response_format":  "json",
 		"operation":        operation,
 		"workspace_commit": workspaceCommit,
-	}, &result); err != nil {
+	}
+	if err := client.CallStructured("doops_agent_prompt", callArguments, &result); err != nil {
 		return fmt.Errorf("ask doops-cicd: %w", err)
 	}
 	output := string(result)
@@ -164,6 +172,14 @@ func runCICDCommand(
 		}
 	}
 	return nil
+}
+
+func generateWorkflowRunID(sessionID string) (string, error) {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(sessionID) + "-" + hex.EncodeToString(random), nil
 }
 
 type workflowSetFlags map[string]string

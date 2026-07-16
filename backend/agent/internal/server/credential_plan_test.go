@@ -67,8 +67,41 @@ environments:
 	}
 }
 
+func TestRepositoryReleaseRunnerBootstrapCredentialPlan(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	plan, err := parseCredentialPlan(
+		repositoryRoot,
+		"backend/deploy/workflows/oilan-release-runner-bootstrap.yaml",
+	)
+	if err != nil {
+		t.Fatalf("parse release runner bootstrap credential plan: %v", err)
+	}
+	if plan.Template != "oilan-release-runner-bootstrap" ||
+		plan.Project != "doops-release-runner" ||
+		plan.Environment != "oilan-release-runner-bootstrap" ||
+		plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" ||
+		plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected release runner bootstrap context: %#v", plan)
+	}
+	if len(plan.CredentialRefs) != 1 {
+		t.Fatalf("credential refs = %#v", plan.CredentialRefs)
+	}
+	ref := plan.CredentialRefs[0]
+	if ref.Name != "doops-release-runner-runtime" ||
+		ref.Use != CredentialUseOpaqueSecret ||
+		ref.Namespace != "kz-ops" ||
+		ref.Workload.Kind != "Deployment" ||
+		ref.Workload.Name != "doops-release-runner" {
+		t.Fatalf("unexpected release runner credential reference: %#v", ref)
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsAtAnyDepth(t *testing.T) {
-	for _, field := range []string{"token", "password", "auth", "data", "stringData"} {
+	for _, field := range []string{
+		"token", "password", "auth", "data", "stringData",
+		"clientSecret", "apiKey", "privateKey", "registryPassword",
+	} {
 		t.Run(field, func(t *testing.T) {
 			root := t.TempDir()
 			writeCredentialPlanTestFile(t, root, "release.yaml", `
@@ -96,6 +129,66 @@ environments:
 				t.Fatalf("inline field %s error = %v, want ErrInlineCredentialMaterial", field, err)
 			}
 		})
+	}
+}
+
+func TestParseCredentialPlanRejectsParameterDefaults(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "release.yaml", `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: release
+spec:
+  application: app
+  environment: production
+  configurationSource: environments.yaml
+  parameters:
+    registryPassword:
+      required: false
+      default: canary-secret
+`)
+	writeCredentialPlanTestFile(t, root, "environments.yaml", `
+environments:
+  production:
+    target:
+      name: target
+      cluster: cluster
+      instance: instance
+`)
+	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrInlineCredentialMaterial) {
+		t.Fatalf("parameter default error = %v, want ErrInlineCredentialMaterial", err)
+	}
+}
+
+func TestParseCredentialPlanRejectsImagePullWithoutWorkload(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "release.yaml", `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: release
+spec:
+  application: app
+  environment: production
+  configurationSource: environments.yaml
+  credentialRefs:
+    - name: registry
+      use: imagePull
+      namespace: app
+      registryRepository: team/app
+      registryReference: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`)
+	writeCredentialPlanTestFile(t, root, "environments.yaml", `
+environments:
+  production:
+    target:
+      name: target
+      cluster: cluster
+      instance: instance
+`)
+	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+		t.Fatalf("imagePull without workload error = %v, want ErrCredentialDeclarationInvalid", err)
 	}
 }
 
@@ -226,6 +319,34 @@ environments:
 `)
 	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
 		t.Fatalf("configuration duplicate YAML error = %v, want ErrCredentialDeclarationInvalid", err)
+	}
+}
+
+func TestParseCredentialPlanRejectsUnknownEnvironmentExecutorFields(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "release.yaml", `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: release
+spec:
+  application: app
+  environment: production
+  configurationSource: environments.yaml
+`)
+	writeCredentialPlanTestFile(t, root, "environments.yaml", `
+environments:
+  production:
+    target:
+      name: target
+      cluster: cluster
+      instance: instance
+    executor:
+      type: helm
+      lifecyle: detached-kubernetes-job
+`)
+	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+		t.Fatalf("unknown executor field error = %v, want ErrCredentialDeclarationInvalid", err)
 	}
 }
 

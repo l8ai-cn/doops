@@ -102,17 +102,83 @@ type credentialTemplateBundleRef struct {
 }
 
 type credentialConfigurationSource struct {
-	Environments map[string]credentialConfigurationEnvironment `yaml:"environments"`
+	ArtifactContract     credentialConfigurationArtifactContract               `yaml:"artifactContract"`
+	VerificationProfiles map[string]credentialConfigurationVerificationProfile `yaml:"verificationProfiles"`
+	Environments         map[string]credentialConfigurationEnvironment         `yaml:"environments"`
+}
+
+type credentialConfigurationArtifactContract struct {
+	Type                 string            `yaml:"type"`
+	SourceRegistry       string            `yaml:"sourceRegistry"`
+	SourceRepository     string            `yaml:"sourceRepository"`
+	SourceBranch         string            `yaml:"sourceBranch"`
+	Services             []string          `yaml:"services"`
+	SourceArtifactNames  map[string]string `yaml:"sourceArtifactNames"`
+	ImageTagPattern      string            `yaml:"imageTagPattern"`
+	ImageReferenceFormat string            `yaml:"imageReferenceFormat"`
+}
+
+type credentialConfigurationVerificationProfile struct {
+	RequiredEvidence []string `yaml:"requiredEvidence"`
 }
 
 type credentialConfigurationEnvironment struct {
-	Target credentialConfigurationTarget `yaml:"target"`
+	DeploymentPlatform  string                          `yaml:"deploymentPlatform"`
+	Target              credentialConfigurationTarget   `yaml:"target"`
+	DeploymentTarget    credentialConfigurationTarget   `yaml:"deploymentTarget"`
+	Executor            credentialConfigurationExecutor `yaml:"executor"`
+	VerificationProfile string                          `yaml:"verificationProfile"`
 }
 
 type credentialConfigurationTarget struct {
 	Name     string `yaml:"name"`
 	Cluster  string `yaml:"cluster"`
 	Instance string `yaml:"instance"`
+}
+
+type credentialConfigurationExecutor struct {
+	Type      string                                `yaml:"type"`
+	Lifecycle string                                `yaml:"lifecycle"`
+	Config    credentialConfigurationExecutorConfig `yaml:"config"`
+}
+
+type credentialConfigurationExecutorConfig struct {
+	Namespace                 string                               `yaml:"namespace"`
+	Release                   string                               `yaml:"release"`
+	Workload                  string                               `yaml:"workload"`
+	Container                 string                               `yaml:"container"`
+	Registry                  string                               `yaml:"registry"`
+	ReleaseManifestRepository string                               `yaml:"releaseManifestRepository"`
+	Chart                     string                               `yaml:"chart"`
+	Values                    string                               `yaml:"values"`
+	DetachedJob               credentialConfigurationDetachedJob   `yaml:"detachedJob,omitempty"`
+	ImageBindings             map[string]string                    `yaml:"imageBindings"`
+	HealthChecks              credentialConfigurationHealthChecks  `yaml:"healthChecks"`
+	Authz                     credentialConfigurationAuthorization `yaml:"authz"`
+}
+
+type credentialConfigurationDetachedJob struct {
+	NodeSelector            map[string]string `yaml:"nodeSelector"`
+	KubeconfigHostPath      string            `yaml:"kubeconfigHostPath"`
+	AgentHomeHostPath       string            `yaml:"agentHomeHostPath"`
+	Timeout                 string            `yaml:"timeout"`
+	ExecutorImageRepository string            `yaml:"executorImageRepository"`
+	ExecutorImageDigest     string            `yaml:"executorImageDigest"`
+}
+
+type credentialConfigurationHealthChecks struct {
+	Public []credentialConfigurationHTTPCheck `yaml:"public"`
+}
+
+type credentialConfigurationHTTPCheck struct {
+	ID             string `yaml:"id"`
+	URL            string `yaml:"url"`
+	ExpectedStatus int    `yaml:"expectedStatus"`
+}
+
+type credentialConfigurationAuthorization struct {
+	AppCode         string `yaml:"appCode"`
+	EnvironmentCode string `yaml:"environmentCode"`
 }
 
 func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
@@ -135,6 +201,15 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 		strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
 		return CredentialPlan{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
 	}
+	for name, parameter := range template.Spec.Parameters {
+		if parameter.Default != nil {
+			return CredentialPlan{}, fmt.Errorf(
+				"%w: parameter %q must not declare a default value",
+				ErrInlineCredentialMaterial,
+				name,
+			)
+		}
+	}
 
 	configurationData, err := readCredentialDeclarationFile(root, template.Spec.ConfigurationSource)
 	if err != nil {
@@ -145,7 +220,7 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 	}
 
 	var configuration credentialConfigurationSource
-	if err := yaml.Unmarshal(configurationData, &configuration); err != nil {
+	if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
 		return CredentialPlan{}, invalidCredentialDeclaration(err)
 	}
 	environment, ok := configuration.Environments[template.Spec.Environment]
@@ -165,6 +240,10 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 		if ref.Use == CredentialUseImagePull &&
 			(strings.TrimSpace(ref.RegistryRepository) == "" || strings.TrimSpace(ref.RegistryReference) == "") {
 			return CredentialPlan{}, invalidCredentialDeclaration(errors.New("registry credential reference requires repository and reference"))
+		}
+		if ref.Use == CredentialUseImagePull &&
+			(strings.TrimSpace(ref.Workload.Kind) == "" || strings.TrimSpace(ref.Workload.Name) == "") {
+			return CredentialPlan{}, invalidCredentialDeclaration(errors.New("registry credential reference requires workload kind and name"))
 		}
 		refs = append(refs, CredentialPlanReference{
 			Name:               ref.Name,
@@ -369,9 +448,13 @@ func invalidCredentialDeclaration(err error) error {
 }
 
 var credentialSecretLikeKeys = map[string]bool{
-	"token":      true,
-	"password":   true,
-	"auth":       true,
-	"data":       true,
-	"stringdata": true,
+	"token":            true,
+	"password":         true,
+	"auth":             true,
+	"data":             true,
+	"stringdata":       true,
+	"clientsecret":     true,
+	"apikey":           true,
+	"privatekey":       true,
+	"registrypassword": true,
 }

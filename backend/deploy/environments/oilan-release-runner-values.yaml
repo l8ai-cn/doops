@@ -1,0 +1,52 @@
+image:
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  digest: ""
+  pullPolicy: Always
+
+workload:
+  name: doops-release-runner
+  selectorLabels:
+    app: doops-release-runner
+
+modelRouting:
+  policy: single-model
+
+doagentSettings:
+  secretName: doagent-model-settings
+  key: settings.json
+
+imagePullSecrets: []
+
+gateway:
+  url: https://doops.l8ai.cn
+  cluster: doops-edu
+  instance: release-runner
+  agentTokenSecret:
+    name: doops-release-runner-runtime
+    key: agent-token
+
+nodeSelector:
+  kubernetes.io/hostname: 192.168.0.24
+
+volumeMounts:
+  - name: kube-admin
+    mountPath: /etc/kubernetes/admin.conf
+    readOnly: true
+  - name: kube-admin
+    mountPath: /root/.kube/config
+    readOnly: true
+  - name: agent-home
+    mountPath: /root
+  - name: doagent-config
+    mountPath: /opt/doagent_config
+    readOnly: true
+
+volumes:
+  - name: kube-admin
+    hostPath:
+      path: /etc/kubernetes/admin.conf
+      type: File
+  - name: agent-home
+    hostPath:
+      path: /var/lib/doops-release-runner-home
+      type: DirectoryOrCreate

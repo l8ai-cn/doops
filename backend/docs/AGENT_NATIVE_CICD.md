@@ -25,6 +25,11 @@ runtime tool calls and computes the result digest. doagent
 retains native context, planning, 多 Agent delegation, Skill composition, and
 tool selection.
 
+When a workflow upgrades a DoOps Agent, its configured control target must be a
+different Gateway identity from the workload being replaced. The stable control
+Agent creates the declared detached Helm Job and remains connected while that
+Job updates and verifies the deployment.
+
 ## CLI Contract
 
 The only CI/CD entry is:
@@ -64,7 +69,9 @@ mutation-capable mode. There is no separate mutation flag.
 All ordinary prompts use the Gateway `ask` action and a session resource key.
 The Gateway does not synthesize observations or convert a text response into
 deployment evidence. It records completed ACP tool calls and rejects evidence
-that does not reference one of those calls.
+that does not reference one of those calls. It also requires the evidence
+result, subject, and observation time to match the completed tool's actual JSON
+output.
 
 `response_format=json` remains a generic structured-result transport for callers
 that need it. The bridge only accepts the artifact written by doagent, waits
@@ -96,7 +103,11 @@ For `response_format=json`, the Gateway supplies the sole result-artifact path.
         "toolCallId": "completed-runtime-call",
         "observedAt": "2026-07-15T00:00:00Z",
         "result": {
-          "revision": "immutable-revision"
+          "subject": "source",
+          "observedAt": "2026-07-15T00:00:00Z",
+          "data": {
+            "revision": "immutable-revision"
+          }
         }
       }
     ]

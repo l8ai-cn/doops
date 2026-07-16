@@ -1,7 +1,7 @@
 ---
 status: in-progress
 owner_thread_id: 019f5f93-fc4b-74c1-aa37-5a54561dd7d2
-updated_at: 2026-07-16T02:05:00+08:00
+updated_at: 2026-07-16T05:06:35+08:00
 ---
 
 # DoOps CICD Release Progress
@@ -47,11 +47,11 @@ from a single versioned workflow YAML.
 
 ## Current State
 
-- [ ] Credential control plane reviewed and functionally verified
+- [x] Credential control plane reviewed and functionally verified
 - [ ] YAML CICD execution reviewed and functionally verified
 - [ ] Zero-downtime Gateway/Agent upgrade verified
-- [ ] Current commit pushed and immutable artifacts identified
-- [ ] Gateway upgraded and healthy
+- [x] Current commit pushed and immutable artifacts identified
+- [x] Gateway upgraded and healthy
 - [ ] All registered Agents upgraded and healthy
 - [ ] One real YAML deployment converged
 - [ ] Workload, HTTP, audit, and rollback evidence collected
@@ -94,3 +94,36 @@ from a single versioned workflow YAML.
   deploy contract, shell syntax, Helm lint, and diff checks pass.
 - Local source is ready for commit and push; generated `.agent/` and
   `backend/bin/` content remains excluded.
+
+## Iteration 4
+
+- Gateway was deployed with rollback protection and all three baseline Agents
+  reconnected. Public health remained HTTP 200.
+- CNB built commit `7598d08002f5fb1bcaac110f633dc592e27e0558`;
+  the linux/amd64 manifest is
+  `sha256:21b1188945faadaecd15c21524628dfcaab1327c5ecb37b876bcdc3775bbeefe`.
+- The education Agent rolled from the bootstrap image to that immutable
+  manifest with `maxUnavailable: 0`, then a real YAML run reconciled the Helm
+  chart, removed the temporary API host alias, and produced an in-cluster
+  kubeconfig using `https://10.96.0.1:443`.
+- The workload stayed Ready and the Gateway stayed healthy, but the executing
+  Agent was replaced before Helm and Ask could return. Helm was recovered from
+  `pending-install` to `deployed` without deleting the workload.
+
+## Iteration 5
+
+- A second idempotent YAML run observed the converged workload but Gateway
+  rejected its fabricated evidence call IDs. Commit
+  `89992d811367940d6188359db7251de1d1b42201` now publishes the completed
+  runtime-call catalog; CNB built linux/amd64 manifest
+  `sha256:7898919c294688a2eb25f4b588ad7b1517ed47f6c4f2094ce97e15407209a1fd`.
+- Independent review found that call-ID binding alone did not bind evidence
+  content and that the same Agent cannot reliably run Helm while replacing
+  itself.
+- Current uncommitted RED/GREEN work requires evidence JSON to match the actual
+  runtime tool output, runs structured prompts in fresh doagent sessions,
+  declares a distinct `doops-edu/release-runner` control target, and executes
+  Helm in a detached Kubernetes Job.
+- A real read-only detached Job probe completed on the education cluster using
+  the immutable Agent image, Helm, and the in-cluster Kubernetes API; the probe
+  Job was removed afterward.

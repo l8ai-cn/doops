@@ -101,6 +101,23 @@ target, and warnings must not hide a validation error.
 8. Re-observe real state after every mutation and write the single JSON
    `DeploymentRun` artifact described in the execution contract.
 
+When the resolved executor declares
+`lifecycle: detached-kubernetes-job`, the coordinator must not run Helm in its
+own process. Invoke
+`python3 /app/skills/doops-cicd/scripts/helm_detached_job.py submit` with the exact
+declared namespace, release, chart, values, immutable platform digest, node
+selector, host paths, timeout, trusted executor image repository/digest and
+instruction `runId`. The Job image must be the declared previously verified
+executor image; the candidate digest is only passed to Helm as the target
+workload image. This generated Job is the only deployment mutation executor.
+If the Job already exists, its spec-digest must match exactly.
+
+The Agent executing this workflow must be the declared stable control target,
+not the Gateway identity of the workload being replaced. The coordinator waits
+for the detached Job to be Complete before observing Helm release, workload,
+logs and public contracts. A missing, active, failed or mismatched Job cannot
+produce `converged`.
+
 For a `SemanticRelease`:
 
 1. Resolve every `serviceCatalog.<name>.uses` path relative to the composition
@@ -151,6 +168,13 @@ runtime tool call catalog. Copy each evidence `toolCallId` exactly from a
 completed catalog entry and set `module` exactly to that entry's `toolName`.
 Never invent semantic aliases such as `yaml-validation`, `kubectl-get`, or
 `helm-template` when the runtime catalog reports another tool name.
+Only completed calls carrying `doops.tool-attestation/v1` from the trusted
+reconciliation context are eligible for evidence. Ordinary Bash,
+filesystem, browser or untrusted MCP output is never evidence even if it emits
+the expected JSON shape. Every eligible runtime call must output exactly one JSON object with
+`subject`, `observedAt`, and `data`. Copy that complete object unchanged into
+the evidence `result`; the Gateway rejects summaries, rewritten values, extra
+fields, plain text, and subject or timestamp mismatches.
 
 When the Ask request requires `response_format=json`, the Gateway appends the
 only permitted machine-result path to the prompt. Write exactly one JSON object

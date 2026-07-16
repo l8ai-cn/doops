@@ -4,7 +4,7 @@ metadata:
   name: {{ required "workload.name is required" .Values.workload.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app: doops-agent
+{{ toYaml .Values.workload.selectorLabels | indent 4 }}
 spec:
   replicas: 1
   strategy:
@@ -14,11 +14,11 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      app: doops-agent
+{{ toYaml .Values.workload.selectorLabels | indent 6 }}
   template:
     metadata:
       labels:
-        app: doops-agent
+{{ toYaml .Values.workload.selectorLabels | indent 8 }}
     spec:
       dnsPolicy: ClusterFirst
       nodeSelector:
@@ -40,7 +40,6 @@ spec:
               -gateway-url "$DOOPS_GATEWAY_URL"
               -cluster "$DOOPS_GATEWAY_CLUSTER"
               -instance "$DOOPS_GATEWAY_INSTANCE"
-              -agent-token "$DOOPS_GATEWAY_AGENT_TOKEN"
           env:
             - name: DOOPS_GATEWAY_URL
               value: {{ .Values.gateway.url | quote }}
@@ -48,11 +47,8 @@ spec:
               value: {{ .Values.gateway.cluster | quote }}
             - name: DOOPS_GATEWAY_INSTANCE
               value: {{ .Values.gateway.instance | quote }}
-            - name: DOOPS_GATEWAY_AGENT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.gateway.agentTokenSecret.name }}
-                  key: {{ .Values.gateway.agentTokenSecret.key }}
+            - name: DOOPS_AGENT_TOKEN_PATH
+              value: /run/secrets/doops/agent-token
             - name: KUBECONFIG
               value: /root/.kube/config
             - name: DO_AGENT_PORT
@@ -99,12 +95,26 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 2
           volumeMounts:
-{{ toYaml .Values.volumeMounts | indent 12 }}
+            - name: agent-registration-token
+              mountPath: /run/secrets/doops
+              readOnly: true
+{{- with .Values.volumeMounts }}
+{{ toYaml . | nindent 12 }}
+{{- end }}
       volumes:
+        - name: agent-registration-token
+          secret:
+            secretName: {{ required "gateway.agentTokenSecret.name is required" .Values.gateway.agentTokenSecret.name }}
+            defaultMode: 0400
+            items:
+              - key: {{ required "gateway.agentTokenSecret.key is required" .Values.gateway.agentTokenSecret.key }}
+                path: agent-token
         - name: doagent-config
           secret:
             secretName: {{ required "doagentSettings.secretName is required" .Values.doagentSettings.secretName }}
             items:
               - key: {{ required "doagentSettings.key is required" .Values.doagentSettings.key }}
                 path: settings.json
-{{ toYaml .Values.volumes | indent 8 }}
+{{- with .Values.volumes }}
+{{ toYaml . | nindent 8 }}
+{{- end }}

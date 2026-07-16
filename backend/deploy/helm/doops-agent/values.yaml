@@ -5,6 +5,8 @@ image:
 
 workload:
   name: ""
+  selectorLabels:
+    app: doops-agent
 
 modelRouting:
   policy: ""
