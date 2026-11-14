@@ -270,7 +270,37 @@ and preserves already-filtered files in the transport commit.
 The missing public configuration contract was delivered using `doops write`;
 source and remote SHA256 both equal
 `9619e118559697e0a92956dabaaa6a432d0b1caab3bcb53d3f143cea4548ede8`.
-Build task `b7993003801fdc10` is in progress; no successful image is claimed.
+Build task `b7993003801fdc10` was still in progress at this checkpoint; its
+terminal result and artifact verification are recorded below.
 The CLI suite and 444 Python contract tests plus 8 subtests passed after the
 snapshot fix. Production-feature agent-loop scenarios passed 144/144,
 including token accounting, correction, cancellation and deadline exits.
+
+## Verified Runtime Artifact (2026-11-15)
+
+- BuildKit exported the committed DoAgent `64f075e37ccf06122ee4f88646b0ebd1548351da`
+  source with the existing `Dockerfile.npc-runtime`, including browser/i18n/web.
+  The OCI archive is 370,936,320 bytes, SHA256
+  `8054a251ad9f193c1ae7b5f62633ededbaeadec9a1771c7150e001f40610cad3`.
+- Task `b7993003801fdc10` subsequently failed while Skopeo imported into Docker:
+  its API 1.22 client is below the daemon's minimum 1.24. This failure remains
+  recorded; it did not invalidate or rebuild the exported OCI artifact.
+- Corrective task `39f9242fc2cac01a` converted that same OCI to Docker archive,
+  used native `docker load`, and verified `do-agent 0.2.45`, the exact source
+  revision label and manifest SHA256. It finished with exit 0.
+- The linux/amd64 manifest is
+  `sha256:14e753702568bc2ed8bcc213c7a23a2c600788b3a0b989d84676c7a172ccef06`.
+  Registry publication and matching DoOps build remain to be verified.
+- The target baseline is release `agents-test/doops-agent-test`, deployed
+  revision 18. Its old image is still available. The installed Agent lacks
+  `upgradeAudit v1`, so an independent controller submitted through Gateway
+  exec is required for this first upgrade; ordinary `doops upgrade` cannot
+  execute against this baseline.
+- Native `pull --storage gateway` generated the remote snapshot but rejected
+  the returned marker because standalone display heartbeats were joined into
+  command stdout. The CLI now excludes that complete control notification
+  before joining output, without relaxing commit parsing or terminal checks.
+  Focused pull/capture tests and the updated runtime lock checks pass.
+- The publisher `gw-hdu-235` has a working linux/amd64 BuildKit worker and its
+  existing registry authfile. It can build and publish the final DoOps base
+  and Agent through Gateway exec after the verified runtime artifact arrives.

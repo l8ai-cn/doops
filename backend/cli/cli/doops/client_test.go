@@ -295,6 +295,8 @@ func TestRPCOutputPreservesRawJSONAndChunkBoundaries(t *testing.T) {
 		"  {\"ok\":true}\n\n",
 		"prefix {\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}\n",
 		"{\"type\":\"tool_", "use\",\"business\":true}\n",
+		"\r\x1b[K[agent] \u23f3 \u547d\u4ee4\u540e\u53f0\u6267\u884c\u4e2d... (\u8017\u65f6 5s)\n",
+		"prefix \r\x1b[K[agent] \u23f3 \u547d\u4ee4\u540e\u53f0\u6267\u884c\u4e2d... (\u8017\u65f6 5s)",
 		" \tno trailing newline",
 	}
 	want := strings.Join(chunks, "")
