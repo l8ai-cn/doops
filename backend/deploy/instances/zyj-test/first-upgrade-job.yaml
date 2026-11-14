@@ -1,0 +1,75 @@
+# Render with first-upgrade.py. This template is never applied directly.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zyj-test-first-upgrade-r18
+  namespace: agents-test
+---
+# Independent of the Agent Helm release, including rollback to revision 18.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agents-test-zyj-test-first-upgrade-r18
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: zyj-test-first-upgrade-r18
+    namespace: agents-test
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zyj-test-first-upgrade-r18-code
+  namespace: agents-test
+immutable: true
+data:
+  first-upgrade.py: "UNRENDERED"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zyj-test-first-upgrade-r18
+  namespace: agents-test
+  labels:
+    app.kubernetes.io/name: doops-self-upgrade
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: doops-self-upgrade
+    spec:
+      restartPolicy: Never
+      serviceAccountName: zyj-test-first-upgrade-r18
+      terminationGracePeriodSeconds: 900
+      nodeName: vm-0-11
+      imagePullSecrets:
+        - name: cnb-regcred
+      containers:
+        - name: controller
+          image: UNRENDERED
+          imagePullPolicy: IfNotPresent
+          command: [python3, /release/first-upgrade.py]
+          args: [UNRENDERED]
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: code
+              mountPath: /release
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: zyj-test-first-upgrade-r18-code

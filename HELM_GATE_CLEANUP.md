@@ -304,3 +304,20 @@ including token accounting, correction, cancellation and deadline exits.
 - The publisher `gw-hdu-235` has a working linux/amd64 BuildKit worker and its
   existing registry authfile. It can build and publish the final DoOps base
   and Agent through Gateway exec after the verified runtime artifact arrives.
+
+## Installed Runtime Rollout (2026-11-15)
+
+- Registry readback confirms the DoAgent artifact at
+  `sha256:14e753702568bc2ed8bcc213c7a23a2c600788b3a0b989d84676c7a172ccef06`.
+- PR #13 passed both push and pull-request CI at
+  `86bca584f5ba3302cfec4accce5a4e27d0062776` and merged as
+  `6b95035459611542b3db789afc7a8c217a2c5b00`.
+- The revision-18 first-upgrade controller is prepared under
+  `backend/deploy/instances/zyj-test/`. Independent review found mixed
+  candidate/restored identity in rollback receipts; the repair now restores
+  image, source commit, Pod identity and digest and clears candidate acceptance.
+  Eleven local transaction scenarios pass, including accepted-then-failed.
+- Remaining checks: publish v0.3.3 CLI/Skill and immutable DoOps images,
+  execute the independent upgrade, verify the exact routed Pod and runtime,
+  then exercise managed NetworkPolicy repair and read-only public Loki
+  validation. Preserve the original no-Loki-resource-creation boundary.
