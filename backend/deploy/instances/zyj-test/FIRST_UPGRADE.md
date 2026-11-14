@@ -1,7 +1,9 @@
-# ZYJ Test Revision 18 First Upgrade
+# ZYJ Test Gateway Recovery And First Upgrade
 
 This is only for `gw-test` -> `doops-zyj/zyj-test`,
-`agents-test/doops-agent-test`, deployed revision **18**. It is not a general
+`agents-test/doops-agent-test`, deployed revision **20**. Submit and observe
+through the independent `gw-zyj` management target in the same cluster.
+It is not a general
 upgrade command. The old Agent cannot use `upgradeAudit v1`; it only submits
 an independent Job through the audited Gateway `exec` channel.
 
@@ -10,7 +12,15 @@ Confirmed on 2026-11-15: one Ready Agent Pod on `vm-0-11`, ServiceAccount
 `76abae08a36d920c0058486d2d8ab86880c4c121`, DoAgent `0.2.42`, image digest
 `sha256:778312b10cf925c74bd943d54b6f9509948d0a33ad414cebf87622edee76b8af`.
 The old repository is read from the live Deployment and matched against
-revision 18. Its manifest must still be retrievable before any upgrade.
+revision 20. Its manifest must still be retrievable before any upgrade.
+
+The revision-18 attempt upgraded to 19 but did not receive Gateway acceptance,
+then rolled back to revision 20. The original live Deployment used
+`https://doops.aiedulab.cn`; Helm values retained `https://doops.l8ai.cn`.
+The immutable `zyj-test-first-upgrade-r18-backup` proves that configuration
+drift. This attempt validates that snapshot's UID, image and Gateway identity,
+and writes the original Gateway URL into the new Helm values. Keep the first
+attempt's failed Job, receipt and backup as evidence until recovery completes.
 
 The candidate must be the verified **linux/amd64 platform image digest** for
 DoOps **v0.3.3** and its full source commit after the release merge. Both are
@@ -27,12 +37,13 @@ The Job mounts `first-upgrade.py` through an immutable, code-only ConfigMap.
 It uses the candidate image's `/app/deploy/helm/doops-agent`,
 `configure_kubeconfig.py` and `adopt_agent.py` (`verify`,
 `controller_runtime_digest`, `write_verified_receipt`). The image does not
-need to contain this instance script. The original revision's live values
-are retained, changing only the image. The checked-in `values.yaml` contains
+need to contain this instance script. The original revision's values
+are retained, changing the image and reconciling the proven Gateway URL drift.
+The checked-in `values.yaml` contains
 historical public placeholders and is not an upgrade input.
 
 Before mutation it stores history, user/all values, manifest, Deployment and
-verified versions in immutable Secret `zyj-test-first-upgrade-r18-backup`.
+verified versions in immutable Secret `zyj-test-first-upgrade-r20-backup`.
 No Secret payload, environment payload, Helm output or traceback is logged or
 stored in a ConfigMap. The receipt ConfigMap contains only explicit metadata.
 The dedicated Job SA/CRB are outside the Helm release and survive rollback.
@@ -40,12 +51,15 @@ They temporarily have the same cluster-admin authority as this Agent.
 
 Revision, image, chart resources, target, selector and Deployment drift fail
 closed. A legacy mount needing migration also stops before upgrade; this Job
-does not perform mount/configuration migrations. The server-side Helm dry run
+does not perform mount migrations. The server-side Helm dry run
 uses the same values as the actual upgrade. No concurrent Helm/RBAC/Agent
 changes are permitted during this one-time operation.
 
 After mutation, a failure, interruption or missing Gateway acceptance triggers
-`helm rollback ... 18`, then old Pod Ready/imageID, commit, DoAgent version and
+`helm rollback ... 20`, then restores the original Deployment spec from the
+revision-18 backup with a resource-version-guarded patch over stdin. This
+restores the actual prior Gateway route rather than the stale Helm value.
+It then verifies old Pod Ready/imageID, commit, DoAgent version and
 Gateway-connected readiness verification. It exits nonzero even after a
 successful rollback. Its terminal receipt identifies the restored Pod, image
 and source commit and clears the candidate's Gateway acceptance. A changed concurrent revision blocks destructive
@@ -65,10 +79,10 @@ SESSION=helm-runtime-inspect-20261115
 python3 first-upgrade.py render --image "$IMAGE" --source-commit "$SOURCE_COMMIT" \
   > /tmp/zyj-test-first-upgrade.json
 
-~/.local/bin/doops -session "$SESSION" write --target gw-test \
-  --path /tmp/zyj-test-first-upgrade.json --file /tmp/zyj-test-first-upgrade.json
-~/.local/bin/doops -session "$SESSION" exec --target gw-test \
-  --cmd 'kubectl create -f /tmp/zyj-test-first-upgrade.json'
+~/.local/bin/doops -session "$SESSION" write --target gw-zyj --storage gateway \
+  --path zyj-test-first-upgrade.json --file /tmp/zyj-test-first-upgrade.json
+~/.local/bin/doops -session "$SESSION" exec --target gw-zyj \
+  --cmd "kubectl create -f /root/ws/$SESSION/zyj-test-first-upgrade.json"
 ```
 
 Use `create`, not `apply`. Existing objects mean inspect and reconcile the
@@ -76,8 +90,8 @@ earlier attempt, never overwrite/recreate the Job. The old Agent does not run
 Helm upgrade itself. Observe the Job and the metadata-only receipt:
 
 ```bash
-~/.local/bin/doops -session "$SESSION" exec --target gw-test \
-  --cmd 'kubectl -n agents-test get job zyj-test-first-upgrade-r18; kubectl -n agents-test get configmap zyj-test-first-upgrade-r18-receipt -o json'
+~/.local/bin/doops -session "$SESSION" exec --target gw-zyj \
+  --cmd 'kubectl -n agents-test get job zyj-test-first-upgrade-r20; kubectl -n agents-test get configmap zyj-test-first-upgrade-r20-receipt -o json'
 ```
 
 When phase is `awaiting-gateway`, complete these steps within **300 seconds**.
@@ -87,15 +101,15 @@ UID/imageID/commit/versions, then acknowledges that exact Pod to the Job:
 ```bash
 ~/.local/bin/doops -session "$SESSION" targets --target gw-test
 ~/.local/bin/doops -session "$SESSION" capabilities --target gw-test --require structuredSSH
-~/.local/bin/doops -session "$SESSION" write --target gw-test \
-  --path /tmp/zyj-test-first-upgrade.py --file first-upgrade.py
+~/.local/bin/doops -session "$SESSION" write --target gw-test --storage gateway \
+  --path zyj-test-first-upgrade.py --file first-upgrade.py
 ~/.local/bin/doops -session "$SESSION" exec --target gw-test \
-  --cmd "python3 /tmp/zyj-test-first-upgrade.py accept --image '$IMAGE' --source-commit '$SOURCE_COMMIT'"
+  --cmd "python3 /root/ws/$SESSION/zyj-test-first-upgrade.py accept --image '$IMAGE' --source-commit '$SOURCE_COMMIT'"
 ```
 
 Only acknowledge after `targets` shows the expected full source commit and
 the protocol check succeeds. The controller rechecks the same Pod after
-15 seconds before recording `complete`, revision 19 and standard upgrade
+15 seconds before recording `complete`, revision 21 and standard upgrade
 evidence. Require Job `Complete=True`, receipt `phase=complete`, target commit
 and actual functional smoke before declaring delivery. No automatic acceptance
 is sent by the controller. Missing acceptance rolls back.
@@ -105,15 +119,15 @@ ConfigMap and temporary SA/CRB through Gateway `exec`. Retain the backup Secret,
 receipt and standard `doops-upgrade-verified-doops-agent-test` evidence.
 
 ```bash
-~/.local/bin/doops -session "$SESSION" exec --target gw-test \
-  --cmd 'kubectl -n agents-test delete job/zyj-test-first-upgrade-r18 configmap/zyj-test-first-upgrade-r18-code serviceaccount/zyj-test-first-upgrade-r18'
-~/.local/bin/doops -session "$SESSION" exec --target gw-test \
-  --cmd 'kubectl delete clusterrolebinding agents-test-zyj-test-first-upgrade-r18'
+~/.local/bin/doops -session "$SESSION" exec --target gw-zyj \
+  --cmd 'kubectl -n agents-test delete job/zyj-test-first-upgrade-r20 configmap/zyj-test-first-upgrade-r20-code serviceaccount/zyj-test-first-upgrade-r20'
+~/.local/bin/doops -session "$SESSION" exec --target gw-zyj \
+  --cmd 'kubectl delete clusterrolebinding agents-test-zyj-test-first-upgrade-r20'
 ```
 
 Separately reconcile this instance's `values.yaml` image/release comment and
 verified configuration through the normal GitOps review; never copy secret
-values from the backup into Git. Do not use this revision-18 Job for subsequent
+values from the backup into Git. Do not use this revision-20 Job for subsequent
 upgrades.
 
 ## Local Checks

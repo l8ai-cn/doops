@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time revision-18 upgrade of agents-test/doops-agent-test."""
+"""Recover Gateway values and upgrade revision 20 of agents-test/doops-agent-test."""
 import argparse
 import base64
 import copy
@@ -18,7 +18,10 @@ import yaml
 
 NS = "agents-test"
 RELEASE = "doops-agent-test"
-NAME = "zyj-test-first-upgrade-r18"
+NAME = "zyj-test-first-upgrade-r20"
+BASE_REVISION = 20
+ORIGINAL_BACKUP = "zyj-test-first-upgrade-r18-backup"
+GATEWAY_URL = "https://doops.aiedulab.cn"
 BASE_COMMIT = "76abae08a36d920c0058486d2d8ab86880c4c121"
 BASE_DIGEST = "sha256:778312b10cf925c74bd943d54b6f9509948d0a33ad414cebf87622edee76b8af"
 DOAGENT_COMMIT = "64f075e37ccf06122ee4f88646b0ebd1548351da"
@@ -52,8 +55,8 @@ def history():
 
 def baseline_revision():
     rows = history()
-    require(max(int(r["revision"]) for r in rows) == 18
-            and [int(r["revision"]) for r in rows if r["status"] == "deployed"] == [18],
+    require(max(int(r["revision"]) for r in rows) == BASE_REVISION
+            and [int(r["revision"]) for r in rows if r["status"] == "deployed"] == [BASE_REVISION],
             "baseline_revision_changed")
     return rows
 
@@ -150,6 +153,32 @@ def interrupted(_signum, _frame):
     raise UpgradeError("controller_interrupted")
 
 
+def original_deployment(live):
+    backup = get("secret", ORIGINAL_BACKUP)
+    require(backup.get("immutable") is True, "original_backup_not_immutable")
+    original = json.loads(base64.b64decode(backup["data"]["deployment.json"], validate=True))
+    require(original["metadata"]["uid"] == live["metadata"]["uid"], "original_deployment_changed")
+    A.validate_deployment(original, "doops-zyj", "zyj-test")
+    container = A.agent_container(original)
+    require(container["image"].endswith("@" + BASE_DIGEST), "original_image_changed")
+    require([e.get("value") for e in container.get("env", [])
+             if e["name"] == "DOOPS_GATEWAY_URL"] == [GATEWAY_URL],
+            "original_gateway_route_changed")
+    return original
+
+
+def restore_original_deployment(original, baseline):
+    live = get("deployment", RELEASE)
+    require(live["metadata"]["uid"] == original["metadata"]["uid"], "rollback_deployment_changed")
+    require(live["spec"] == baseline["spec"], "rollback_deployment_spec_changed")
+    run(K + ["patch", "deployment", RELEASE, "--type=json", "--patch-file=/dev/stdin"],
+        stdin=json.dumps([
+        {"op": "test", "path": "/metadata/resourceVersion",
+         "value": live["metadata"]["resourceVersion"]},
+        {"op": "replace", "path": "/spec", "value": original["spec"]},
+    ]))
+
+
 def upgrade(args):
     os.umask(0o077)
     os.environ["HOSTNAME"] = socket.gethostname()
@@ -193,11 +222,12 @@ def upgrade(args):
         rows = baseline_revision()
         live = get("deployment", RELEASE)
         A.validate_deployment(live, "doops-zyj", "zyj-test")
+        original = original_deployment(live)
         old_image = A.agent_container(live)["image"]
         require(old_image.endswith("@" + BASE_DIGEST), "baseline_image_changed")
         baseline = version(old_image, BASE_COMMIT, "0.2.42")
-        values_raw = run(H + ["get", "values", RELEASE, "-n", NS, "--revision", "18", "-o", "json"])
-        manifest = run(H + ["get", "manifest", RELEASE, "-n", NS, "--revision", "18"])
+        values_raw = run(H + ["get", "values", RELEASE, "-n", NS, "--revision", str(BASE_REVISION), "-o", "json"])
+        manifest = run(H + ["get", "manifest", RELEASE, "-n", NS, "--revision", str(BASE_REVISION)])
         values = json.loads(values_raw)
         require((values["gateway"]["cluster"], values["gateway"]["instance"]) ==
                 ("doops-zyj", "zyj-test"), "target_identity_mismatch")
@@ -206,7 +236,7 @@ def upgrade(args):
         registry_preflight(old_image, args.image, live["spec"]["template"]["spec"]["imagePullSecrets"])
         backup = {
             "history.json": json.dumps(rows), "values.json": values_raw, "manifest.yaml": manifest,
-            "all-values.json": run(H + ["get", "values", RELEASE, "-n", NS, "--revision", "18",
+            "all-values.json": run(H + ["get", "values", RELEASE, "-n", NS, "--revision", str(BASE_REVISION),
                                        "--all", "-o", "json"]),
             "deployment.json": json.dumps(live), "baseline.json": json.dumps(baseline),
             "versions.json": json.dumps({"oldCommit": BASE_COMMIT, "oldDoAgent": "0.2.42",
@@ -217,9 +247,11 @@ def upgrade(args):
             "apiVersion": "v1", "kind": "Secret", "type": "Opaque", "immutable": True,
             "metadata": {"name": NAME + "-backup", "namespace": NS}, "stringData": backup,
         }))
-        receipt(backupSecret=NAME + "-backup", baselineRevision=18, baselineImage=old_image)
+        receipt(backupSecret=NAME + "-backup", baselineRevision=BASE_REVISION, baselineImage=old_image,
+                originalBackup=ORIGINAL_BACKUP, gatewayURL=GATEWAY_URL)
         record(old_image, baseline)
         candidate = copy.deepcopy(values)
+        candidate["gateway"]["url"] = GATEWAY_URL
         candidate.setdefault("image", {})
         repository, digest = args.image.split("@")
         candidate["image"].update(repository=repository, digest=digest, pullPolicy="IfNotPresent")
@@ -251,9 +283,9 @@ def upgrade(args):
         time.sleep(15)
         final = version(args.image, args.source_commit, "0.2.45")
         require(final == evidence and [int(r["revision"]) for r in history()
-                if r["status"] == "deployed"] == [19], "candidate_changed_during_acceptance")
+                if r["status"] == "deployed"] == [BASE_REVISION + 1], "candidate_changed_during_acceptance")
         record(args.image, final)
-        receipt(phase="complete", releaseCommit=final["release_commit"], revision=19)
+        receipt(phase="complete", releaseCommit=final["release_commit"], revision=BASE_REVISION + 1)
     except BaseException as error:
         if mutated:
             # Do not let a second termination interrupt recovery halfway through.
@@ -261,10 +293,20 @@ def upgrade(args):
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             signal.alarm(800)
             try:
-                require(max(int(r["revision"]) for r in history()) in (18, 19),
+                before_rollback = max(int(r["revision"]) for r in history())
+                require(before_rollback in (BASE_REVISION, BASE_REVISION + 1),
                         "concurrent_revision_blocks_rollback")
-                run(H + ["rollback", RELEASE, "18", "-n", NS, "--wait", "--timeout", "300s"],
-                    timeout=330)
+                try:
+                    run(H + ["rollback", RELEASE, str(BASE_REVISION), "-n", NS, "--timeout", "300s"],
+                        timeout=330)
+                except Exception:
+                    # A lost response does not establish whether Helm applied the rollback.
+                    receipt(rollbackCommandOutcome="unconfirmed")
+                rolled_back = max(history(), key=lambda row: int(row["revision"]))
+                require(int(rolled_back["revision"]) == before_rollback + 1
+                        and rolled_back["description"] == f"Rollback to {BASE_REVISION}"
+                        and rolled_back["status"] == "deployed", "rollback_result_unconfirmed")
+                restore_original_deployment(original, live)
                 restored = version(old_image, BASE_COMMIT, "0.2.42")
                 record(old_image, restored)
                 receipt(phase="rolled-back", image=old_image, sourceCommit=BASE_COMMIT,

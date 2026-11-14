@@ -1,5 +1,6 @@
 """Local transaction checks; no cluster, registry or build is contacted."""
 import copy
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -23,18 +24,24 @@ def controller(monkeypatch):
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     old_image = "registry.example.com/doops@" + m.BASE_DIGEST
-    state = {"image": old_image, "revision": 18, "receipt": {}, "calls": [], "backups": [],
-             "mode": "success", "ticks": 0}
+    state = {"image": old_image, "revision": m.BASE_REVISION, "receipt": {}, "calls": [], "backups": [],
+             "mode": "success", "ticks": 0, "rolled_back": False}
     args = SimpleNamespace(image=IMAGE, source_commit=COMMIT)
-    values = {"gateway": {"cluster": "doops-zyj", "instance": "zyj-test"},
+    values = {"gateway": {"cluster": "doops-zyj", "instance": "zyj-test",
+                          "url": "https://old-gateway.example"},
               "image": {"repository": "registry.example.com/doops", "digest": m.BASE_DIGEST},
               "privateSetting": CANARY}
-    live = {"kind": "Deployment", "metadata": {"name": m.RELEASE, "uid": "deployment-uid"},
+    live = {"kind": "Deployment", "metadata": {"name": m.RELEASE, "uid": "deployment-uid",
+                                             "resourceVersion": "12"},
             "spec": {"replicas": 1, "selector": {"matchLabels": {"app": m.RELEASE}},
                      "template": {"spec": {
                          "imagePullSecrets": [{"name": "test-pull"}],
                          "containers": [{"name": "doops-agent", "image": old_image,
-                                         "env": [{"name": "PRIVATE_SETTING", "value": CANARY}]}]}}}}
+                                         "env": [{"name": "PRIVATE_SETTING", "value": CANARY},
+                                                 {"name": "DOOPS_GATEWAY_URL",
+                                                  "value": m.GATEWAY_URL}]}]}}}}
+    original = copy.deepcopy(live)
+    live["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] = values["gateway"]["url"]
 
     def manifest(image):
         deployment = copy.deepcopy(live)
@@ -54,6 +61,15 @@ def controller(monkeypatch):
                 "runtimeClass": "", "node": "node"}
 
     def get(kind, name):
+        if kind == "secret":
+            assert name == m.ORIGINAL_BACKUP
+            saved = copy.deepcopy(original)
+            if state["mode"] == "original-route-changed":
+                saved["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] = "https://wrong.example"
+            if state["mode"] == "original-uid-changed":
+                saved["metadata"]["uid"] = "another-deployment"
+            return {"immutable": state["mode"] != "backup-mutable", "data": {"deployment.json":
+                base64.b64encode(json.dumps(saved).encode()).decode()}}
         if kind == "deployment":
             return copy.deepcopy(live)
         if kind == "pod":
@@ -94,14 +110,22 @@ def controller(monkeypatch):
                     assert CANARY not in stdin
                     state["receipt"] = obj["data"]
             elif "patch" in command:
-                patch = json.loads(command[command.index("-p") + 1])
-                assert CANARY not in json.dumps(patch)
-                state["receipt"].update(patch["data"])
+                if "deployment" in command:
+                    assert "--patch-file=/dev/stdin" in command
+                    patch = json.loads(stdin)
+                    assert patch[0]["path"] == "/metadata/resourceVersion"
+                    assert patch[1] == {"op": "replace", "path": "/spec", "value": original["spec"]}
+                else:
+                    patch = json.loads(command[command.index("-p") + 1])
+                    assert CANARY not in json.dumps(patch)
+                    state["receipt"].update(patch["data"])
             else:
                 raise AssertionError(command)
             return ""
         if command[:2] == ["helm", "history"]:
-            return json.dumps([{"revision": state["revision"], "status": "deployed"}])
+            return json.dumps([{"revision": state["revision"], "status": "deployed",
+                                "description": f"Rollback to {m.BASE_REVISION}"
+                                if state["rolled_back"] else "Upgrade complete"}])
         if command[:3] == ["helm", "get", "values"]:
             return json.dumps(values)
         if command[:3] == ["helm", "get", "manifest"]:
@@ -110,6 +134,7 @@ def controller(monkeypatch):
             candidate = json.loads(Path(command[command.index("-f") + 1]).read_text())
             assert candidate["privateSetting"] == CANARY
             assert candidate["image"]["digest"] == IMAGE.split("@")[1]
+            assert candidate["gateway"]["url"] == m.GATEWAY_URL
             return manifest(IMAGE)
         if command[:2] == ["helm", "upgrade"]:
             assert len(state["backups"]) == 1
@@ -117,15 +142,22 @@ def controller(monkeypatch):
                 if state["mode"] == "dry-run-failure":
                     raise m.UpgradeError("dry_run_failed")
                 return ""
-            state.update(image=IMAGE, revision=19)
+            if state["mode"] == "upgrade-before-revision":
+                raise OSError(CANARY)
+            state.update(image=IMAGE, revision=m.BASE_REVISION + 1)
             if state["mode"] == "unknown":
                 raise TimeoutError(CANARY)
             return ""
         if command[:2] == ["helm", "rollback"]:
-            assert command[3] == "18"
+            assert command[3] == str(m.BASE_REVISION)
+            assert "--wait" not in command
             if state["mode"] == "rollback-failure":
                 raise OSError(CANARY)
-            state.update(image=old_image, revision=20)
+            state.update(image=old_image, revision=state["revision"] + 1, rolled_back=True)
+            if state["mode"] == "concurrent-spec-change":
+                live["spec"]["replicas"] = 2
+            if state["mode"] == "rollback-response-lost":
+                raise TimeoutError(CANARY)
             return ""
         raise AssertionError(command)
 
@@ -160,13 +192,15 @@ def controller(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["success", "timeout", "accepted-then-failed", "unknown", "dry-run-failure",
-                                  "registry-failure", "rollback-failure", "revision-changed"])
+                                  "registry-failure", "rollback-failure", "revision-changed",
+                                  "original-route-changed", "original-uid-changed", "backup-mutable",
+                                  "rollback-response-lost", "concurrent-spec-change", "upgrade-before-revision"])
 def test_transaction(controller, capsys, mode, monkeypatch):
     m, args, state = controller
     state["mode"] = mode
     if mode == "revision-changed":
-        state["revision"] = 19
-    if mode == "rollback-failure":
+        state["revision"] = m.BASE_REVISION + 1
+    if mode in ("rollback-failure", "rollback-response-lost", "concurrent-spec-change"):
         monkeypatch.setattr(m, "wait_acceptance",
                             lambda *_: (_ for _ in ()).throw(m.UpgradeError("acceptance_failed")))
     if mode == "accepted-then-failed":
@@ -184,8 +218,10 @@ def test_transaction(controller, capsys, mode, monkeypatch):
         with pytest.raises(BaseException):
             m.upgrade(args)
         expected = {"timeout": "rolled-back", "accepted-then-failed": "rolled-back",
-                    "unknown": "rolled-back",
-                    "rollback-failure": "rollback-failed"}.get(mode, "preflight-failed")
+                    "unknown": "rolled-back", "rollback-response-lost": "rolled-back",
+                    "upgrade-before-revision": "rolled-back",
+                    "rollback-failure": "rollback-failed",
+                    "concurrent-spec-change": "rollback-failed"}.get(mode, "preflight-failed")
         assert state["receipt"]["phase"] == expected
         if expected == "rolled-back":
             assert state["receipt"]["image"] == "registry.example.com/doops@" + m.BASE_DIGEST
@@ -196,7 +232,12 @@ def test_transaction(controller, capsys, mode, monkeypatch):
             assert state["receipt"]["runtimeDigest"] == m.BASE_DIGEST
             assert state["receipt"]["gatewayAcceptance"] == ""
     rollbacks = [c for c in state["calls"] if c[:2] == ["helm", "rollback"]]
-    assert len(rollbacks) == int(mode in ("timeout", "accepted-then-failed", "unknown", "rollback-failure"))
+    assert len(rollbacks) == int(mode in ("timeout", "accepted-then-failed", "unknown", "rollback-failure",
+                                        "rollback-response-lost", "concurrent-spec-change", "upgrade-before-revision"))
+    restores = [c for c in state["calls"] if "patch" in c and "deployment" in c]
+    assert len(restores) == int(mode in ("timeout", "accepted-then-failed", "unknown", "rollback-response-lost",
+                                       "upgrade-before-revision"))
+    assert all(CANARY not in " ".join(c) for c in state["calls"])
     assert CANARY not in capsys.readouterr().out
 
 

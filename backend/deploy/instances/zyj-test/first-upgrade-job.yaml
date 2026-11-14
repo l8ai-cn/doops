@@ -2,27 +2,27 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: zyj-test-first-upgrade-r18
+  name: zyj-test-first-upgrade-r20
   namespace: agents-test
 ---
-# Independent of the Agent Helm release, including rollback to revision 18.
+# Independent of the Agent Helm release, including rollback to revision 20.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: agents-test-zyj-test-first-upgrade-r18
+  name: agents-test-zyj-test-first-upgrade-r20
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: cluster-admin
 subjects:
   - kind: ServiceAccount
-    name: zyj-test-first-upgrade-r18
+    name: zyj-test-first-upgrade-r20
     namespace: agents-test
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: zyj-test-first-upgrade-r18-code
+  name: zyj-test-first-upgrade-r20-code
   namespace: agents-test
 immutable: true
 data:
@@ -31,7 +31,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: zyj-test-first-upgrade-r18
+  name: zyj-test-first-upgrade-r20
   namespace: agents-test
   labels:
     app.kubernetes.io/name: doops-self-upgrade
@@ -45,7 +45,7 @@ spec:
         app.kubernetes.io/name: doops-self-upgrade
     spec:
       restartPolicy: Never
-      serviceAccountName: zyj-test-first-upgrade-r18
+      serviceAccountName: zyj-test-first-upgrade-r20
       terminationGracePeriodSeconds: 900
       nodeName: vm-0-11
       imagePullSecrets:
@@ -72,4 +72,4 @@ spec:
       volumes:
         - name: code
           configMap:
-            name: zyj-test-first-upgrade-r18-code
+            name: zyj-test-first-upgrade-r20-code
