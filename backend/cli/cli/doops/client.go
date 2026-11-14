@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +34,8 @@ const (
 	websocketHandshakeRetryDelay = 50 * time.Millisecond
 	executionCancellationTimeout = 30 * time.Second
 )
+
+var shellProgressHeartbeatPattern = regexp.MustCompile(`^\r\x1b\[K\[agent\] ⏳ 命令后台执行中\.\.\. \(耗时 [1-9][0-9]*s\)$`)
 
 // MCPClient 是 doops CLI 的 MCP 客户端。
 // 改造后持有一条持久 WebSocket 连接，支持多次 tool call 复用。
@@ -870,6 +873,12 @@ func (c *MCPClient) callAndCaptureResult(toolName string, arguments map[string]i
 			if method, ok := msg["method"].(string); ok && method == "notifications/message" {
 				if params, ok := msg["params"].(map[string]interface{}); ok {
 					if chunk, ok := params["data"].(string); ok {
+						// Shell output notifications include a trailing newline. The
+						// Agent's standalone display heartbeat does not; exclude only
+						// that complete control message before joining output chunks.
+						if toolName == "doops_shell" && params["kind"] == "raw" && shellProgressHeartbeatPattern.MatchString(chunk) {
+							continue
+						}
 						capturedOutput.WriteString(chunk)
 					}
 				}

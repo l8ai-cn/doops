@@ -165,7 +165,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		sort.Strings(keys)
 		for _, key := range keys {
 			value := params.SetStrings[key]
-			if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
+			if helmSetStringContainsCredential(key, value) {
 				return helmCommand{}, fmt.Errorf("helm set_strings contains forbidden credential material")
 			}
 			args = append(args, "--set-string", key+"="+escapeHelmSetString(value))
@@ -192,6 +192,19 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	default:
 		return helmCommand{}, fmt.Errorf("unsupported helm operation %q", params.Operation)
 	}
+}
+
+func helmSetStringContainsCredential(key, value string) bool {
+	if credentialScalarContainsInlineMaterial(value) {
+		return true
+	}
+	if normalizeCredentialKey(key) == "data" {
+		// Chart data is not necessarily a Secret payload. Inspect its contents
+		// with the existing structured/text redactor before allowing the value.
+		public, err := redactDoagentUIText(value)
+		return err != nil || public != value
+	}
+	return credentialSecretLikeKey(key)
 }
 
 // annotateAnonymousHelmChartRejection names the cause when a repository turns

@@ -343,6 +343,45 @@ func TestStageSnapshotUsesGitIgnoreSemanticsAndKeepsTrackedFiles(t *testing.T) {
 	}
 }
 
+func TestStageSnapshotHonorsGitIgnoreNegationForNonGitSources(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(src, rel), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write(".gitignore", "settings.json\n!/settings.json\nprivate.key\n*.log\n!keep.log\n*.log\n")
+	write("settings.json", `{"provider":{}}`)
+	write("private.key", "synthetic-private-canary")
+	write("keep.log", "ignored again by the last rule")
+
+	snapshot := filepath.Join(root, "snapshot")
+	files, err := stageSnapshot(src, snapshot, nil, false)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	if !containsString(files, "settings.json") {
+		t.Fatalf("negated contract file was excluded: %#v", files)
+	}
+	for _, excluded := range []string{"private.key", "keep.log"} {
+		if containsString(files, excluded) {
+			t.Fatalf("ignored file %s was unexpectedly included: %#v", excluded, files)
+		}
+	}
+	if _, err := createWorkspaceSnapshotCommit(snapshot, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := gitCommandOutput(snapshot, "show", "HEAD:settings.json")
+	if err != nil || !strings.Contains(got, `"provider"`) {
+		t.Fatalf("transport commit omitted the build contract: %s, %v", got, err)
+	}
+}
+
 func TestStageSnapshotSkipsGitSubmodulesBeforeGitIgnoreFiltering(t *testing.T) {
 	root := t.TempDir()
 	submoduleSrc := filepath.Join(root, "submodule-src")

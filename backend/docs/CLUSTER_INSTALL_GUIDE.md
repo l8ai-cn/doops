@@ -140,7 +140,11 @@ bash backend/scripts/dev-link.sh --project <项目绝对路径>
 `install.sh` 安装。开发链接版的 CLI 版本号是 `dev`、`release_commit` 是当前仓库
 HEAD，而 Agent 升级后会校验 Agent 的 `release_commit` 是否等于 CLI 自己的 commit，
 所以升级 Agent 必须用与候选 Agent 制品同 commit 的正式 CLI，不能用开发链接版。
-`bash backend/scripts/dev-link.sh --unlink` 可以断开软链接。
+`bash backend/scripts/dev-link.sh --unlink` 可以断开软链接；已有正式文件保留，
+不会自动恢复历史备份。断链后用 `install.sh` 安装所选正式版本。
+开发 Skill 的旧文件和链接备份存放在项目 `.local/doops-dev-link/`，不留在 Skill
+加载目录。建链或断链时会迁出历史 `docs.release`、`SKILL.md.release` 和
+对应的 `*.devlink-backup`，避免 Agent 读到已经移除的发布门禁。
 
 ### 脚本入口与协议边界
 

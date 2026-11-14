@@ -18,7 +18,7 @@
 # 用法:
 #   bash scripts/dev-link.sh              # 构建 + 建链
 #   bash scripts/dev-link.sh --build-only # 只构建，不动 ~/.local/bin
-#   bash scripts/dev-link.sh --unlink    # 断开软链接，恢复安装脚本产物
+#   bash scripts/dev-link.sh --unlink    # 断开软链接，再用 install.sh 安装正式版
 set -euo pipefail
 
 usage() {
@@ -28,7 +28,7 @@ usage() {
 
 选项:
   --build-only   只构建 CLI，不建立或断开软链接
-  --unlink      断开软链接，恢复成 install.sh 安装的正式产物
+  --unlink      断开软链接；随后用 install.sh 安装正式产物
   --project     项目路径，决定 .agent/skills/doops 链接到哪个项目（默认当前目录）
 
 安装路径:
@@ -73,6 +73,18 @@ done
 
 PROJECT_PATH="$(cd "${PROJECT_PATH}" && pwd)"
 SKILL_DIR="${PROJECT_PATH}/.agent/skills/doops"
+SKILL_BACKUP_DIR=""
+
+backup_skill_path() {
+  local path="$1"
+  [[ -e "${path}" || -L "${path}" ]] || return 0
+  if [[ -z "${SKILL_BACKUP_DIR}" ]]; then
+    mkdir -p "${PROJECT_PATH}/.local/doops-dev-link"
+    SKILL_BACKUP_DIR="$(mktemp -d "${PROJECT_PATH}/.local/doops-dev-link/backup.XXXXXX")"
+  fi
+  mv "${path}" "${SKILL_BACKUP_DIR}/$(basename "${path}")"
+  echo "  Skill 备份已移出加载目录: ${SKILL_BACKUP_DIR}/$(basename "${path}")"
+}
 
 unlink_path() {
   local path="$1"
@@ -89,11 +101,15 @@ unlink_path() {
 if [[ "${UNLINK}" == "true" ]]; then
   echo "[1/2] 断开开发软链接"
   unlink_path "${CLI_OUT}"
-  unlink_path "${SKILL_DIR}/SKILL.md"
-  if [[ -L "${SKILL_DIR}/docs" ]]; then
-    unlink_path "${SKILL_DIR}/docs"
-    rmdir "${SKILL_DIR}/docs" 2>/dev/null || true
+  if [[ -L "${SKILL_DIR}/SKILL.md" ]]; then
+    backup_skill_path "${SKILL_DIR}/SKILL.md"
   fi
+  if [[ -L "${SKILL_DIR}/docs" ]]; then
+    backup_skill_path "${SKILL_DIR}/docs"
+  fi
+  for retired in SKILL.md.release docs.release SKILL.md.devlink-backup docs.devlink-backup; do
+    backup_skill_path "${SKILL_DIR}/${retired}"
+  done
   echo "[2/2] 完成。正式版本请用 backend/scripts/install.sh 安装。"
   exit 0
 fi
@@ -123,18 +139,19 @@ echo "  ${CLI_OUT} -> ${BUILD_OUT}"
 
 echo "[3/3] 建立项目 Skill 软链接"
 mkdir -p "${SKILL_DIR}"
-if [[ -e "${SKILL_DIR}/SKILL.md" && ! -L "${SKILL_DIR}/SKILL.md" ]]; then
-  mv "${SKILL_DIR}/SKILL.md" "${SKILL_DIR}/SKILL.md.release"
-  echo "  原 Skill.md 已备份到 ${SKILL_DIR}/SKILL.md.release"
+for retired in SKILL.md.release docs.release SKILL.md.devlink-backup docs.devlink-backup; do
+  backup_skill_path "${SKILL_DIR}/${retired}"
+done
+if [[ ! -L "${SKILL_DIR}/SKILL.md" ]] ||
+   [[ "$(readlink "${SKILL_DIR}/SKILL.md")" != "${REPO_ROOT}/backend/skills/SKILL.md" ]]; then
+  backup_skill_path "${SKILL_DIR}/SKILL.md"
 fi
 ln -sfn "${REPO_ROOT}/backend/skills/SKILL.md" "${SKILL_DIR}/SKILL.md"
 echo "  ${SKILL_DIR}/SKILL.md -> ${REPO_ROOT}/backend/skills/SKILL.md"
 
-if [[ -L "${SKILL_DIR}/docs" ]]; then
-  rm -f "${SKILL_DIR}/docs"
-elif [[ -d "${SKILL_DIR}/docs" ]]; then
-  mv "${SKILL_DIR}/docs" "${SKILL_DIR}/docs.release"
-  echo "  原 docs/ 已备份到 ${SKILL_DIR}/docs.release"
+if [[ ! -L "${SKILL_DIR}/docs" ]] ||
+   [[ "$(readlink "${SKILL_DIR}/docs")" != "${REPO_ROOT}/backend/docs" ]]; then
+  backup_skill_path "${SKILL_DIR}/docs"
 fi
 ln -sfn "${REPO_ROOT}/backend/docs" "${SKILL_DIR}/docs"
 echo "  ${SKILL_DIR}/docs -> ${REPO_ROOT}/backend/docs"

@@ -6,7 +6,6 @@ package server
 // health remain Helm or task-level concerns.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -66,24 +65,28 @@ func helmStepUnknown(code, reason string) error {
 	return &helmStepError{code: code, reason: reason, outcomeUnknown: true}
 }
 
-// helmStderrReason keeps the first line of Helm's error. Chart-controlled
-// stdout is never returned; stderr is redacted and capped because a template
-// error can quote a value.
+// helmStderrReason keeps the complete useful stderr from Helm. Chart-controlled
+// stdout is never returned; stderr is redacted and bounded because a template
+// error can quote a value. Keeping multiple lines matters because Helm often
+// puts the actionable missing field after the summary line.
 func helmStderrReason(stderr []byte) string {
-	scanner := bufio.NewScanner(bytes.NewReader(stderr))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		line = strings.TrimPrefix(line, "Error: ")
-		line = redactSecretText(line)
-		if utf8.RuneCountInString(line) > 300 {
-			line = string([]rune(line)[:300]) + "..."
-		}
-		return line
+	const maxReasonRunes = 4096
+	reason := strings.TrimPrefix(strings.TrimSpace(redactHelmDiagnostic(string(stderr))), "Error: ")
+	if reason == "" {
+		return "helm exited without an error message"
 	}
-	return "helm exited without an error message"
+	if utf8.RuneCountInString(reason) <= maxReasonRunes {
+		return reason
+	}
+	return string([]rune(reason)[:maxReasonRunes]) + "\n[stderr truncated]"
+}
+
+func redactHelmDiagnostic(text string) string {
+	public, err := redactDoagentUIText(text)
+	if err != nil {
+		return "[Helm diagnostic withheld: incomplete private payload could not be redacted]"
+	}
+	return public
 }
 
 func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSender) (string, error) {

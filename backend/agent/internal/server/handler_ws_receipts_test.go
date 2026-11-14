@@ -87,7 +87,9 @@ if [ "$value" = "service.port=bad" ]; then
     printf '{"version":2,"info":{"status":"pending-upgrade","description":"%s"}}' "$description" > "$RECEIPT_HELM_STATE/status.json"
     cat "$RECEIPT_HELM_STATE/status.json"; exit 0;;
   esac
-  printf 'Error: service.port must be numeric\n' >&2; exit 9
+  printf 'Error: chart values validation failed\n' >&2
+  printf '%01800d\n' 0 >&2
+  printf 'service.port must be numeric\n' >&2; exit 9
 fi
 printf '{"version":3,"info":{"status":"deployed","description":"%s"}}' "$description" > "$RECEIPT_HELM_STATE/status.json"
 cat "$RECEIPT_HELM_STATE/status.json"
@@ -119,7 +121,14 @@ exit 0`
 						result["sessionId"] = agentSessionID
 					case "session/setMode":
 					case "session/prompt":
-						promptReady <- request["params"].(map[string]interface{})
+						params := request["params"].(map[string]interface{})
+						if params["completionReview"] != true {
+							t.Error("apply omitted doagent completion review")
+						}
+						if budget, ok := params["wallClockTimeoutSecs"].(float64); !ok || budget <= 0 || budget > 1800 {
+							t.Errorf("prompt omitted the remaining execution deadline: %v", params["wallClockTimeoutSecs"])
+						}
+						promptReady <- params
 						result["status"], result["turnId"] = "accepted", turnID
 					default:
 						t.Errorf("unexpected RPC: %v", request["method"])
@@ -318,6 +327,13 @@ exit 0`
 				}
 			}
 			first := history[0].(map[string]interface{})
+			if scenario.first == "upgrade-recovered" || scenario.first == "upgrade-not-found-recovered" {
+				encoded, _ := json.Marshal(first["result"])
+				if !strings.Contains(string(encoded), "chart values validation failed") ||
+					!strings.Contains(string(encoded), "service.port must be numeric") {
+					t.Fatalf("multiline Helm cause did not reach the final receipt: %s", encoded)
+				}
+			}
 			if strings.HasPrefix(scenario.first, "upgrade-") || scenario.first == "rollback-recovered" {
 				receipt := first["result"].(map[string]interface{})
 				facts := receipt["structuredContent"].(map[string]interface{})
@@ -409,5 +425,64 @@ func TestSubscribeDoagentSSEForwardsToolLifecycleAndHonestWaiting(t *testing.T) 
 			}
 			t.Fatal("no truthful waiting notice or terminal result")
 		}
+	}
+}
+
+func TestApplyDiagnosisProgressDoesNotBecomeFinalEvidence(t *testing.T) {
+	for _, structured := range []bool{false, true} {
+		t.Run(fmt.Sprint(structured), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, update := range []string{
+					`{"sessionUpdate":"tool_call_update","toolCallId":"first","toolName":"mcp_doops_helm","status":"failed"}`,
+					`{"sessionUpdate":"agent_progress","content":{"type":"text","text":"Found the missing port; correcting it. password=synthetic-progress-canary"}}`,
+					`{"sessionUpdate":"agent_progress","content":{"type":"text","text":"Checking data: {pending synthetic-progress-canary"}}`,
+					`{"sessionUpdate":"tool_call_update","toolCallId":"repair","toolName":"mcp_doops_helm","status":"completed"}`,
+					`{"sessionUpdate":"turn_finished","status":"completed"}`,
+				} {
+					fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":%s}}\n\n", update)
+				}
+			}))
+			defer server.Close()
+			var events []notificationEvent
+			var finals int
+			err := subscribeDoagentSSEWithCollectorReady(t.Context(), server.URL, "repair",
+				func(event notificationEvent) { events = append(events, event) },
+				func(update map[string]interface{}) error {
+					if update["sessionUpdate"] == "agent_progress" {
+						t.Fatal("diagnostic progress must not enter the receipt collector")
+					}
+					if update["sessionUpdate"] == "turn_finished" {
+						finals++
+					}
+					return nil
+				}, nil, false, false, nil, structured)
+			if err != nil || finals != 1 {
+				t.Fatalf("terminal=%d err=%v", finals, err)
+			}
+			found := false
+			withheld := false
+			for index, event := range events {
+				if strings.Contains(event.Data, "synthetic-progress-canary") {
+					t.Fatal("progress leaked a credential")
+				}
+				if strings.Contains(event.Data, "correcting it") {
+					found = true
+					if index != 1 || event.Kind == "assistant_delta" ||
+						(structured && !strings.Contains(event.Data, `"sessionUpdate":"doops_notice"`)) {
+						t.Fatalf("diagnosis was not ordered nonterminal progress: %#v", events)
+					}
+				}
+				if strings.Contains(event.Data, "progress text withheld") {
+					withheld = true
+					if index != 2 || !strings.Contains(event.Data, "still waiting for the execution result") {
+						t.Fatalf("unsafe progress did not retain its nonterminal status: %#v", event)
+					}
+				}
+			}
+			if !found || !withheld {
+				t.Fatalf("diagnosis was discarded: %#v", events)
+			}
+		})
 	}
 }

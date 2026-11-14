@@ -162,6 +162,47 @@ func TestRunHelmCommandReportsMutationFailureWithoutChartOutput(t *testing.T) {
 	}
 }
 
+func TestHelmStderrReasonKeepsActionableMultilineDiagnostics(t *testing.T) {
+	reason := helmStderrReason([]byte("Error: UPGRADE FAILED: values are invalid\n" +
+		"missing required key: loki.storage.bucketNames.chunks\n" +
+		"private_token=synthetic-helm-canary\n"))
+	if !strings.Contains(reason, "UPGRADE FAILED: values are invalid") ||
+		!strings.Contains(reason, "missing required key: loki.storage.bucketNames.chunks") {
+		t.Fatalf("multiline Helm diagnostics were truncated: %q", reason)
+	}
+	if strings.Contains(reason, "synthetic-helm-canary") {
+		t.Fatalf("Helm diagnostics leaked credential material: %q", reason)
+	}
+	key := "-----BEGIN PRIVATE KEY-----\nsynthetic-key-body\n-----END PRIVATE KEY-----"
+	if strings.Contains(helmStderrReason([]byte(key)), "synthetic-key-body") {
+		t.Fatal("multiline private key leaked")
+	}
+	for _, payload := range []string{
+		`{"password":"synthetic-private-canary"}`,
+		"password: synthetic-private-canary",
+		"stringData: {\"password\":\"synthetic-private-canary\"}",
+		"data: {\"password\":\"synthetic-private-canary\"",
+	} {
+		message := "UPGRADE FAILED: invalid values\n" + payload
+		if got := helmStderrReason([]byte(message)); strings.Contains(got, "synthetic-private-canary") {
+			t.Fatalf("structured Helm diagnostic leaked: %q", got)
+		}
+		response := helmMCPFailureResponse("private-diagnostic", &helmToolFailure{
+			cause: errors.New(message), phase: "execution", executionStarted: true,
+		})
+		encoded, err := json.Marshal(response)
+		if err != nil || strings.Contains(string(encoded), "synthetic-private-canary") ||
+			!strings.Contains(string(encoded), `"isError":true`) ||
+			!strings.Contains(string(encoded), `"executionStarted":true`) {
+			t.Fatalf("Helm failure receipt lost failure or disclosed payload: %s err=%v", encoded, err)
+		}
+	}
+	long := helmStderrReason([]byte(strings.Repeat("x", 70000)))
+	if !strings.HasSuffix(long, "[stderr truncated]") || len(long) > 4200 {
+		t.Fatalf("oversized stderr is not explicitly bounded: %d bytes", len(long))
+	}
+}
+
 func TestRunHelmCommandClassifiesInitialInstallHistory(t *testing.T) {
 	for _, test := range []struct {
 		name, stderr, stdout string

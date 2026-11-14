@@ -20,9 +20,13 @@
 | 数据库只读查询 | `mcp_dosql_read` | 仅 DoSql 专用会话提供，结果和 evidence；普通 ask 交回上层用 `doops -session <s> sql --target <t>`，变更用 `--mode apply --sql/--file` |
 | 读 session 工作区里的文件 | `Read`/`Glob`/`Grep` | 文件内容 |
 
-Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会用受管凭据绑定给你。
+Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已有绑定元数据和工作负载的
+`secretKeyRef` 引用，不读取 Secret 值；内层没有凭据查询或管理工具时交回上层处理。
 管理员用户、grant 和 token 操作不在本会话的工具里；交回上层使用相应 `doops admin`
 入口并遵循私密输出要求，不尝试用 shell、数据库或其它工具绕过。
+缺少本层工具时，在返回上层的结果中写清 target/session、已查事实、错误类别、未完成事项、
+所需现有入口和非秘密参数；上层沿用已有授权执行并回传真实结果，不仅给命令让用户手工跑。
+只有必需事实、权限或执行能力确实无法取得时才报告具体阻塞，不重复索要已有授权。
 
 # 发布
 
@@ -66,11 +70,22 @@ Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会
 # 认证错误怎么判断
 
 按错误码判断属于哪一层：
-- `gateway_auth_missing|invalid|expired|revoked|user_disabled|invalid_expiry`（`auth_domain=gateway`）：用户的 Gateway token 状态，按具体 code 给出原因并让用户 `doops login`；`gateway_auth_unavailable` 表示 Gateway 鉴权存储不可用。
+- `gateway_auth_missing|invalid|expired|revoked|invalid_expiry`（`auth_domain=gateway`）：用户的 Gateway token 状态；由上层先核对请求的 Gateway 和已有登录态，确需更新 token 时通过 `doops login` 的私密输入恢复认证。
+- `gateway_auth_user_disabled`：账号被禁用，由上层核查账号状态和禁用原因，按已有管理授权处理；重新登录不能解除禁用。
+- `gateway_auth_unavailable`：Gateway 鉴权存储不可用，由上层按已有运维授权诊断并修复存储或服务故障，不要求重新登录。
 - `edge_enrollment_auth_failed`：边缘通道 enrollment token 问题。
-- `credential_*`、`dosql_database_binding_missing`：受管凭据的绑定或物化问题。
-- 数据库没有绑定凭据时，这是用户的真实需求，不是终点：先从工作负载的 `secretKeyRef` 识别数据库和 Secret 名，再给出 `credential configure --use database --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD` 这条命令。不要向用户索要密码，不要在输出里写出任何 Secret 值，也不要只回答“未绑定，无法操作”。
-- `helm_chart_requires_credential`：Chart 仓库要求认证，但这个 target 没有绑定 helmPull 凭据。给出 `credential configure --type helmRepository --use helmPull` 这条命令，再重跑同一条 `ask --apply`；凭据绑好后会自动生效，不需要 `--credential`。
+- `credential_*`、`dosql_database_binding_missing`：先按具体错误检查受管凭据的绑定、版本或物化状态，
+  由上层用 `doops -session <s> credential list --target <t>` 核对既有绑定，优先复用已可用资源。
+- 数据库缺少绑定时，先核对已有凭据元数据，再从工作负载及其 `secretKeyRef` 读取 namespace、
+  Secret 名、键名及相关非秘密连接事实。按实际键和 DoSql 输入要求交接上层执行
+  `credential configure --use database --from-secret <secret> --keys <实际键名>`，
+  必要的 `--key-map` 或无密码 `--connection-uri`/`--password-key` 依据实际资产确定。
+  上层在已有授权内完成配置、回传结果后继续原 SQL 任务；不索要密码、不输出 Secret 值，
+  不仅回答“未绑定，无法操作”。
+- `helm_chart_requires_credential`：先核对实际 Chart origin 和 target 的既有 helmPull 绑定；
+  确实缺失时交接上层在已有授权和安全输入条件下执行
+  `credential configure --type helmRepository --use helmPull`，回传配置结果后重跑同一条
+  `ask --apply`；同源凭据唯一时会自动生效，不需要 `--credential`。
 - `credential_reference_ambiguous`：检查实际 Chart origin 与绑定仓库；只有同一 origin
   仍有多个候选且任务事实无法区分时，报告候选资源名及需要补充的具体选择。
 - 业务服务返回 401：只有在 Gateway 已通过、且 Agent 确实用受管凭据访问了该服务时，才是业务凭据问题；说明是哪个服务。
