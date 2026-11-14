@@ -291,7 +291,7 @@ func helmMCPFailureResponse(id interface{}, err error) api.JSONRPCResponse {
 	// DoAgent gives the model MCP text content while preserving structuredContent
 	// for attestation. Expose the same facts so a retry decision can use them too.
 	facts, _ := json.Marshal(fields)
-	text := sanitizeSecretText(err.Error()) + "\n" + string(facts)
+	text := capToolOutput(redactHelmDiagnostic(err.Error())) + "\n" + string(facts)
 	return buildStructuredToolErrorResponse(id, text, map[string]interface{}{
 		"structuredContent": fields,
 	})

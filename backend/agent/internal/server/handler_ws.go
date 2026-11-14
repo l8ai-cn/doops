@@ -1604,6 +1604,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": promptValue}
 	promptParams["mode"] = "reject"
+	if deadline, ok := ctx.Deadline(); ok {
+		promptParams["wallClockTimeoutSecs"] = max(1, int64(time.Until(deadline)/time.Second))
+	}
 	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
@@ -2656,6 +2659,29 @@ func subscribeDoagentSSEWithCollectorReady(
 							return err
 						}
 					}
+				}
+				if updateType == "agent_progress" {
+					text, err := doagentAgentMessageText(sessionUpdate["content"])
+					if err != nil {
+						return errors.New("doagent_sse_protocol_invalid")
+					}
+					public, err := redactDoagentUIText(text)
+					if err != nil {
+						public = "[progress text withheld: private payload could not be redacted; still waiting for the execution result]"
+					}
+					if sessionUpdate["replay"] != true {
+						if structuredEvents {
+							pushProgress(publicDoagentUINotification(map[string]interface{}{
+								"sessionUpdate": "doops_notice", "turnId": targetTurnID,
+								"content": map[string]interface{}{"type": "text", "text": public},
+							}))
+						} else {
+							pushProgress(rawNotification("[progress] " + public + "\n"))
+						}
+					}
+					// Progress is diagnostic UI text, not execution evidence.
+					// Do not pass it to the receipt collector.
+					continue
 				}
 				if collector != nil {
 					if err := collector(sessionUpdate); err != nil {

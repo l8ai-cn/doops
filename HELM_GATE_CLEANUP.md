@@ -155,3 +155,122 @@ without new evidence identify a concrete dependency rather than repeat a mutatio
   credential setup verifies a Kubernetes Secret and cannot provision this
   standalone builder. No target upgrade is claimed: `gw-test` still reports
   `76abae08a36d920c0058486d2d8ab86880c4c121`.
+
+## Remaining Entry Points (2026-11-15)
+
+- [x] Recheck the live target: `gw-test` still runs Agent
+  `76abae08a36d920c0058486d2d8ab86880c4c121` and do-agent `0.2.42`;
+  `test/loki` is absent. This is not deployed acceptance of the source fixes.
+- [x] Find an additional caller-side gate in the sibling DoAgent repository:
+  `plugins/doagent-ops` requires an image, CI evidence, a fixed Chart directory
+  and a repository push. Remove those prerequisites from its Skill and task renderer.
+- [x] Verify the renderer's Chart-only path and preservation of optional task facts.
+- [ ] Independently review the continuation loop and remaining reachable Helm gates.
+- [ ] Resolve the controlled builder's registry delivery dependency, then verify the
+  installed managed flow. Preserve the diagnostic session's no-Loki-mutation boundary.
+
+## Remaining Recovery Defects (2026-11-15)
+
+- Tool-evidence reviews consumed the final-answer continuation budget while
+  discarding their repair instructions. Repair the existing DoAgent loop in
+  the sibling `doagent/src/agent_loop`, not the ignored review checkout.
+- Reject truncated review status JSON; bound review by cancellation and the
+  request deadline; keep recent execution evidence in the review context.
+- Preserve multiline Helm stderr through MCP and final receipts. Add a
+  nonterminal diagnosis event and pass the remaining request deadline to ACP.
+- Verify ordinary Chart `data` values and custom-resource diagnosis without
+  exposing credential payloads or mistaking process text for success.
+- Online reread still reports Agent
+  `76abae08a36d920c0058486d2d8ab86880c4c121`; deployment acceptance is pending.
+
+## Integration Verification (2026-11-15)
+
+- Focused Agent Helm, receipt and evidence tests passed, as did CLI apply/ask
+  receipt checks and seven deployment/host-access documentation checks.
+- The DoAgent deployment renderer accepts a remote Chart with only target,
+  release and namespace. Optional repository, image, reason and acceptance
+  facts are retained when supplied.
+- A fresh Gateway read still reports the old Agent commit on `gw-test`.
+  Published CLI/Skill artifacts do not establish deployment of the Agent.
+- Registry publication is being resolved using existing audited build and
+  image-copy paths. Private credentials remain on their granted targets.
+- Independent review found structured stderr redaction gaps and a progress
+  display error that could terminate SSE. Both are corrected: credential
+  canaries are removed from JSON/YAML errors, unsafe progress is explicitly
+  withheld, and receipt collection continues to the actual terminal event.
+- All 444 Python contract tests and 8 subtests passed. Focused stdio-to-SSE
+  receipt, correction, progress and redaction checks also passed.
+- The remaining runtime image depends on DoAgent CI. Current CNB quota is
+  7,372,800 CPU seconds with 7,371,050 used (1,750 remaining); its pipeline
+  requires 4,800 CPU seconds to start. The previous build
+  `cnb-hnp-1k7aqktuh` failed in Prepare for this reason, before compiling.
+  No billing or quota change has been made.
+
+## Delivery Recheck (2026-11-15)
+
+1. Finish recovery, deadline, cancellation and receipt verification, including
+   the default-stack nested-agent regression before committing DoAgent.
+2. Commit only task-owned changes in both repositories, push and confirm the
+   exact remote SHAs. Preserve unrelated ACP cleanup changes.
+3. Obtain matching immutable runtime artifacts and verify the installed flow.
+   A candidate binary or fixture result does not establish target rollout.
+
+The fresh Gateway read of `gw-test` confirms
+`doops-zyj/zyj-test`, Agent
+`76abae08a36d920c0058486d2d8ab86880c4c121`, DoAgent `0.2.42` and no
+`test/loki` release. The CLI is already `v0.3.2` /
+`fe01a931ebef3eda84c1099303b0151b88210508`.
+
+CNB quota and build-stage APIs independently confirm the recorded build
+dependency: only 1,750 CI CPU seconds remain, while the failed 8-CPU
+pipeline requires 4,800 before it can start. Its build and push stages were
+skipped. No quota, billing, credential grant or Loki resource was changed.
+
+Current candidate-source probes through the Gateway passed on the actual target:
+
+- `loki-readonly-recheck-20261115` downloaded and validated the original public
+  Loki Chart anonymously: 168,364 bytes, digest
+  `sha256:f0026f251da5b49cea636a24143dbbadf15b39f51fc4639c9e0d08a4bc975ee3`,
+  no mutation, exit 0. This supersedes the earlier failed download rechecks.
+- `helm-policy-recheck-20261115` executed the actual managed MCP executor with
+  real Helm: parameter rejection, known template failure, corrected
+  NetworkPolicy-only release deployed at revision 1, then successful uninstall
+  and an empty release readback. All attempt results were present, exit 0.
+- The source-side MCP/SSE receipt bridge, nonterminal diagnosis, Chart data and
+  multiline diagnostic checks passed; six deployment contract checks passed.
+
+The task-local receipt is `.local/helm-recovery-check/receipt.json`. These probes
+use freshly compiled candidate code; they do not replace the installed Agent or
+prove the new DoAgent loop is deployed.
+
+## Runtime Delivery (2026-11-15)
+
+- Independent Go review found no remaining blockers in multiline diagnostics,
+  progress or failure receipts; focused MCP/SSE/WebSocket scenarios passed.
+- DoAgent default-stack agent-loop checks passed 196/196; default and
+  browser/i18n/web builds passed. Review token accounting and the ACP fork
+  deadline propagation are included in the current candidate.
+- The existing `gw-silicon` node supports native amd64 BuildKit builds and
+  dependency downloads. Use the same committed runtime Dockerfile and retain
+  its own terminal receipt, then publish the OCI artifact from `gw-hdu-235`
+  using that node's existing registry authentication. This does not change
+  the failed CNB result or account quota.
+- Remaining: push exact source commits, build and verify immutable runtime
+  artifacts, update the DoOps runtime pin, and validate the installed target.
+
+DoAgent source `64f075e37ccf06122ee4f88646b0ebd1548351da` is pushed to
+`l8ai/ai/doagent` main and confirmed through `origin/main`. Its CNB build
+`cnb-ps6-1k7dsnrgr` failed before compilation; the quota dependency remains.
+The controlled build uses session `doagent-build-64f075e` on `gw-silicon`.
+Its first task `cf7a321ad247afc5` exited 1 because source sync omitted
+the committed `settings.json`: non-Git snapshot filtering ignored the
+`!/settings.json` inclusion. The CLI now delegates ignore matching to Git
+and preserves already-filtered files in the transport commit.
+
+The missing public configuration contract was delivered using `doops write`;
+source and remote SHA256 both equal
+`9619e118559697e0a92956dabaaa6a432d0b1caab3bcb53d3f143cea4548ede8`.
+Build task `b7993003801fdc10` is in progress; no successful image is claimed.
+The CLI suite and 444 Python contract tests plus 8 subtests passed after the
+snapshot fix. Production-feature agent-loop scenarios passed 144/144,
+including token accounting, correction, cancellation and deadline exits.

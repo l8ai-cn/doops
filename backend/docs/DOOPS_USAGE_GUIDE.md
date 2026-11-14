@@ -581,6 +581,10 @@ Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不�
 HTTP `/git` 入口。
 
 Do not reimplement push with tar/base64/chunk upload. `doops_workspace_*` chunk tools are low-level compatibility JSON-RPC tools, not the standard CLI/deploy path; seeing 512KB chunk logs means a script is bypassing the supported Git HTTP path. Push respects `.gitignore` and `.doopsignore`; do not hide deploy manifests or scripts behind ignore rules unless intentional.
+Git evaluates `.gitignore` for both repository and ordinary-directory sources, including
+nested rules, ordered `!` inclusions and parent-directory exclusions. The transport commit
+preserves the selected files, including tracked files ignored for future additions.
+DoOps default exclusions and `.doopsignore` still apply before Git filtering.
 
 ## Pull
 

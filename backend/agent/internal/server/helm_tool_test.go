@@ -168,6 +168,7 @@ func TestBuildHelmCommandAcceptsChartSpecificValueKeys(t *testing.T) {
 		"service[0].image": "registry.example/app:v1",
 		"compat":           "true",
 		"global.compat":    "enabled",
+		"data":             "hello",
 	}
 	command, err := buildHelmCommand(params)
 	if err != nil {
@@ -250,6 +251,13 @@ func TestHelmChartSpecificInputsRenderWithRealHelm(t *testing.T) {
 		"charts/platform/values.yaml": "services:\n  api:\n    image: registry.example/api:v1\n  web:\n    image: registry.example/web:v1\ncors:\n  origins: https://default.example\n",
 		"config/base.yaml":            "services:\n  api:\n    image: registry.example/api@" + testHelmDigest + "\n",
 		"config/prod.yaml":            "services:\n  web:\n    image: registry.example/web:git-b87ab17\n",
+		"charts/platform/templates/configmap.yaml": `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+data:
+  message: {{ .Values.data | quote }}
+`,
 		"charts/platform/templates/deployments.yaml": `{{- range $name, $service := .Values.services }}
 ---
 apiVersion: apps/v1
@@ -280,7 +288,10 @@ spec:
 	params := testWorkspaceHelmParams()
 	params.Chart = "charts/platform"
 	params.ValueFiles = []string{"config/base.yaml", "config/prod.yaml"}
-	params.SetStrings = map[string]string{"cors.origins": "https://hdu.example,https://unicom.example\nhttps://third.example"}
+	params.SetStrings = map[string]string{
+		"cors.origins": "https://hdu.example,https://unicom.example\nhttps://third.example",
+		"data":         "hello, ordinary business data",
+	}
 	command, err := buildHelmCommand(params)
 	if err != nil {
 		t.Fatal(err)
@@ -303,6 +314,7 @@ spec:
 		"registry.example/web:git-b87ab17",
 		"https://hdu.example,https://unicom.example",
 		`\nhttps://third.example`,
+		`message: "hello, ordinary business data"`,
 	} {
 		if !strings.Contains(string(manifest), expected) {
 			t.Fatalf("chart-specific input %q did not render: %s", expected, manifest)

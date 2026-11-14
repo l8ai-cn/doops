@@ -317,7 +317,7 @@ func validWorkspaceCommit(value string) bool {
 func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity) (string, error) {
 	gitCmds := [][]string{
 		{"init", "-b", "master"},
-		{"add", "."},
+		{"add", "--force", "."},
 	}
 	if source != nil {
 		gitCmds = append(gitCmds, []string{"add", "-f", "--", workspaceSourceManifestPath})
@@ -914,14 +914,6 @@ func stageSnapshot(src, tmpDir string, extraExcludes []string, dryRun bool) ([]s
 	if err != nil {
 		return nil, err
 	}
-	var gitPatterns []string
-	if _, _, inGitRepo := detectGitRepo(src); !inGitRepo {
-		gitPatterns, err = loadIgnorePatterns(filepath.Join(src, ".gitignore"))
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	allExcludes := dedupePatterns(append(append([]string{}, defaultExcludes...), extraExcludes...))
 	submoduleExcludes, err := gitSubmoduleExcludes(src)
 	if err != nil {
@@ -935,7 +927,7 @@ func stageSnapshot(src, tmpDir string, extraExcludes []string, dryRun bool) ([]s
 
 	filtered := make([]string, 0, len(candidates))
 	for _, rel := range candidates {
-		if shouldExcludePath(rel, doopsPatterns) || shouldExcludePath(rel, gitPatterns) {
+		if shouldExcludePath(rel, doopsPatterns) {
 			continue
 		}
 		filtered = append(filtered, rel)
@@ -1106,8 +1098,19 @@ func filterGitIgnored(src string, relPaths []string) ([]string, error) {
 	}
 
 	repoRoot, repoPrefix, ok := detectGitRepo(src)
+	gitDir := ""
 	if !ok {
-		return relPaths, nil
+		var err error
+		gitDir, err = os.MkdirTemp("", "doops-ignore-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(gitDir)
+		cmd := exec.Command("git", "init", "--bare", "--quiet", gitDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("initialize snapshot ignore context: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		repoRoot, repoPrefix = resolvePath(src), ""
 	}
 
 	repoPaths := make([]string, 0, len(relPaths))
@@ -1121,7 +1124,7 @@ func filterGitIgnored(src string, relPaths []string) ([]string, error) {
 		relByRepoPath[repoPath] = rel
 	}
 
-	ignored, err := gitIgnoredPaths(repoRoot, repoPaths)
+	ignored, err := gitIgnoredPaths(repoRoot, repoPaths, gitDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1177,13 +1180,18 @@ func resolvePath(path string) string {
 	return clean
 }
 
-func gitIgnoredPaths(repoRoot string, repoPaths []string) (map[string]bool, error) {
+func gitIgnoredPaths(repoRoot string, repoPaths []string, gitDir string) (map[string]bool, error) {
 	if len(repoPaths) == 0 {
 		return map[string]bool{}, nil
 	}
 
-	cmd := exec.Command("git", "-C", repoRoot, "check-ignore", "--stdin", "--verbose", "--non-matching")
-	cmd.Stdin = strings.NewReader(strings.Join(repoPaths, "\n") + "\n")
+	args := []string{"-C", repoRoot}
+	if gitDir != "" {
+		args = append(args, "--git-dir="+gitDir, "--work-tree="+repoRoot)
+	}
+	args = append(args, "check-ignore", "--stdin", "--verbose", "--non-matching", "-z")
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = strings.NewReader(strings.Join(repoPaths, "\x00") + "\x00")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1194,22 +1202,16 @@ func gitIgnoredPaths(repoRoot string, repoPaths []string) (map[string]bool, erro
 	}
 
 	ignored := make(map[string]bool, len(repoPaths))
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		repoPath := filepath.ToSlash(strings.TrimSpace(parts[1]))
-		ignored[repoPath] = !strings.HasPrefix(parts[0], "::")
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	if len(out) == 0 {
+		return ignored, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("解析 git check-ignore 输出失败: %v", err)
+	if len(fields)%4 != 0 {
+		return nil, fmt.Errorf("invalid git check-ignore response")
+	}
+	for index := 0; index < len(fields); index += 4 {
+		pattern, repoPath := fields[index+2], fields[index+3]
+		ignored[filepath.ToSlash(repoPath)] = pattern != "" && !strings.HasPrefix(pattern, "!")
 	}
 
 	return ignored, nil

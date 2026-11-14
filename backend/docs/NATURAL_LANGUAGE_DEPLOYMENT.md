@@ -109,6 +109,9 @@ release/namespace、同一 operation 和原意图时才可记为修复：upgrade
 模型说明单列为 `summary`，不作为终态。缺失目标不得从后续调用倒推。
 缺失结果或证明、传输中断和取消仍保持未知结果，不能用失败文本替代证据。
 Agent 应主动反馈定位、修正和验证进度；等待工具时通道持续报告最后观察到的事件及等待时间。
+doagent 将带工具调用的模型说明发送为 `agent_progress`；DoOps 脱敏后作为进度通知转发，
+不计为最终回答或成功证据。DoOps 通过 `wallClockTimeoutSecs` 把剩余调用期限传入 doagent，
+复核与模型调用共用本轮期限，并响应同一个取消信号。
 `ask --apply` 显式传递 `completionReview=true`，由 doagent 的现有执行循环复核最终
 回答与本轮工具证据；任务尚未完成时在同一轮次中继续诊断和修正，不重新提交整个发布任务。
 完成复核使用 doagent 的有界 continuation 计数，整个调用仍受 30 分钟总期限约束；
@@ -157,6 +160,8 @@ Agent 在发送 prompt 前收到取消则返回 `doagent_prompt_cancelled_before
 `value_files` 可为零或多个，按给定顺序传给 Helm；`set_strings` 是非敏感的
 Chart-specific 覆盖。values 合并及历史值继承由 Helm 原生语义决定，DoOps 不强制重置，
 也不自行读取、改写或合并历史 values。
+普通 `data` 内容可以通过 `set_strings` 传入，不因键名本身被当作 Secret；
+凭据字段、内联认证材料以及 `data` 中的凭据内容仍不能进入模型参数。
 
 upgrade-install 直接执行 `helm upgrade --install --wait`，不附加 server dry-run、
 manifest 类型白名单、镜像策略或工作负载/Ingress 二次验收。Helm 自身的 schema、
@@ -197,7 +202,7 @@ revision 和 description 必须属于本次执行。没有工作负载不影响�
 
 | 错误码 | 含义 |
 |---|---|
-| `helm_mutation_failed` | 真实 Helm 命令失败，原因是脱敏后的 Helm 报错首行 |
+| `helm_mutation_failed` | 真实 Helm 命令失败，保留脱敏后的多行 stderr；超过 4096 字符时显式标记截断 |
 | `helm_mutation_invalid_result` | Helm 输出缺少可归属本次 mutation 的 revision 等必要结果 |
 | `helm_verification_failed` | 实际 release 未 deployed，或 revision/description 不属于本次执行 |
 | `helm_interrupted` | 本次调用用完时间预算；原因写明本次 revision 和 release 当前所处状态 |
