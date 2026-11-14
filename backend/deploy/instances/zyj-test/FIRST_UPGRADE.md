@@ -1,5 +1,11 @@
 # ZYJ Test Gateway Recovery And First Upgrade
 
+Completed on 2026-11-15 at Helm revision 21. The candidate's Gateway-routed
+Pod, exact digest and commit were verified, and the Job reached Complete.
+Both attempts' temporary Jobs, code ConfigMaps and controller identities
+were removed; backup Secrets and receipt ConfigMaps remain. This is an
+executed one-time procedure and must not be replayed against revision 21.
+
 This is only for `gw-test` -> `doops-zyj/zyj-test`,
 `agents-test/doops-agent-test`, deployed revision **20**. Submit and observe
 through the independent `gw-zyj` management target in the same cluster.
@@ -39,8 +45,8 @@ It uses the candidate image's `/app/deploy/helm/doops-agent`,
 `controller_runtime_digest`, `write_verified_receipt`). The image does not
 need to contain this instance script. The original revision's values
 are retained, changing the image and reconciling the proven Gateway URL drift.
-The checked-in `values.yaml` contains
-historical public placeholders and is not an upgrade input.
+The checked-in `values.yaml` now records the verified image and Gateway
+identity; it was not an input to this upgrade.
 
 Before mutation it stores history, user/all values, manifest, Deployment and
 verified versions in immutable Secret `zyj-test-first-upgrade-r20-backup`.

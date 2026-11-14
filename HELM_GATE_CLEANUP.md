@@ -1,7 +1,7 @@
 ---
 name: helm-gate-cleanup
 scope: task
-status: in-progress
+status: complete
 ---
 
 # Helm Gate Cleanup
@@ -39,7 +39,7 @@ prompts, and canonical skills.
 - [x] Remove custom Helm policy and preserve native command/result handling.
 - [x] Verify functional success/failure paths and run relevant regression checks.
 - [x] Review the Helm gate and receipt changes, commit/push, and verify CI.
-- [ ] Publish/install matching artifacts and verify the deployed target.
+- [x] Publish/install matching artifacts and verify the deployed target.
 
 ## Current Findings
 
@@ -321,3 +321,42 @@ including token accounting, correction, cancellation and deadline exits.
   execute the independent upgrade, verify the exact routed Pod and runtime,
   then exercise managed NetworkPolicy repair and read-only public Loki
   validation. Preserve the original no-Loki-resource-creation boundary.
+
+## Deployed Acceptance (2026-11-15)
+
+- Main CI `43646319787` and Release `43646361767` succeeded. Release v0.3.3
+  and the installed CLI/Skill all identify source
+  `6b95035459611542b3db789afc7a8c217a2c5b00`; repository, parent workspace
+  and global Skill copies were installed and compared against that release.
+- Audited build tasks `f5dee7b910ed8c34` and `75a414d90415ec58` exited 0.
+  The Agent image is
+  `sha256:cb6046bea9618044806a14371de1d58760f7bb5c2fe9fd3181bcec1d28f24511`,
+  and embeds DoAgent 0.2.45 / `64f075e37ccf06122ee4f88646b0ebd1548351da`.
+- The first upgrade exposed drift between the actual Deployment Gateway URL
+  and stored Helm values. Gateway acceptance failed and the independent Job
+  rolled back. The corrected controller reconciled the proven original URL,
+  retained the failed attempt, and completed revision 21. Recovery checks
+  cover response loss, concurrent spec changes and failure before revision
+  creation; 17 local scenarios pass.
+- `gw-test` now reports the released commit. The routed Pod UID
+  `bf4c2815-7abb-46bd-b56a-a39760e0260e`, actual image digest, DoAgent
+  version and Ready state match. The controller recorded `phase=complete`.
+- Real `ask --apply` session `helm-autorepair-live-20261115` returned
+  `doops.verified-mutation`, `verified=true`, `outcome=succeeded`.
+  It retained path-validation failures and the actual template failure,
+  then corrected `probeEnabled` in the same request. The execution failure
+  `call_01a1dc3ebdf77009ba4d93ed` links through `resolved_by` to successful
+  `call_01a1dc3ec37a70d58d58ddeb`. No further user authorization was requested.
+- Independent readback confirmed a NetworkPolicy-only manifest, deployed
+  revision 1 and an unchanged template digest. The test release was removed,
+  and subsequent readback was empty.
+- On the installed Agent, the original Loki URL returned HTTP 200,
+  168,364 bytes and SHA256
+  `f0026f251da5b49cea636a24143dbbadf15b39f51fc4639c9e0d08a4bc975ee3`.
+  Native default rendering returned the real missing
+  `loki.storage.bucketNames.chunks` error. `test/loki` remains absent, as
+  required by the original diagnostic scope.
+- Temporary upgrade Jobs, code ConfigMaps and controller SA/CRBs are removed.
+  Immutable backups and metadata receipts remain for recovery and audit.
+  Complete tool output is retained in the task-local
+  `.local/helm-recovery-check/` receipt and log artifacts.
