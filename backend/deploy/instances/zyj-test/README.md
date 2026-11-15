@@ -21,7 +21,7 @@ RoleBinding。持有本 target grant 意味着可经 Agent 管理整个集群，
 收编与恢复见 [BUILD_DEPLOY_SOP.md](../../../docs/BUILD_DEPLOY_SOP.md#agent-rbac-纳管与回滚)。
 跨越首次 RBAC 纳管点回滚必须由独立管理通道恢复；不能让 SA 自己删除自己的绑定后继续验证。
 
-2026-11-15 已部署 `v0.3.6`（DoAgent `0.2.45`），Helm revision 24，镜像 digest
+2026-11-15 曾部署 `v0.3.6`（DoAgent `0.2.45`），Helm revision 24，镜像 digest
 为 `sha256:3ee2887fd04bfd6dfca0c811174d6619489975054156c1105b9d6a9fb7cd57a9`。
 Gateway 路由到的 Pod、镜像 digest、版本与 Ready 已独立核验。首次尝试发现旧 Helm
 values 与实际 Deployment 的 Gateway URL 不一致，验收失败后自动回滚；修正配置后
@@ -40,3 +40,23 @@ values 与实际 Deployment 的 Gateway URL 不一致，验收失败后自动回
 请求中修正参数并部署成功，完整返回失败与成功回执。独立回读确认 revision 1 为 deployed、
 模板未修改，测试 release 随后已清理。原 Loki Chart 匿名下载成功；只读渲染确认默认值
 缺少存储配置，未安装 `test/loki`。
+
+当前版本为 `v0.3.7`（DoAgent `0.2.46`），源提交
+`d9f15472b2384a9d65917ea40ec7f7bf35b098eb`，Helm revision 25。
+镜像摘要见 [values.yaml](values.yaml)。Release 流水线 `43695713658` 完成测试、
+发布和制品复验；受审计构建任务 `368111e58a629d90` 成功，仓库回读的摘要与标签一致。
+升级操作 `upgrade_e58d843944506755087d37f57585cd21` 完成预检、升级及协议校验；
+Gateway 实际路由到的新 Pod UID 为 `3068d82d-0765-4552-a0c1-19bcee344df4`，
+Ready、imageID 和运行提交均已回读核对。CLI、项目与全局 Skill 已安装同一 Release。
+
+会话 `helm-autorepair-v037-20261115` 在同一请求内修正模板参数，成功发布仅含
+NetworkPolicy 的 `test/doops-recovery-v037-20261115`，返回 `verified=true`、
+`outcome=succeeded`。回执包含 35 次路径校验失败、一次真实模板失败和一次成功，
+失败通过 `resolved_by` 关联成功调用；独立回读确认 revision 1 为 deployed，
+三个 Chart 文件摘要未变。路径反复猜测仍待定位，不因最终成功而视为已解决。
+
+上述测试 release 尚未清理。后续部分完成负向验收在 RPC 建立前因 Gateway 登录
+凭据过期而拒绝，没有创建 `doops-partial-v037-20261115`。恢复登录后须完成负向验收，
+清理隔离测试 release，并回读确认清理结果。业务 `test/loki` 已由其他操作变为
+revision 6 / failed；此次平台升级没有修改它。浏览器验证使用本地生产构建连接真实
+Gateway，完成新 Agent 的版本与 Ready 查询；不代表公网 Web 控制台已发布本版本。
