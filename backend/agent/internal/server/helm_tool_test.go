@@ -21,9 +21,9 @@ func testHelmParams() api.HelmParams {
 		Chart:      "https://charts.example.test/app-1.0.0.tgz",
 		Namespace:  "apps",
 		ValueFiles: []string{"https://config.example.test/app-production.yaml"},
-		SetStrings: map[string]string{
+		SetStrings: map[string]api.HelmScalarValue{
 			"image.repository": "registry.example/app",
-			"image.digest":     testHelmDigest,
+			"image.digest":     api.HelmScalarValue(testHelmDigest),
 		},
 		Timeout: "180s",
 	}
@@ -141,7 +141,7 @@ func TestBuildHelmCommandRejectsOnlyTransportAndCredentialViolations(t *testing.
 		{
 			name: "credential override",
 			mutate: func(params api.HelmParams, _ string) api.HelmParams {
-				params.SetStrings = map[string]string{"registry.password": "synthetic-secret"}
+				params.SetStrings = map[string]api.HelmScalarValue{"registry.password": "synthetic-secret"}
 				return params
 			},
 			wantError: "forbidden credential material",
@@ -164,7 +164,7 @@ func TestBuildHelmCommandAcceptsChartSpecificValueKeys(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	params := testHelmParams()
-	params.SetStrings = map[string]string{
+	params.SetStrings = map[string]api.HelmScalarValue{
 		"service[0].image": "registry.example/app:v1",
 		"compat":           "true",
 		"global.compat":    "enabled",
@@ -175,7 +175,7 @@ func TestBuildHelmCommandAcceptsChartSpecificValueKeys(t *testing.T) {
 		t.Fatalf("chart-specific key was rejected: %v", err)
 	}
 	for key, value := range params.SetStrings {
-		if !slices.Contains(command.args, key+"="+value) {
+		if !slices.Contains(command.args, key+"="+string(value)) {
 			t.Fatalf("chart-specific override %s missing: %#v", key, command.args)
 		}
 	}
@@ -186,7 +186,7 @@ func TestBuildHelmCommandRejectsPATFieldsWithoutRejectingCompat(t *testing.T) {
 	for _, key := range []string{"pat", "PAT", "git.pat", "githubPat", "githubPAT", "github_pat", "githubpat", "gitlabpat"} {
 		t.Run(key, func(t *testing.T) {
 			params := testHelmParams()
-			params.SetStrings = map[string]string{key: "synthetic-secret"}
+			params.SetStrings = map[string]api.HelmScalarValue{key: "synthetic-secret"}
 			if _, err := buildHelmCommand(params); err == nil || !strings.Contains(err.Error(), "forbidden credential material") {
 				t.Fatalf("credential field %q was accepted: %v", key, err)
 			}
@@ -226,7 +226,7 @@ func TestBuildHelmCommandRejectsLocalAssetsAndInlineSecrets(t *testing.T) {
 		{
 			name: "credential URL",
 			mutate: func(params *api.HelmParams) {
-				params.SetStrings = map[string]string{"upstream.url": "https://user:secret@example.test/api"}
+				params.SetStrings = map[string]api.HelmScalarValue{"upstream.url": "https://user:secret@example.test/api"}
 			},
 			wantError: "forbidden credential material",
 		},
@@ -288,7 +288,7 @@ spec:
 	params := testWorkspaceHelmParams()
 	params.Chart = "charts/platform"
 	params.ValueFiles = []string{"config/base.yaml", "config/prod.yaml"}
-	params.SetStrings = map[string]string{
+	params.SetStrings = map[string]api.HelmScalarValue{
 		"cors.origins": "https://hdu.example,https://unicom.example\nhttps://third.example",
 		"data":         "hello, ordinary business data",
 	}

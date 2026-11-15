@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/user/doops/agent/api"
 )
 
 func TestHelmDataOverrideAcceptsOrdinaryContent(t *testing.T) {
@@ -19,7 +21,7 @@ func TestHelmDataOverrideAcceptsOrdinaryContent(t *testing.T) {
 	} {
 		t.Run(value, func(t *testing.T) {
 			params := testHelmParams()
-			params.SetStrings = map[string]string{"data": value}
+			params.SetStrings = map[string]api.HelmScalarValue{"data": api.HelmScalarValue(value)}
 			command, err := buildHelmCommand(params)
 			if err != nil {
 				t.Fatalf("ordinary Chart data rejected: %v", err)
@@ -65,7 +67,7 @@ func TestHelmDataOverrideRejectsCredentialsBeforeExecution(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			params := testWorkspaceHelmParams()
-			params.SetStrings = map[string]string{test.key: test.value}
+			params.SetStrings = map[string]api.HelmScalarValue{test.key: api.HelmScalarValue(test.value)}
 			raw, err := json.Marshal(params)
 			if err != nil {
 				t.Fatal(err)
@@ -84,5 +86,48 @@ func TestHelmDataOverrideRejectsCredentialsBeforeExecution(t *testing.T) {
 				t.Fatalf("Helm started before credential validation: %v", err)
 			}
 		})
+	}
+}
+
+// A model naturally expresses chart values in their native JSON shape, such as
+// `loki.useTestSchema: true`. Helm's --set-string accepts that scalar, so the
+// request must accept it instead of failing on the value's JSON type.
+func TestHelmSetStringsAcceptsNativeScalarValues(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	raw := []byte(`{"session_id":"release","operation":"upgrade-install","release":"loki",
+		"namespace":"test","chart":"https://charts.example.test/loki-6.55.0.tgz",
+		"set_strings":{"loki.useTestSchema":true,"loki.storage.bucketNames.chunks":"loki-chunks","gateway.replicas":2}}`)
+	var params api.HelmParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		t.Fatalf("native Helm scalar value rejected: %v", err)
+	}
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatalf("buildHelmCommand: %v", err)
+	}
+	for _, wanted := range []string{
+		"loki.useTestSchema=true",
+		"loki.storage.bucketNames.chunks=loki-chunks",
+		"gateway.replicas=2",
+	} {
+		if !slices.Contains(command.args, wanted) {
+			t.Fatalf("scalar override %q missing: %#v", wanted, command.args)
+		}
+	}
+}
+
+func TestHelmSetStringsRejectsStructuredValues(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	for _, values := range []string{
+		`"loki.schema":["a","b"]`,
+		`"loki.schema":{"a":1}`,
+		`"loki.schema":null`,
+	} {
+		raw := []byte(`{"session_id":"release","operation":"upgrade-install","release":"loki",` +
+			`"namespace":"test","chart":"https://charts.example.test/loki.tgz","set_strings":{` + values + `}}`)
+		var params api.HelmParams
+		if err := json.Unmarshal(raw, &params); err == nil {
+			t.Fatalf("structured Helm value was accepted: %s", raw)
+		}
 	}
 }
