@@ -149,7 +149,11 @@ data:
 		t.Fatal(err)
 	}
 	var params api.HelmParams
-	if err := json.Unmarshal([]byte(`{"session_id":"release","operation":"upgrade-install","release":"app","namespace":"apps","asset_source":"workspace","chart":"deploy/helm/prod","set_strings":{"enabled":false,"replicas":2,"ratio":0.0001,"exponent":1e2,"label":"false"}}`), &params); err != nil {
+	bound, err := bindK8SMCPSession([]byte(`{"operation":"upgrade-install","release":"app","namespace":"apps","asset_source":"workspace","chart":"deploy/helm/prod","set_strings":{"enabled":false,"replicas":2,"ratio":0.0001,"exponent":1e2,"label":"false"}}`), "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bound, &params); err != nil {
 		t.Fatal(err)
 	}
 	command, err := buildHelmCommand(params)
@@ -173,6 +177,20 @@ data:
 		if !strings.Contains(string(manifest), expected) {
 			t.Fatalf("missing scalar %q: %s", expected, manifest)
 		}
+	}
+}
+
+func TestHelmSessionBindingPreservesNumericInput(t *testing.T) {
+	bound, err := bindK8SMCPSession([]byte(`{"set_strings":{"exact":9007199254740993,"ratio":1.234567890123456789}}`), "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var params api.HelmParams
+	if err := json.Unmarshal(bound, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.SetStrings["exact"] != "9007199254740993" || params.SetStrings["ratio"] != "1.234567890123456789" {
+		t.Fatalf("input changed before reaching Helm: %s", bound)
 	}
 }
 
