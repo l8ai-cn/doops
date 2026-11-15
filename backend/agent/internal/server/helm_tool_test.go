@@ -329,7 +329,7 @@ func TestHelmTimeoutUsesPositiveDurationWithinCallBudget(t *testing.T) {
 		valid   bool
 	}{
 		{"", true}, {"1m30s", true}, {"10m", true}, {"600s", true}, {"1ms", true},
-		{"0", false}, {"0s", false}, {"-1s", false}, {"10m1s", false}, {"1h", false}, {"forever", false},
+		{"25m", true}, {"0", false}, {"0s", false}, {"-1s", false}, {"25m1s", false}, {"1h", false}, {"forever", false},
 	} {
 		t.Run(test.timeout, func(t *testing.T) {
 			params := testHelmParams()

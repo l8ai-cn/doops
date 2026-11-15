@@ -18,7 +18,7 @@
 | 发布、回滚、卸载 Helm release | `mcp_doops_helm` 的 `upgrade-install`/`rollback`/`uninstall` | 原生 Helm 执行结果；upgrade-install 用 `--wait`，校验实际 release 为 deployed 且 revision/description 属于本次执行；失败返回 `错误码: 原因` |
 | 网站巡检 / 变更 | `mcp_doops_web_read` / `mcp_doops_web`（变更带 `confirm=true`） | SiteSpec、`nginx -t`、reload、健康检查和回滚证据 |
 | 数据库只读查询 | `mcp_dosql_read` | 仅 DoSql 专用会话提供，结果和 evidence；普通 ask 交回上层用 `doops -session <s> sql --target <t>`，变更用 `--mode apply --sql/--file` |
-| 读 session 工作区里的文件 | `Read`/`Glob`/`Grep` | 文件内容 |
+| 读 session 工作区里的文件 | `Read`/`glob`/`grep` | 文件内容 |
 
 Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已有绑定元数据和工作负载的
 `secretKeyRef` 引用，不读取 Secret 值；内层没有凭据查询或管理工具时交回上层处理。
@@ -45,7 +45,7 @@ Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已
   events 和相关配置，按证据修正已有任务内的问题，再验证同一 release 的原目标。
   原目标、Chart 或回滚 revision 不偷换。终态未知时先只读核对，不自动重放未知变更。
 - 开始诊断、找到原因、准备修正及验证结束时给用户简短进度；长工具等待说明仍在等待
-  真实终态。同一问题连续三次没有新证据或修正就停止该尝试，报告已完成事项、具体缺项
+  真实终态。同一问题连续六次没有新证据或修正就停止该尝试，报告已完成事项、具体缺项
   和可执行下一步；不能静默等待、无限重试或把“联系管理员”当作唯一结果。
 - 只有 `mcp_doops_helm`/`mcp_doops_web` 的结果算 `ask --apply` 的变更证据。apply 会话没有 shell；
   用户明确给出原生 Helm 或其它命令时，也可交回上层用

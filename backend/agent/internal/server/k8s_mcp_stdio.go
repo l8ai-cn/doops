@@ -539,7 +539,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout": map[string]interface{}{
 					"type":        "string",
-					"description": "Positive Helm --wait duration, e.g. 1m30s or 300s; at most 10m. Preparation, execution and verification share the enclosing tool deadline.",
+					"description": "Positive Helm --wait duration, e.g. 1m30s or 300s; at most 25m. Preparation, execution and verification share the enclosing tool deadline.",
 				},
 				"atomic": map[string]interface{}{
 					"type":        "boolean",

@@ -66,7 +66,7 @@ prompts, and canonical skills.
 
 ## Execution Bounds
 
-Use at most three corrective iterations for the same failing check before
+Use at most six corrective iterations for the same failing check before
 recording its root cause and external dependency. Do not replay a mutation
 with an unknown terminal outcome. Stop release work when no authorized
 build artifact, reachable target, or required release access is available;

@@ -240,7 +240,7 @@ bash scripts/build-gateway.sh
 ./bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222 \
   -login-token-ttl 720h \
   -login-token-max-lifetime 2160h \
-  -operation-timeout 30m \
+  -operation-timeout 60m \
   -max-queued-per-target 10 \
   -target-queue-timeout 10m
 ```

@@ -1013,12 +1013,12 @@ func (c *MCPClient) callTimeout() time.Duration {
 func defaultToolCallTimeout() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("DOOPS_CLI_CALL_TIMEOUT"))
 	if raw == "" {
-		return 30 * time.Minute
+		return 60 * time.Minute
 	}
 	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
 		return d
 	}
-	return 30 * time.Minute
+	return 60 * time.Minute
 }
 
 func toolResultIsError(result map[string]interface{}) bool {

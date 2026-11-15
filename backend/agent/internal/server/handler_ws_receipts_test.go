@@ -125,7 +125,7 @@ exit 0`
 						if params["completionReview"] != true {
 							t.Error("apply omitted doagent completion review")
 						}
-						if budget, ok := params["wallClockTimeoutSecs"].(float64); !ok || budget <= 0 || budget > 1800 {
+						if budget, ok := params["wallClockTimeoutSecs"].(float64); !ok || budget <= 0 || budget > 3600 {
 							t.Errorf("prompt omitted the remaining execution deadline: %v", params["wallClockTimeoutSecs"])
 						}
 						promptReady <- params

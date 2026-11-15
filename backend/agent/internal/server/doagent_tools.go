@@ -13,7 +13,7 @@ import "strings"
 // authority, so ordinary ask cannot silently turn a Helm or site operation
 // into an unverified mutation.
 func doagentAllowedTools(apply bool, skill string) []string {
-	tools := []string{"Read", "Glob", "Grep", "Skill"}
+	tools := []string{"Read", "glob", "grep", "Skill"}
 	if !apply {
 		tools = append(tools, "Bash")
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,22 +47,15 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 
 func TestDoagentAllowedToolsUsesPermissionEngineForDiagnostics(t *testing.T) {
 	ordinary := doagentAllowedTools(false, "")
-	if !sliceContainsString(ordinary, "Bash") ||
-		!sliceContainsString(ordinary, "mcp_doops_k8s_read") ||
-		!sliceContainsString(ordinary, "mcp_doops_web_read") ||
-		sliceContainsString(ordinary, "mcp_doops_k8s") {
-		t.Fatalf("ordinary prompt tool surface is incomplete: %#v", ordinary)
-	}
-	if sliceContainsString(ordinary, "mcp_dosql_read") {
-		t.Fatalf("generic prompt gained SQL tools: %#v", ordinary)
+	wantOrdinary := []string{"Read", "glob", "grep", "Skill", "Bash", "mcp_doops_k8s_read", "mcp_doops_web_read"}
+	if !reflect.DeepEqual(ordinary, wantOrdinary) {
+		t.Fatalf("ordinary prompt tool directory = %#v, want %#v", ordinary, wantOrdinary)
 	}
 
 	apply := doagentAllowedTools(true, "")
-	if sliceContainsString(apply, "mcp_doops_k8s") ||
-		!sliceContainsString(apply, "mcp_doops_helm") ||
-		sliceContainsString(apply, "mcp_doops_web") ||
-		sliceContainsString(apply, "Bash") {
-		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)
+	wantApply := []string{"Read", "glob", "grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read", "mcp_doops_helm"}
+	if !reflect.DeepEqual(apply, wantApply) {
+		t.Fatalf("apply prompt tool directory = %#v, want %#v", apply, wantApply)
 	}
 	for _, skill := range []string{"k8s", "image-build"} {
 		tools := doagentAllowedTools(true, skill)
