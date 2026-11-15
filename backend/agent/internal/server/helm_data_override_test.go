@@ -90,8 +90,8 @@ func TestHelmDataOverrideRejectsCredentialsBeforeExecution(t *testing.T) {
 }
 
 // A model naturally expresses chart values in their native JSON shape, such as
-// `loki.useTestSchema: true`. Helm's --set-string accepts that scalar, so the
-// request must accept it instead of failing on the value's JSON type.
+// `loki.useTestSchema: true`. Preserve that native type through Helm so schema
+// validation and templates see a boolean rather than the string "true".
 func TestHelmSetStringsAcceptsNativeScalarValues(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	raw := []byte(`{"session_id":"release","operation":"upgrade-install","release":"loki",
@@ -105,13 +105,20 @@ func TestHelmSetStringsAcceptsNativeScalarValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildHelmCommand: %v", err)
 	}
-	for _, wanted := range []string{
-		"loki.useTestSchema=true",
-		"loki.storage.bucketNames.chunks=loki-chunks",
-		"gateway.replicas=2",
+	for _, wanted := range [][]string{
+		{"--set", "loki.useTestSchema=true"},
+		{"--set-string", "loki.storage.bucketNames.chunks=loki-chunks"},
+		{"--set", "gateway.replicas=2"},
 	} {
-		if !slices.Contains(command.args, wanted) {
-			t.Fatalf("scalar override %q missing: %#v", wanted, command.args)
+		found := false
+		for index := 0; index+1 < len(command.args); index++ {
+			if command.args[index] == wanted[0] && command.args[index+1] == wanted[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("scalar override %q %q missing: %#v", wanted[0], wanted[1], command.args)
 		}
 	}
 }
