@@ -1315,19 +1315,44 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 	}
 }
 
-func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
-	testAgentApplyTerminalHelmResult(t, false, false)
+func TestAgentApplyPreservesVerifiedHelmWhenTurnIsIncomplete(t *testing.T) {
+	for _, terminal := range []struct {
+		status, stopReason, failureClass string
+	}{
+		{"failed", "error", "agent_loop_error"},
+		{"interrupted", "budget_exceeded", "budget_exceeded"},
+		{"interrupted", "context_limit", "context_limit"},
+		{"interrupted", "diminishing_returns", "diminishing_returns"},
+		{"failed", "goal_evaluation_failed", "goal_evaluation_failed"},
+		{"cancelled", "cancelled", ""},
+		{"needs_input", "needs_input", ""},
+	} {
+		t.Run(terminal.stopReason, func(t *testing.T) {
+			testAgentApplyTerminalHelmResult(t, false, false, map[string]interface{}{
+				"status": terminal.status, "stopReason": terminal.stopReason,
+				"failureClass":  terminal.failureClass,
+				"failureReason": `{"password":"` + strings.Repeat("synthetic-turn-json-secret", 100) + `"}`,
+				"error":         "token: " + strings.Repeat("synthetic-turn-yaml-secret", 100),
+			})
+		})
+	}
+}
+
+func TestAgentApplySucceedsWhenTurnAndHelmComplete(t *testing.T) {
+	testAgentApplyTerminalHelmResult(t, false, false, map[string]interface{}{
+		"status": "completed", "stopReason": "end_turn",
+	})
 }
 
 func TestAgentApplyKnownHelmFailureDoesNotBecomeUnknown(t *testing.T) {
-	testAgentApplyTerminalHelmResult(t, true, false)
+	testAgentApplyTerminalHelmResult(t, true, false, nil)
 }
 
 func TestAgentApplyEmptyHelmArgumentsThenScopeFailureIsTerminal(t *testing.T) {
-	testAgentApplyTerminalHelmResult(t, true, true)
+	testAgentApplyTerminalHelmResult(t, true, true, nil)
 }
 
-func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArgumentsFirst bool) {
+func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArgumentsFirst bool, terminal map[string]interface{}) {
 	t.Helper()
 	workspace := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", workspace)
@@ -1520,13 +1545,20 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 				"rawInput":      rawInput,
 			})
 			writeEvent(toolUpdate)
-			writeEvent(map[string]interface{}{
+			turnUpdate := map[string]interface{}{
 				"sessionUpdate": "turn_finished",
 				"turnId":        turnID,
 				"status":        turnStatus,
 				"stopReason":    stopReason,
 				"error":         turnError,
-			})
+			}
+			if terminal != nil {
+				delete(turnUpdate, "error")
+				for key, value := range terminal {
+					turnUpdate[key] = value
+				}
+			}
+			writeEvent(turnUpdate)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1543,10 +1575,14 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 
 	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
 		"session_id":      doopsSessionID,
-		"instruction":     "upgrade doops-agent and verify the final Deployment",
+		"instruction":     "upgrade doops-agent and a second release, then verify both",
 		"operation":       "apply",
 		"response_format": "json",
 	})
+	if strings.Contains(fmt.Sprint(result), "synthetic-turn-json-secret") ||
+		strings.Contains(fmt.Sprint(result), "synthetic-turn-yaml-secret") {
+		t.Fatalf("turn error leaked credential-like text: %#v", result)
+	}
 	if result["error"] != nil {
 		t.Fatalf("verified Helm mutation was returned as RPC error: %#v", result)
 	}
@@ -1570,6 +1606,35 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArguments
 		})
 		if followup["error"] != nil {
 			t.Fatalf("follow-up command failed after terminal tool failure: %#v", followup)
+		}
+		return
+	}
+	if terminal != nil && terminal["status"] != "completed" {
+		if response["isError"] != true || !strings.Contains(fmt.Sprint(response), "doagent_apply_incomplete") {
+			t.Fatalf("partially completed request was reported as successful: %#v", response)
+		}
+		structured, _ := response["structuredContent"].(map[string]interface{})
+		if structured["verified"] != true || structured["outcome"] != "failed" {
+			t.Fatalf("incomplete turn must keep verified receipts without claiming success: %#v", structured)
+		}
+		turn, _ := structured["turn"].(map[string]interface{})
+		if turn["status"] != terminal["status"] || turn["stopReason"] != terminal["stopReason"] {
+			t.Fatalf("incomplete turn lost its terminal reason: %#v", turn)
+		}
+		if terminal["failureClass"] != "" && turn["failureClass"] != terminal["failureClass"] {
+			t.Fatalf("incomplete turn lost its failure class: %#v", turn)
+		}
+		mutations, _ := structured["mutations"].([]interface{})
+		if len(mutations) != 1 {
+			t.Fatalf("completed mutation missing: %#v", mutations)
+		}
+		mutation, _ := mutations[0].(map[string]interface{})
+		receipt, _ := mutation["result"].(map[string]interface{})
+		if mutation["verified"] != true || mutation["status"] != "completed" || receipt["isError"] != false {
+			t.Fatalf("successful Helm mutation was rewritten as failed: %#v", mutation)
+		}
+		if strings.Contains(fmt.Sprint(result), "execution_outcome_unknown") {
+			t.Fatalf("known incomplete turn was misclassified as an unknown mutation: %#v", result)
 		}
 		return
 	}

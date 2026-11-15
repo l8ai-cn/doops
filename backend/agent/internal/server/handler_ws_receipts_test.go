@@ -242,8 +242,7 @@ exit 0`
 						"sessionUpdate": "agent_message", "content": map[string]interface{}{"type": "text", "text": summary},
 					})
 					send(map[string]interface{}{
-						"sessionUpdate": "turn_finished", "status": "failed", "stopReason": "error",
-						"error": "synthetic final model failure",
+						"sessionUpdate": "turn_finished", "status": "completed", "stopReason": "end_turn",
 					})
 				default:
 					http.NotFound(w, r)

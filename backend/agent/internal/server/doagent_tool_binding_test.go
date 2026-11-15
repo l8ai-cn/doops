@@ -38,6 +38,37 @@ func TestApplyAcceptsStructuredHelmMutationEvidence(t *testing.T) {
 	}
 }
 
+func TestApplyTurnFinishedReceiptRedactsCredentialLikeText(t *testing.T) {
+	collector := newDoagentToolTraceCollector(false)
+	if err := collector.collect(map[string]interface{}{
+		"sessionUpdate": "turn_finished",
+		"turnId":        "turn-1",
+		"status":        "interrupted",
+		"stopReason":    "budget_exceeded",
+		"failureClass":  "budget_exceeded",
+		"failureReason": `password: synthetic-turn-secret`,
+		"error":         `{"token":"synthetic-json-secret"}`,
+	}); err != nil {
+		t.Fatalf("collect turn terminal result: %v", err)
+	}
+	_, report, err := collector.verifiedMutationResult()
+	if err != nil {
+		t.Fatalf("build mutation report: %v", err)
+	}
+	turn, ok := report["turn"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing turn report: %#v", report)
+	}
+	encoded, _ := json.Marshal(turn)
+	if strings.Contains(string(encoded), "synthetic-turn-secret") ||
+		strings.Contains(string(encoded), "synthetic-json-secret") {
+		t.Fatalf("turn report leaked credential-like text: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "REDACTED") {
+		t.Fatalf("turn report did not show redaction: %s", encoded)
+	}
+}
+
 func TestApplyCompletedMutationDoesNotHideUnresolvedTool(t *testing.T) {
 	for _, status := range []string{"running", "failed", "completed"} {
 		t.Run(status, func(t *testing.T) {

@@ -6,6 +6,12 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Fixed
+
+- 发布请求因预算耗尽、取消或完成复核失败而提前结束时，保留已成功的 Helm 回执与本轮停止原因，整体返回未完成；不再把部分工具成功误报为整个请求成功
+
 ## [0.3.6] — 2026-11-15
 
 ### Fixed
