@@ -61,6 +61,12 @@ export class AgentGatewayError extends Error {
   }
 }
 
+const metadataCallTimeoutMs = 45_000
+// Gateway owns the 60-minute operation deadline. Keep a small client-side
+// watchdog margin so the browser cannot cancel a still-running repair before
+// the Gateway emits its terminal receipt.
+const operationWatchdogTimeoutMs = 65 * 60_000
+
 export function agentGatewayCall(
   context: AgentGatewayContext,
   args: Record<string, unknown>,
@@ -112,7 +118,7 @@ export function agentGatewayCall(
           dispatched = true
           // Silence while preparing or running a tool is not a connection failure.
           // Bound the whole operation and drain its original result after cancellation.
-          timer = setTimeout(abort, args.mode === "metadata" ? 45_000 : 30 * 60_000)
+          timer = setTimeout(abort, args.mode === "metadata" ? metadataCallTimeoutMs : operationWatchdogTimeoutMs)
           return
         }
         if (message.method === "notifications/message") {
