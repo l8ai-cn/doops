@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 )
 
@@ -107,23 +108,24 @@ type K8SParams struct {
 
 // HelmParams is the structured request accepted by doops_helm.
 type HelmParams struct {
-	SessionID     string                     `json:"session_id"`
-	Operation     string                     `json:"operation"`
-	Release       string                     `json:"release"`
-	AssetSource   string                     `json:"asset_source,omitempty"`
-	Chart         string                     `json:"chart,omitempty"`
-	Namespace     string                     `json:"namespace"`
-	ValueFiles    []string                   `json:"value_files,omitempty"`
-	SetStrings    map[string]HelmScalarValue `json:"set_strings,omitempty"`
-	Revision      int                        `json:"revision,omitempty"`
-	Timeout       string                     `json:"timeout,omitempty"`
-	Atomic        bool                       `json:"atomic,omitempty"`
-	TakeOwnership bool                       `json:"take_ownership,omitempty"`
+	SessionID      string                     `json:"session_id"`
+	Operation      string                     `json:"operation"`
+	Release        string                     `json:"release"`
+	AssetSource    string                     `json:"asset_source,omitempty"`
+	Chart          string                     `json:"chart,omitempty"`
+	Namespace      string                     `json:"namespace"`
+	ValueFiles     []string                   `json:"value_files,omitempty"`
+	SetStrings     map[string]HelmScalarValue `json:"set_strings,omitempty"`
+	Revision       int                        `json:"revision,omitempty"`
+	Timeout        string                     `json:"timeout,omitempty"`
+	Atomic         bool                       `json:"atomic,omitempty"`
+	TakeOwnership  bool                       `json:"take_ownership,omitempty"`
+	setStringKinds map[string]helmScalarKind
 }
 
 // HelmScalarValue accepts a JSON string, number or boolean for a Helm value and
-// keeps Helm's native string form, so a caller can pass a chart value in its
-// natural shape (for example `useTestSchema: true`) to `--set-string`.
+// keeps its string form for command construction. HelmParams retains the JSON
+// kind so native numbers and booleans can use Helm's typed --set flag.
 // Objects and arrays are rejected: they have no single string representation.
 type HelmScalarValue string
 
@@ -156,6 +158,87 @@ func (v *HelmScalarValue) UnmarshalJSON(data []byte) error {
 		*v = HelmScalarValue(n.String())
 	}
 	return nil
+}
+
+type helmScalarKind uint8
+
+const (
+	helmScalarString helmScalarKind = iota
+	helmScalarNumber
+	helmScalarBoolean
+)
+
+func helmScalarKindForJSON(data []byte) (helmScalarKind, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return 0, fmt.Errorf("helm set value is empty")
+	}
+	switch trimmed[0] {
+	case '"':
+		return helmScalarString, nil
+	case 't', 'f':
+		var value bool
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return 0, err
+		}
+		return helmScalarBoolean, nil
+	default:
+		if string(trimmed) == "null" {
+			return 0, fmt.Errorf("helm set value must be a string, number or boolean")
+		}
+		var value json.Number
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return 0, fmt.Errorf("helm set value must be a string, number or boolean")
+		}
+		return helmScalarNumber, nil
+	}
+}
+
+func (p *HelmParams) UnmarshalJSON(data []byte) error {
+	type helmParamsAlias HelmParams
+	var wire struct {
+		*helmParamsAlias
+		SetStrings map[string]json.RawMessage `json:"set_strings,omitempty"`
+	}
+	wire.helmParamsAlias = (*helmParamsAlias)(p)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("invalid helm request")
+	}
+
+	p.SetStrings = nil
+	p.setStringKinds = nil
+	if len(wire.SetStrings) == 0 {
+		return nil
+	}
+	p.SetStrings = make(map[string]HelmScalarValue, len(wire.SetStrings))
+	p.setStringKinds = make(map[string]helmScalarKind, len(wire.SetStrings))
+	for key, raw := range wire.SetStrings {
+		var value HelmScalarValue
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		kind, err := helmScalarKindForJSON(raw)
+		if err != nil {
+			return err
+		}
+		p.SetStrings[key] = value
+		p.setStringKinds[key] = kind
+	}
+	return nil
+}
+
+func (p HelmParams) HelmSetFlag(key string) string {
+	switch p.setStringKinds[key] {
+	case helmScalarNumber, helmScalarBoolean:
+		return "--set"
+	default:
+		return "--set-string"
+	}
 }
 
 // WebParams is the structured request accepted by doops_web.

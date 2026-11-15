@@ -168,7 +168,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			if helmSetStringContainsCredential(key, value) {
 				return helmCommand{}, fmt.Errorf("helm set_strings contains forbidden credential material")
 			}
-			args = append(args, "--set-string", key+"="+escapeHelmSetString(value))
+			args = append(args, params.HelmSetFlag(key), key+"="+escapeHelmSetString(value))
 		}
 		return helmCommand{
 			args: append(args, common...), cwd: workspace,
