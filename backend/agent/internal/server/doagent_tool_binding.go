@@ -589,7 +589,8 @@ func correctedHelmCall(traces []doagentToolTrace, index int) string {
 					nextSource = helmAssetSourceRemote
 				}
 				chart := strings.TrimSpace(stringField(input, "chart"))
-				if chart == "" || chart != strings.TrimSpace(stringField(nextInput, "chart")) || source != nextSource {
+				nextChart := strings.TrimSpace(stringField(nextInput, "chart"))
+				if chart == "" || nextChart == "" || chart != nextChart || source != nextSource {
 					continue
 				}
 			case "rollback":
@@ -633,10 +634,9 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 // unresolvedMutationSummary lists tool=reason for every mutation whose outcome
 // cannot be proven from its trace, or "" when every mutation is resolved.
 func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	traces := c.orderedTraces()
 	var unresolved []string
-	for _, trace := range c.calls {
+	for _, trace := range traces {
 		tool := modelVisibleDoagentToolName(trace.ToolName)
 		if tool == "" {
 			tool = "unknown"

@@ -44,7 +44,9 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   `operation=apply` with target, release, namespace, Chart, optional values, task
   text and managed credential references.
 - After Gateway initialization succeeds, the console clears the 45-second
-  connection timer. A normal prompt/apply has a 30-minute total execution deadline;
+  connection timer. Gateway owns the normal prompt/apply execution deadline
+  (currently 60 minutes); the console keeps a 65-minute watchdog margin so it
+  does not cancel an authorized repair before Gateway returns its terminal receipt;
   waiting for its first output or a quiet tool does not cause an earlier timeout,
   and progress events do not reset the deadline. Metadata requests retain their
   separate 45-second limit. At the execution deadline, the console requests
