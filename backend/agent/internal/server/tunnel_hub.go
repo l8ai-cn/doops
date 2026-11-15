@@ -470,7 +470,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.AgentLease = 90 * time.Second
 	}
 	if opts.OperationTimeout <= 0 {
-		opts.OperationTimeout = 30 * time.Minute
+		opts.OperationTimeout = 60 * time.Minute
 	}
 	if opts.TargetQueueTimeout <= 0 {
 		opts.TargetQueueTimeout = 2 * time.Minute

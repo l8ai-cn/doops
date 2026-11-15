@@ -24,7 +24,7 @@ const (
 	helmSettleReserve = 90 * time.Second
 	// maxHelmWaitTimeout bounds one Helm call so the wait still fits inside the
 	// MCP tool deadline and leaves time to record the outcome.
-	maxHelmWaitTimeout = 10 * time.Minute
+	maxHelmWaitTimeout = 25 * time.Minute
 	// helmSettleTimeout bounds reading history and unlocking a pending release.
 	helmSettleTimeout = 45 * time.Second
 )

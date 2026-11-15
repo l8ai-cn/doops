@@ -199,8 +199,10 @@ func TestBuildHelmCommandBoundsTheWaitTimeout(t *testing.T) {
 		{"180s", false},
 		{"10m", false},
 		{"600s", false},
-		{"601s", true},
-		{"11m", true},
+		{"25m", false},
+		{"1500s", false},
+		{"1501s", true},
+		{"26m", true},
 		{"1h", true},
 	} {
 		t.Run("timeout="+tt.timeout, func(t *testing.T) {
@@ -211,13 +213,13 @@ func TestBuildHelmCommandBoundsTheWaitTimeout(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("timeout %q: err = %v, wantErr %v", tt.timeout, err, tt.wantErr)
 			}
-			if err != nil && !strings.Contains(err.Error(), "at most 10m") {
+			if err != nil && !strings.Contains(err.Error(), "at most 25m") {
 				t.Fatalf("rejection does not name the limit: %v", err)
 			}
 		})
 	}
 	// Rollback shares the bound.
-	params := api.HelmParams{SessionID: "release", Operation: "rollback", Release: "app", Namespace: "apps", Revision: 2, Timeout: "20m"}
+	params := api.HelmParams{SessionID: "release", Operation: "rollback", Release: "app", Namespace: "apps", Revision: 2, Timeout: "26m"}
 	if _, err := buildHelmCommand(params); err == nil {
 		t.Fatal("rollback accepted a timeout beyond the call budget")
 	}

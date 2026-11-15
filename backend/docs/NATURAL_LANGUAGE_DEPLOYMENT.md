@@ -114,14 +114,14 @@ doagent 将带工具调用的模型说明发送为 `agent_progress`；DoOps 脱�
 复核与模型调用共用本轮期限，并响应同一个取消信号。
 `ask --apply` 显式传递 `completionReview=true`，由 doagent 的现有执行循环复核最终
 回答与本轮工具证据；任务尚未完成时在同一轮次中继续诊断和修正，不重新提交整个发布任务。
-完成复核使用 doagent 的有界 continuation 计数，整个调用仍受 30 分钟总期限约束；
+完成复核使用 doagent 的有界 continuation 计数，整个调用仍受 60 分钟总期限约束；
 复核只是继续执行的提示，最终成功仍以 DoOps 验证的工具回执为准。
 请求成功还要求本轮正常完成。预算耗尽、取消、需要补充输入、复核确认无法完成或复核失败时，即使已执行的
 Helm 操作成功，也返回 `doagent_apply_incomplete`，不把部分完成记为整个请求成功。
 回执保留 `turn` 的 `status`、`stopReason`、`failureClass` 及每次工具的原始成功或失败；
 已完成的 Helm 操作不会被改写为失败，也不能因此自动重放。缺失或未验签的 mutation
 继续优先记为未知结果。
-同一问题连续三次没有新证据或修正时应停止该尝试，报告已完成的排查、实际阻因与下一步；
+同一问题连续六次没有新证据或修正时应停止该尝试，报告已完成的排查、实际阻因与下一步；
 不能原样反复调用或无限等待。未知变更不自动重放。
 DoOps 在发送 prompt 前检查
 `initialize.agentCapabilities.promptCapabilities.rejectWhenBusy=true`，然后固定使用
@@ -220,8 +220,8 @@ TLS、网络、Chart 下载、包校验、认证、Helm/Kubernetes 原生错误�
 结构化工具不向模型返回可能携带秘密的 Chart stdout（NOTES、渲染 manifest），
 错误回执保留脱敏后的原因与可信 attestation。凭据隔离不因删除发布策略而放宽。
 
-一次 `mcp_doops_helm` 调用必须在 doagent 的 MCP 工具超时（900 秒）之前结束并留下终态。
-Helm `--wait` 和 release 状态回读共用一个调用预算（810 秒），`timeout` 最大 `10m`，超出时
+一次 `mcp_doops_helm` 调用必须在 doagent 的 MCP 工具超时（1800 秒）之前结束并留下终态。
+Helm `--wait` 和 release 状态回读共用一个调用预算（1710 秒），`timeout` 最大 `25m`，超出时
 构建阶段直接拒绝，不开始升级。预算用完时 Agent 先给 helm 发 SIGTERM，让 Helm 自己把
 revision 记为 failed 并释放锁，30 秒后仍未退出才强制结束。
 

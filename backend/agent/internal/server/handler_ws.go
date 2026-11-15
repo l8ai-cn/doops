@@ -1379,8 +1379,10 @@ type agentPromptExecutionContext struct {
 // unique to one prompt so machine-result tool traces cannot include an old turn.
 var doagentPromptSessionSequence atomic.Uint64
 
+const doagentPromptExecutionTimeout = 60 * time.Minute
+
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, attachments []api.AgentPromptAttachment, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
-	ctx, cancelExecution := context.WithTimeout(ctx, 30*time.Minute)
+	ctx, cancelExecution := context.WithTimeout(ctx, doagentPromptExecutionTimeout)
 	defer cancelExecution()
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)

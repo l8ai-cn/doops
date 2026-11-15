@@ -49,7 +49,7 @@ func serve(args []string) {
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
 	loginTokenTTL := fs.Duration("login-token-ttl", server.DefaultLoginTokenTTL, "Password-login sliding token TTL")
 	loginTokenMaxLifetime := fs.Duration("login-token-max-lifetime", server.DefaultLoginTokenMaxLifetime, "Absolute max lifetime for a password-login token, including renewals")
-	operationTimeout := fs.Duration("operation-timeout", 30*time.Minute, "Maximum runtime for one forwarded operation")
+	operationTimeout := fs.Duration("operation-timeout", 60*time.Minute, "Maximum runtime for one forwarded operation")
 	// Retired limits stay parseable so existing unit files keep starting.
 	retiredGlobalLimit := fs.Int("max-concurrent-operations", 0, "Retired; ignored")
 	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
