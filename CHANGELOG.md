@@ -6,6 +6,13 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Fixed
+
+- 延长普通 prompt/apply、Gateway operation 和 CLI 等待窗口，允许 Helm 等长时间工具在同一授权任务内继续执行并持续发送进度
+- 受管 Helm 的 `--wait` 上限提高到 25 分钟，完成复核最多允许六次有界修正；仍保留未知终态保护、完整工具回执和明确终态
+
 ## [0.3.7] — 2026-11-15
 
 ### Fixed
