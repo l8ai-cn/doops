@@ -52,6 +52,7 @@ type doagentToolTraceCollector struct {
 	expectedMutationAuthorityDigest string
 	finalMessage                    string
 	finalReport                     json.RawMessage
+	turnResult                      map[string]interface{}
 }
 
 func newDoagentToolTraceCollector(collectAgentReport bool) *doagentToolTraceCollector {
@@ -75,6 +76,16 @@ func (c *doagentToolTraceCollector) bindMutationAuthority(digest string) {
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error {
 	if update["replay"] == true {
+		return nil
+	}
+	if update["sessionUpdate"] == "turn_finished" {
+		terminal, err := doagentUIStrings(update, []string{"turnId", "status", "stopReason", "failureClass", "failureReason", "error"})
+		if err != nil {
+			return err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.turnResult = terminal
 		return nil
 	}
 	if update["sessionUpdate"] == "agent_report" {
@@ -435,7 +446,14 @@ func (c *doagentToolTraceCollector) verifiedMutationResult() (string, map[string
 	}
 	c.mu.Lock()
 	summary := c.finalMessage
+	turn := c.turnResult
 	c.mu.Unlock()
+	if len(turn) != 0 {
+		report["turn"] = turn
+		if outcome != "unknown" && doagentTurnFinishedError(turn) != nil {
+			report["outcome"] = "failed"
+		}
+	}
 	if strings.TrimSpace(summary) != "" {
 		report["summary"] = redactSecretText(summary)
 	}

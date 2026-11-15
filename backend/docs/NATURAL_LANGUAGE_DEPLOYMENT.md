@@ -116,6 +116,11 @@ doagent 将带工具调用的模型说明发送为 `agent_progress`；DoOps 脱�
 回答与本轮工具证据；任务尚未完成时在同一轮次中继续诊断和修正，不重新提交整个发布任务。
 完成复核使用 doagent 的有界 continuation 计数，整个调用仍受 30 分钟总期限约束；
 复核只是继续执行的提示，最终成功仍以 DoOps 验证的工具回执为准。
+请求成功还要求本轮正常完成。预算耗尽、取消、需要补充输入、复核确认无法完成或复核失败时，即使已执行的
+Helm 操作成功，也返回 `doagent_apply_incomplete`，不把部分完成记为整个请求成功。
+回执保留 `turn` 的 `status`、`stopReason`、`failureClass` 及每次工具的原始成功或失败；
+已完成的 Helm 操作不会被改写为失败，也不能因此自动重放。缺失或未验签的 mutation
+继续优先记为未知结果。
 同一问题连续三次没有新证据或修正时应停止该尝试，报告已完成的排查、实际阻因与下一步；
 不能原样反复调用或无限等待。未知变更不自动重放。
 DoOps 在发送 prompt 前检查
@@ -247,3 +252,9 @@ Helm 发布成功只证明本次 release 达到上述终态，不证明所有业
 
 DoOps 自身 Agent/Gateway 的构建、首次安装、独立控制器升级及回滚统一见
 [构建与部署 SOP](BUILD_DEPLOY_SOP.md)。这些运行时维护要求不改变本文件的业务发布契约。
+
+功能验收 Chart 位于 `backend/test/fixtures/helm-autorepair`，仅包含 NetworkPolicy。
+用唯一 release 名，先确认没有 Pod 带同值的 `doops-recovery-verification` 标签；
+默认 values 会产生明确模板错误，同一请求内改为 `probeEnabled: true` 后应完成发布。
+回执须同时保留失败、成功及 `resolved_by`，独立回读确认 deployed 后卸载测试 release。
+此 fixture 仅用于隔离验收，不修改模板或已有业务策略来获取成功结果。

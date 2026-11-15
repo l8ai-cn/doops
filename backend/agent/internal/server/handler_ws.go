@@ -1560,13 +1560,16 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			targetSessionID,
 			pushProgress,
 			func(update map[string]interface{}) error {
+				if err := toolTraces.collect(update); err != nil {
+					return err
+				}
 				if update["sessionUpdate"] == "turn_finished" {
 					switch update["status"] {
-					case "completed", "cancelled", "failed", "interrupted":
+					case "completed", "cancelled", "failed", "interrupted", "needs_input", "stale_prompt_recovered":
 						terminalSeen.Store(true)
 					}
 				}
-				return toolTraces.collect(update)
+				return nil
 			},
 			turnIDReady,
 			true,
@@ -1687,8 +1690,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	// 等待本轮权威 turn_finished 终态或错误。对于 apply，已经完成并验签的
-	// Helm 运行时结果是变更事实；最终模型轮失败不能把已完成的变更改判为失败。
+	// Wait for the turn's terminal state. Verified tool success remains a fact,
+	// but a partially completed or interrupted request must not become success.
 	select {
 	case <-ctx.Done():
 		if err := cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout); err != nil {
@@ -1738,14 +1741,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 		if sseErr != nil {
-			warning := "[warning] Tool outcomes were verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())
-			if execution.StructuredEvents {
-				pushProgress(publicDoagentUINotification(map[string]interface{}{
-					"sessionUpdate": "doops_notice", "content": map[string]interface{}{"type": "text", "text": warning},
-				}))
-			} else {
-				pushProgress(rawNotification(warning + "\n"))
-			}
+			writeJSON(buildDoagentApplyResponse(reqID, toolTraces, 0,
+				"doagent_apply_incomplete: "+sanitizeSecretText(sseErr.Error())))
+			return
 		}
 		writeJSON(buildDoagentApplyResponse(reqID, toolTraces, 0, ""))
 		return
@@ -2690,9 +2688,11 @@ func subscribeDoagentSSEWithCollectorReady(
 				}
 				if structuredEvents {
 					pushProgress(publicDoagentUINotification(sessionUpdate))
-					if updateType == "turn_finished" {
-						return doagentTurnFinishedError(sessionUpdate)
-					}
+				}
+				if updateType == "turn_finished" {
+					return doagentTurnFinishedError(sessionUpdate)
+				}
+				if structuredEvents {
 					continue
 				}
 				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
@@ -2714,11 +2714,6 @@ func subscribeDoagentSSEWithCollectorReady(
 					}
 				case "completed", "usage_update":
 					// 非权威状态或 token 统计，继续等待 turn_finished。
-				case "turn_finished":
-					if err := doagentTurnFinishedError(sessionUpdate); err != nil {
-						return err
-					}
-					return nil
 				}
 
 			case "permission.updated":
@@ -2761,6 +2756,11 @@ func subscribeDoagentSSEWithCollectorReady(
 }
 
 func doagentTurnFinishedError(update map[string]interface{}) error {
+	public, err := doagentUIStrings(update, []string{"status", "stopReason", "failureReason", "error"})
+	if err != nil {
+		return fmt.Errorf("doagent turn error text could not be redacted: %w", err)
+	}
+	update = public
 	status := strings.TrimSpace(fmt.Sprint(update["status"]))
 	stopReason := strings.TrimSpace(fmt.Sprint(update["stopReason"]))
 	message := strings.TrimSpace(fmt.Sprint(update["failureReason"]))

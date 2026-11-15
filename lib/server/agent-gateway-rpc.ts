@@ -39,6 +39,14 @@ export interface AgentGatewayPublicReceipt {
   outcome: "succeeded" | "failed" | "unknown" | "cancelled"
   mutations: AgentGatewayMutationReceipt[]
   summary?: string
+  turn?: {
+    turnId?: string
+    status?: string
+    stopReason?: string
+    failureClass?: string
+    failureReason?: string
+    error?: string
+  }
 }
 
 export interface AgentGatewayCallResult {
@@ -146,12 +154,17 @@ function publicReceipt(value: unknown): AgentGatewayPublicReceipt | undefined {
     !Array.isArray(report.mutations)) return undefined
   const mutations = report.mutations.map(publicMutation)
   if (mutations.some((mutation) => mutation === undefined)) return undefined
+  const turn = report.turn && typeof report.turn === "object" && !Array.isArray(report.turn)
+    ? Object.fromEntries(Object.entries(report.turn).filter(([key, value]) =>
+      ["turnId", "status", "stopReason", "failureClass", "failureReason", "error"].includes(key) && typeof value === "string"))
+    : undefined
   return {
     kind: "doops.verified-mutation",
     verified: report.verified,
     outcome: report.outcome as AgentGatewayPublicReceipt["outcome"],
     mutations: mutations as AgentGatewayMutationReceipt[],
     ...(typeof report.summary === "string" ? { summary: report.summary } : {}),
+    ...(turn ? { turn } : {}),
   }
 }
 

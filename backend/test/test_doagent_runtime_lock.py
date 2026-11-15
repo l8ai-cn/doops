@@ -26,7 +26,7 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
     revision = runtime["DO_AGENT_REVISION"]
 
     assert len(revision) == 40
-    assert runtime["DO_AGENT_VERSION"] == "0.2.45"
+    assert runtime["DO_AGENT_VERSION"] == "0.2.46"
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", runtime["DO_AGENT_INDEX_DIGEST"])
     # Registry sources are explicit operator inputs, never pinned in the lock.
     assert "DO_AGENT_IMAGE" not in runtime
