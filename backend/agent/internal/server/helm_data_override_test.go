@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -106,9 +107,9 @@ func TestHelmSetStringsAcceptsNativeScalarValues(t *testing.T) {
 		t.Fatalf("buildHelmCommand: %v", err)
 	}
 	for _, wanted := range [][]string{
-		{"--set", "loki.useTestSchema=true"},
+		{"--set-json", "loki.useTestSchema=true"},
 		{"--set-string", "loki.storage.bucketNames.chunks=loki-chunks"},
-		{"--set", "gateway.replicas=2"},
+		{"--set-json", "gateway.replicas=2"},
 	} {
 		found := false
 		for index := 0; index+1 < len(command.args); index++ {
@@ -119,6 +120,58 @@ func TestHelmSetStringsAcceptsNativeScalarValues(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("scalar override %q %q missing: %#v", wanted[0], wanted[1], command.args)
+		}
+	}
+}
+
+func TestHelmNativeScalarTypesRenderWithRealHelm(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	writeWorkspaceHelmChart(t, root)
+	chart := filepath.Join(root, "release", "deploy", "helm", "prod")
+	if err := os.MkdirAll(filepath.Join(chart, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chart, "values.schema.json"), []byte(`{"type":"object","properties":{"enabled":{"type":"boolean"},"replicas":{"type":"integer"},"ratio":{"type":"number"},"exponent":{"type":"number"},"label":{"type":"string"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chart, "templates", "scalars.yaml"), []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scalar-types
+data:
+  enabled: {{ .Values.enabled | quote }}
+  replicas: {{ .Values.replicas | quote }}
+  ratio: {{ .Values.ratio | quote }}
+  exponent: {{ .Values.exponent | quote }}
+  label: {{ .Values.label | quote }}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var params api.HelmParams
+	if err := json.Unmarshal([]byte(`{"session_id":"release","operation":"upgrade-install","release":"app","namespace":"apps","asset_source":"workspace","chart":"deploy/helm/prod","set_strings":{"enabled":false,"replicas":2,"ratio":0.0001,"exponent":1e2,"label":"false"}}`), &params); err != nil {
+		t.Fatal(err)
+	}
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"template", command.release, command.args[2], "--namespace", command.namespace}
+	for index := 3; index < len(command.args); index++ {
+		if command.args[index] == "--set-json" || command.args[index] == "--set-string" {
+			args = append(args, command.args[index], command.args[index+1])
+			index++
+		}
+	}
+	render := exec.CommandContext(t.Context(), "helm", args...)
+	render.Dir = command.cwd
+	manifest, err := render.CombinedOutput()
+	if err != nil {
+		t.Fatalf("native scalar schema validation failed: %v: %s", err, manifest)
+	}
+	for _, expected := range []string{`enabled: "false"`, `replicas: "2"`, `ratio: "0.0001"`, `exponent: "100"`, `label: "false"`} {
+		if !strings.Contains(string(manifest), expected) {
+			t.Fatalf("missing scalar %q: %s", expected, manifest)
 		}
 	}
 }

@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- Helm `set_strings` 保留字符串、数字和布尔的原生类型；字符串使用 `--set-string`，数字和布尔使用 `--set`，避免 Chart schema 或模板把 `false` 当成非空字符串
+- Helm `set_strings` 保留字符串、数字和布尔的原生类型；字符串使用 `--set-string`，数字和布尔使用 `--set-json`，避免 Chart schema 或模板把 `false` 当成非空字符串、小数当成字符串
 
 ## [0.3.4] — 2026-11-15
 
