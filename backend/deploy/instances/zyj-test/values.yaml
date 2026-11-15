@@ -5,7 +5,7 @@ gateway:
   instance: zyj-test
   url: https://doops.aiedulab.cn
 image:
-  digest: sha256:3ee2887fd04bfd6dfca0c811174d6619489975054156c1105b9d6a9fb7cd57a9
+  digest: sha256:479cb1164115058752ccef74de1ff88e673f0c4b060337b1916e6ea653ffc638
   pullPolicy: IfNotPresent
   repository: docker.cnb.cool/l8ai/ai/doops.sh
 imagePullSecrets:
