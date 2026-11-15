@@ -1,5 +1,5 @@
 # Reviewed cluster-management identity for doops-zyj/zyj-test.
-# Desired release v0.3.6, source efda13d09682a2fd2350f652bc201e10c8d5c4b1.
+# Verified release v0.3.6, source efda13d09682a2fd2350f652bc201e10c8d5c4b1, Helm revision 24.
 gateway:
   cluster: doops-zyj
   instance: zyj-test
