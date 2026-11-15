@@ -1,11 +1,11 @@
 # Reviewed cluster-management identity for doops-zyj/zyj-test.
-# Release v0.3.5, commit 59dfa006f51851a34953fcda624609a8e4070bd3, Helm revision 22.
+# Desired release v0.3.6, source efda13d09682a2fd2350f652bc201e10c8d5c4b1.
 gateway:
   cluster: doops-zyj
   instance: zyj-test
   url: https://doops.aiedulab.cn
 image:
-  digest: sha256:1be0a0de3b0246c68eee2ac2a771ff8928d8ddf9db2a1af083d0b6a2f81644f5
+  digest: sha256:3ee2887fd04bfd6dfca0c811174d6619489975054156c1105b9d6a9fb7cd57a9
   pullPolicy: IfNotPresent
   repository: docker.cnb.cool/l8ai/ai/doops.sh
 imagePullSecrets:

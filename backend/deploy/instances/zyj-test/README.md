@@ -1,6 +1,6 @@
 # ZYJ test Agent 身份
 
-本实例已核验的身份、镜像与 Gateway 配置见 [values.yaml](values.yaml)。SA 与集群级绑定由
+本实例的身份、期望镜像与 Gateway 配置见 [values.yaml](values.yaml)。SA 与集群级绑定由
 `deploy/helm/doops-agent` 渲染，实例目录不再维护第二份 RBAC YAML。
 
 | 项目 | 约定 |
@@ -27,6 +27,13 @@ Gateway 路由到的 Pod、镜像 digest、版本与 Ready 已独立核验。首
 values 与实际 Deployment 的 Gateway URL 不一致，验收失败后自动回滚；修正配置后
 再次升级成功。单次控制器及恢复过程见 [FIRST_UPGRADE.md](FIRST_UPGRADE.md)。
 其余现有 release values 在升级中保留，不应使用本文件覆盖未列出的配置。
+
+后续标量类型修复使用 `v0.3.6`，源提交
+`efda13d09682a2fd2350f652bc201e10c8d5c4b1`。镜像 digest 已由受审计 BuildKit
+构建回执及仓库回读核对，写入本目录期望配置。升级使用正式 `doops upgrade`
+独立 Job，保留当前 release values；升级前回读的 revision 22 / `v0.3.5`
+作为回滚基线。实际生效须核对 Gateway 路由到的 Pod、Ready、imageID、版本及
+受管 Helm 的布尔、整数和小数 Chart 验收，不能以 Git 配置代替运行结果。
 
 正式 `ask --apply` 已验证仅含 NetworkPolicy 的 Chart：原 values 执行失败后，AI 在同一
 请求中修正参数并部署成功，完整返回失败与成功回执。独立回读确认 revision 1 为 deployed、
