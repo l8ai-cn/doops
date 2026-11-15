@@ -1,0 +1,16 @@
+{{- if not .Values.probeEnabled -}}
+{{- fail "probeEnabled must be true; correct the value and retry the same release" -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      doops-recovery-verification: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress: []

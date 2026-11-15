@@ -252,3 +252,9 @@ Helm 发布成功只证明本次 release 达到上述终态，不证明所有业
 
 DoOps 自身 Agent/Gateway 的构建、首次安装、独立控制器升级及回滚统一见
 [构建与部署 SOP](BUILD_DEPLOY_SOP.md)。这些运行时维护要求不改变本文件的业务发布契约。
+
+功能验收 Chart 位于 `backend/test/fixtures/helm-autorepair`，仅包含 NetworkPolicy。
+用唯一 release 名，先确认没有 Pod 带同值的 `doops-recovery-verification` 标签；
+默认 values 会产生明确模板错误，同一请求内改为 `probeEnabled: true` 后应完成发布。
+回执须同时保留失败、成功及 `resolved_by`，独立回读确认 deployed 后卸载测试 release。
+此 fixture 仅用于隔离验收，不修改模板或已有业务策略来获取成功结果。
