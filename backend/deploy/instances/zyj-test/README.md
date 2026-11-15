@@ -21,7 +21,8 @@ RoleBinding。持有本 target grant 意味着可经 Agent 管理整个集群，
 收编与恢复见 [BUILD_DEPLOY_SOP.md](../../../docs/BUILD_DEPLOY_SOP.md#agent-rbac-纳管与回滚)。
 跨越首次 RBAC 纳管点回滚必须由独立管理通道恢复；不能让 SA 自己删除自己的绑定后继续验证。
 
-2026-11-15 已部署 `v0.3.3`（DoAgent `0.2.45`），Helm revision 21。
+2026-11-15 已部署 `v0.3.5`（DoAgent `0.2.45`），Helm revision 22，镜像 digest
+为 `sha256:1be0a0de3b0246c68eee2ac2a771ff8928d8ddf9db2a1af083d0b6a2f81644f5`。
 Gateway 路由到的 Pod、镜像 digest、版本与 Ready 已独立核验。首次尝试发现旧 Helm
 values 与实际 Deployment 的 Gateway URL 不一致，验收失败后自动回滚；修正配置后
 再次升级成功。单次控制器及恢复过程见 [FIRST_UPGRADE.md](FIRST_UPGRADE.md)。
