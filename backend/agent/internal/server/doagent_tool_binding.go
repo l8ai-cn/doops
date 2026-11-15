@@ -431,15 +431,7 @@ func (c *doagentToolTraceCollector) verifiedMutationResult() (string, map[string
 			}
 		default:
 			entry["verified"], entry["reason"] = false, reason
-			if reason == "raw_output_missing" {
-				if resolvedBy := correctedHelmCall(traces, i); resolvedBy != "" {
-					entry["resolved_by"] = resolvedBy
-				} else {
-					verified, outcome = false, "unknown"
-				}
-			} else {
-				verified, outcome = false, "unknown"
-			}
+			verified, outcome = false, "unknown"
 		}
 		mutations = append(mutations, entry)
 	}
@@ -545,29 +537,19 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 	return fmt.Errorf("doagent_apply_tool_evidence_missing")
 }
 
-// A later serial success can recover a known failure or complete an uncertain
-// call for the same Helm intent. The uncertain call remains visible in the
-// receipt and is never treated as independently verified.
+// A later serial success can recover a known failure of the same Helm intent.
+// Unexecuted validation/preparation errors may also correct invalid parameters.
 func correctedHelmCall(traces []doagentToolTrace, index int) string {
 	failed := traces[index]
-	reason := failed.terminalMutationReason()
 	if modelVisibleDoagentToolName(failed.ToolName) != "doops_helm" ||
-		failed.terminalSequence == 0 || (reason != "tool_result_failed" && reason != "raw_output_missing") {
+		failed.terminalSequence == 0 || failed.terminalMutationReason() != "tool_result_failed" {
 		return ""
 	}
-	executed, unexecuted := false, false
-	if reason == "tool_result_failed" {
-		result, _ := failed.verifiedResult()
-		facts, _ := result["structuredContent"].(map[string]interface{})
-		executed = facts["executionStarted"] == true && facts["phase"] == "execution"
-		unexecuted = facts["executionStarted"] == false &&
-			(facts["phase"] == "validation" || facts["phase"] == "preparation")
-	} else {
-		// No trusted result means the call may have started a mutation. A later
-		// complete receipt can establish the requested end state, but not prove
-		// what the missing call did.
-		executed = true
-	}
+	result, _ := failed.verifiedResult()
+	facts, _ := result["structuredContent"].(map[string]interface{})
+	executed := facts["executionStarted"] == true && facts["phase"] == "execution"
+	unexecuted := facts["executionStarted"] == false &&
+		(facts["phase"] == "validation" || facts["phase"] == "preparation")
 	if !executed && !unexecuted {
 		return ""
 	}
@@ -654,7 +636,7 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
 	traces := c.orderedTraces()
 	var unresolved []string
-	for index, trace := range traces {
+	for _, trace := range traces {
 		tool := modelVisibleDoagentToolName(trace.ToolName)
 		if tool == "" {
 			tool = "unknown"
@@ -665,9 +647,6 @@ func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
 		trace.expectedSessionID = c.expectedSessionID
 		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
 		if reason := trace.terminalMutationReason(); reason != "" && reason != "tool_result_failed" {
-			if reason == "raw_output_missing" && correctedHelmCall(traces, index) != "" {
-				continue
-			}
 			unresolved = append(unresolved, tool+"="+reason)
 		}
 	}
