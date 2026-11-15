@@ -6,11 +6,18 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [0.3.6] — 2026-11-15
+
+### Fixed
+
+- Helm 数字和布尔覆盖使用原生 `--set-json`，字符串继续使用 `--set-string`；小数与指数数字不再被 Helm 当成字符串，schema 与模板可读取正确类型
+- MCP 注入 session 时保留原始数字 JSON，避免在交给 Helm 前经由 `float64` 舍入
+
 ## [0.3.5] — 2026-11-15
 
 ### Fixed
 
-- Helm `set_strings` 保留字符串、数字和布尔的原生类型；字符串使用 `--set-string`，数字和布尔使用 `--set-json`，避免 Chart schema 或模板把 `false` 当成非空字符串、小数当成字符串
+- Helm `set_strings` 保留字符串、数字和布尔的原生类型；字符串使用 `--set-string`，数字和布尔使用 `--set`，避免 Chart schema 或模板把 `false` 当成非空字符串
 
 ## [0.3.4] — 2026-11-15
 
