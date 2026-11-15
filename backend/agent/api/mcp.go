@@ -1,6 +1,11 @@
 package api
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strconv"
+)
 
 // --- JSON-RPC / MCP Protocol Types ---
 
@@ -102,18 +107,55 @@ type K8SParams struct {
 
 // HelmParams is the structured request accepted by doops_helm.
 type HelmParams struct {
-	SessionID     string            `json:"session_id"`
-	Operation     string            `json:"operation"`
-	Release       string            `json:"release"`
-	AssetSource   string            `json:"asset_source,omitempty"`
-	Chart         string            `json:"chart,omitempty"`
-	Namespace     string            `json:"namespace"`
-	ValueFiles    []string          `json:"value_files,omitempty"`
-	SetStrings    map[string]string `json:"set_strings,omitempty"`
-	Revision      int               `json:"revision,omitempty"`
-	Timeout       string            `json:"timeout,omitempty"`
-	Atomic        bool              `json:"atomic,omitempty"`
-	TakeOwnership bool              `json:"take_ownership,omitempty"`
+	SessionID     string                     `json:"session_id"`
+	Operation     string                     `json:"operation"`
+	Release       string                     `json:"release"`
+	AssetSource   string                     `json:"asset_source,omitempty"`
+	Chart         string                     `json:"chart,omitempty"`
+	Namespace     string                     `json:"namespace"`
+	ValueFiles    []string                   `json:"value_files,omitempty"`
+	SetStrings    map[string]HelmScalarValue `json:"set_strings,omitempty"`
+	Revision      int                        `json:"revision,omitempty"`
+	Timeout       string                     `json:"timeout,omitempty"`
+	Atomic        bool                       `json:"atomic,omitempty"`
+	TakeOwnership bool                       `json:"take_ownership,omitempty"`
+}
+
+// HelmScalarValue accepts a JSON string, number or boolean for a Helm value and
+// keeps Helm's native string form, so a caller can pass a chart value in its
+// natural shape (for example `useTestSchema: true`) to `--set-string`.
+// Objects and arrays are rejected: they have no single string representation.
+type HelmScalarValue string
+
+func (v *HelmScalarValue) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("helm set value is empty")
+	}
+	switch trimmed[0] {
+	case '"':
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		*v = HelmScalarValue(s)
+	case 't', 'f':
+		var b bool
+		if err := json.Unmarshal(trimmed, &b); err != nil {
+			return err
+		}
+		*v = HelmScalarValue(strconv.FormatBool(b))
+	default:
+		if string(trimmed) == "null" {
+			return fmt.Errorf("helm set value must be a string, number or boolean")
+		}
+		var n json.Number
+		if err := json.Unmarshal(trimmed, &n); err != nil {
+			return fmt.Errorf("helm set value must be a string, number or boolean")
+		}
+		*v = HelmScalarValue(n.String())
+	}
+	return nil
 }
 
 // WebParams is the structured request accepted by doops_web.

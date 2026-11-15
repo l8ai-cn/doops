@@ -530,9 +530,11 @@ func helmMCPToolDefinition() map[string]interface{} {
 					},
 				},
 				"set_strings": map[string]interface{}{
-					"type":                 "object",
-					"description":          "Optional non-sensitive chart-specific string overrides. No credential payloads. Chart schema determines valid business keys, including image and CORS configuration.",
-					"additionalProperties": map[string]interface{}{"type": "string"},
+					"type":        "object",
+					"description": "Optional non-sensitive chart-specific overrides. No credential payloads. Values may be strings, numbers or booleans; each is passed to Helm as a string. Chart schema determines valid business keys, including image and CORS configuration.",
+					"additionalProperties": map[string]interface{}{
+						"type": []string{"string", "number", "boolean"},
+					},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout": map[string]interface{}{

@@ -6,6 +6,12 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [0.3.4] — 2026-11-15
+
+### Fixed
+
+- 受管 Helm 的 `set_strings` 接受字符串、数字与布尔值，统一按 `--set-string` 的字符串形式传给原生 Helm。`loki.useTestSchema: true` 这类 Chart 原生写法不再因参数类型在请求校验阶段被拒绝；对象与数组仍会被拒绝
+
 ## [0.3.3] — 2026-11-15
 
 ### Fixed

@@ -918,6 +918,8 @@ Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull；nam
 `mcp_doops_helm upgrade-install` 接收运行时绑定的 `session_id`、`release`、`namespace` 和
 `chart`，以及可选的 `asset_source`、有序 `value_files`、非敏感 `set_strings`、`timeout`、
 `atomic` 和 `take_ownership`。Helm 发布不增加二次确认字段或全局镜像匹配字段。
+`set_strings` 的值可以是字符串、数字或布尔，均按 `--set-string` 的字符串形式传给原生
+Helm；对象和数组没有单一字符串形式，会被拒绝。
 `asset_source` 默认是 `remote`（HTTPS `.tgz`，当前不支持 OCI），也可显式使用 `workspace`。
 DoOps 按给定顺序把 values 和覆盖传给原生 Helm，不强制重置历史 values 或 server-side
 dry-run，也不要求 Chart 包含 workload 或 Ingress。`upgrade-install` 使用

@@ -1,7 +1,7 @@
 ---
 name: helm-gate-cleanup
 scope: task
-status: in-progress
+status: complete
 ---
 
 # Helm Gate Cleanup
@@ -39,7 +39,7 @@ prompts, and canonical skills.
 - [x] Remove custom Helm policy and preserve native command/result handling.
 - [x] Verify functional success/failure paths and run relevant regression checks.
 - [x] Review the Helm gate and receipt changes, commit/push, and verify CI.
-- [ ] Publish/install matching artifacts and verify the deployed target.
+- [x] Publish/install matching artifacts and verify the deployed target.
 
 ## Current Findings
 
@@ -304,3 +304,59 @@ including token accounting, correction, cancellation and deadline exits.
 - The publisher `gw-hdu-235` has a working linux/amd64 BuildKit worker and its
   existing registry authfile. It can build and publish the final DoOps base
   and Agent through Gateway exec after the verified runtime artifact arrives.
+
+## Installed Runtime Rollout (2026-11-15)
+
+- Registry readback confirms the DoAgent artifact at
+  `sha256:14e753702568bc2ed8bcc213c7a23a2c600788b3a0b989d84676c7a172ccef06`.
+- PR #13 passed both push and pull-request CI at
+  `86bca584f5ba3302cfec4accce5a4e27d0062776` and merged as
+  `6b95035459611542b3db789afc7a8c217a2c5b00`.
+- The revision-18 first-upgrade controller is prepared under
+  `backend/deploy/instances/zyj-test/`. Independent review found mixed
+  candidate/restored identity in rollback receipts; the repair now restores
+  image, source commit, Pod identity and digest and clears candidate acceptance.
+  Eleven local transaction scenarios pass, including accepted-then-failed.
+- Remaining checks: publish v0.3.3 CLI/Skill and immutable DoOps images,
+  execute the independent upgrade, verify the exact routed Pod and runtime,
+  then exercise managed NetworkPolicy repair and read-only public Loki
+  validation. Preserve the original no-Loki-resource-creation boundary.
+
+## Deployed Acceptance (2026-11-15)
+
+- Main CI `43646319787` and Release `43646361767` succeeded. Release v0.3.3
+  and the installed CLI/Skill all identify source
+  `6b95035459611542b3db789afc7a8c217a2c5b00`; repository, parent workspace
+  and global Skill copies were installed and compared against that release.
+- Audited build tasks `f5dee7b910ed8c34` and `75a414d90415ec58` exited 0.
+  The Agent image is
+  `sha256:cb6046bea9618044806a14371de1d58760f7bb5c2fe9fd3181bcec1d28f24511`,
+  and embeds DoAgent 0.2.45 / `64f075e37ccf06122ee4f88646b0ebd1548351da`.
+- The first upgrade exposed drift between the actual Deployment Gateway URL
+  and stored Helm values. Gateway acceptance failed and the independent Job
+  rolled back. The corrected controller reconciled the proven original URL,
+  retained the failed attempt, and completed revision 21. Recovery checks
+  cover response loss, concurrent spec changes and failure before revision
+  creation; 17 local scenarios pass.
+- `gw-test` now reports the released commit. The routed Pod UID
+  `bf4c2815-7abb-46bd-b56a-a39760e0260e`, actual image digest, DoAgent
+  version and Ready state match. The controller recorded `phase=complete`.
+- Real `ask --apply` session `helm-autorepair-live-20261115` returned
+  `doops.verified-mutation`, `verified=true`, `outcome=succeeded`.
+  It retained path-validation failures and the actual template failure,
+  then corrected `probeEnabled` in the same request. The execution failure
+  `call_01a1dc3ebdf77009ba4d93ed` links through `resolved_by` to successful
+  `call_01a1dc3ec37a70d58d58ddeb`. No further user authorization was requested.
+- Independent readback confirmed a NetworkPolicy-only manifest, deployed
+  revision 1 and an unchanged template digest. The test release was removed,
+  and subsequent readback was empty.
+- On the installed Agent, the original Loki URL returned HTTP 200,
+  168,364 bytes and SHA256
+  `f0026f251da5b49cea636a24143dbbadf15b39f51fc4639c9e0d08a4bc975ee3`.
+  Native default rendering returned the real missing
+  `loki.storage.bucketNames.chunks` error. `test/loki` remains absent, as
+  required by the original diagnostic scope.
+- Temporary upgrade Jobs, code ConfigMaps and controller SA/CRBs are removed.
+  Immutable backups and metadata receipts remain for recovery and audit.
+  Complete tool output is retained in the task-local
+  `.local/helm-recovery-check/` receipt and log artifacts.
