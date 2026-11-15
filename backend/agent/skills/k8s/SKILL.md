@@ -41,7 +41,7 @@ Secret、ServiceAccount 不开放读取。
 - `upgrade-install`：`release`、`namespace`、`chart`（HTTPS `.tgz`，或 `asset_source=workspace`
   时的 session 相对路径）；可选 `value_files`、`set_strings`、`timeout`、`atomic`、
   `take_ownership`。values 合并沿用 Helm 原生语义；`set_strings` 的字符串使用
-  `--set-string`，数字和布尔保留原生类型并使用 `--set` 传给 Helm。
+  `--set-string`，数字和布尔保留原生类型并使用 `--set-json` 传给 Helm。
 - `rollback`：`release`、`namespace`、`revision`；`uninstall`：`release`、`namespace`。
 - upgrade-install 直接执行原生 Helm `--wait`，随后核对 release status=deployed，
   且 revision/description 属于本次执行。没有额外 server dry-run、manifest 类型白名单、

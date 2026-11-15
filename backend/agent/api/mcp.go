@@ -125,7 +125,7 @@ type HelmParams struct {
 
 // HelmScalarValue accepts a JSON string, number or boolean for a Helm value and
 // keeps its string form for command construction. HelmParams retains the JSON
-// kind so native numbers and booleans can use Helm's typed --set flag.
+// kind so native numbers and booleans can use Helm's typed --set-json flag.
 // Objects and arrays are rejected: they have no single string representation.
 type HelmScalarValue string
 
@@ -235,7 +235,7 @@ func (p *HelmParams) UnmarshalJSON(data []byte) error {
 func (p HelmParams) HelmSetFlag(key string) string {
 	switch p.setStringKinds[key] {
 	case helmScalarNumber, helmScalarBoolean:
-		return "--set"
+		return "--set-json"
 	default:
 		return "--set-string"
 	}

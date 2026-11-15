@@ -396,14 +396,14 @@ func bindK8SMCPSession(arguments json.RawMessage, sessionID string) (json.RawMes
 	if err := validateSession(sessionID); err != nil {
 		return nil, err
 	}
-	var input map[string]interface{}
+	var input map[string]json.RawMessage
 	if err := json.Unmarshal(arguments, &input); err != nil || input == nil {
 		return nil, fmt.Errorf("tool arguments must be an object")
 	}
 	if _, exists := input["session_id"]; exists {
 		return nil, fmt.Errorf("session_id is runtime-bound and must not be supplied")
 	}
-	input["session_id"] = sessionID
+	input["session_id"], _ = json.Marshal(sessionID)
 	bound, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("bind runtime session: %w", err)
@@ -531,7 +531,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"set_strings": map[string]interface{}{
 					"type":        "object",
-					"description": "Optional non-sensitive chart-specific overrides. No credential payloads. Strings use Helm --set-string; numbers and booleans preserve their native Helm types through --set. Chart schema determines valid business keys, including image and CORS configuration.",
+					"description": "Optional non-sensitive chart-specific overrides. No credential payloads. Strings use Helm --set-string; numbers and booleans preserve their native Helm types through --set-json. Chart schema determines valid business keys, including image and CORS configuration.",
 					"additionalProperties": map[string]interface{}{
 						"type": []string{"string", "number", "boolean"},
 					},

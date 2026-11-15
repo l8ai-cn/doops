@@ -35,7 +35,7 @@ Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已
 - 可先读 `helm-history` 记录回滚目标，这不是发布前置门禁。
 - 在已有授权内调用 `mcp_doops_helm upgrade-install`。`value_files`、`set_strings` 可选，
   values 合并沿用 Helm 原生语义（`set_strings` 的字符串使用 `--set-string`，数字和布尔
-  保留原生类型并使用 `--set`）；
+  保留原生类型并使用 `--set-json`）；
   `atomic`、`take_ownership` 按用户选择，不自动启用。
   不附加 server dry-run、资源类型白名单或工作负载/Ingress 二次验收。
   `session_id` 由运行时绑定，chart/values 可以是 session 工作区里的相对路径。

@@ -159,7 +159,7 @@ Agent 在发送 prompt 前收到取消则返回 `doagent_prompt_cancelled_before
 明确原生 Helm 命令的资产形式由目标 Helm 自身处理。
 `value_files` 可为零或多个，按给定顺序传给 Helm；`set_strings` 是非敏感的
 Chart-specific 覆盖。每个 `set_strings` 值可以是字符串、数字或布尔；字符串按
-`--set-string` 传递，数字和布尔按 `--set` 保留原生 Helm 类型（例如
+`--set-string` 传递，数字和布尔按 `--set-json` 保留原生 Helm 类型（例如
 `useTestSchema: true`）；对象和数组没有单一字符串形式，会被拒绝。values 合并及历史值
 继承由 Helm 原生语义决定，DoOps 不强制重置，
 也不自行读取、改写或合并历史 values。
