@@ -22,12 +22,12 @@ it is never evidence of a remote Agent version. Use `targets` and audited
 
 Fresh read: 2026-11-16 22:50 China time, session fleet-inventory-20261116.
 11 targets were online; two configured routes remain unavailable. As of
-2026-11-17 00:22 China time, gw-test is verified on v0.3.11. The other 12
-targets have not been upgraded to that release.
+2026-11-17 01:49 China time, gw-test is verified on v0.3.12. The other 12
+targets have not been upgraded by this delivery.
 
 | Target | Current Agent commit | State / next action |
 |---|---|---|
-| gw-test | 32ccf453d6a0744fba590b4c11b0027d65c7800b | v0.3.11 verified; revision 27; Ready, digest, reconnect, execution, model and browser smoke passed |
+| gw-test | e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358 | v0.3.12 verified; revision 28; native upgrade receipt and real managed root-Chart recovery passed |
 | gw-edu-coder | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; kz-ops/doops-agent; mounted admin kubeconfig; BuildKit available |
 | gw-hdu-235 | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; ai/doops-agent, revision 5; mounted kubeconfig |
 | gw-zy | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; independent first-upgrade Job required |
@@ -47,8 +47,9 @@ targets have not been upgraded to that release.
 - PR 21 merged as d5004a2b29f4b370bfe26c07a33b77e134c30ef7.
 - Release v0.3.9 source: 0d389204508ce989bf6bca7e06438edfbb425f0a;
   release workflow 43743890095 completed successfully.
-- Internal Gateway last verified at v0.3.9. Public l8ai TLS was reset;
-  internal verification does not prove public environment delivery.
+- Internal Gateway is verified at v0.3.11 and internal Web at v0.3.13.
+  Public l8ai uses a different entry route; internal verification does not
+  prove public environment delivery.
 - DoAgent source: af62d43828ce4d83e7cc8c4fa41a8ae128bcad56;
   image digest sha256:2dd40b6013559019d975169831b6e67d3ea9bb9c60843b8b6863cd84ac5ac5bb.
 - Prior DoOps image: sha256:fa703925af64f0cc92f057dbf231c8c709e134240846a48ddb3315586678e982.
@@ -71,15 +72,18 @@ targets have not been upgraded to that release.
 
 1. Done: commit/push, CI, PR 22 merge, v0.3.11 publication, matched CLI/Skill
    installation, and base/Agent/Web builds from source 32ccf453.
-2. Done: native gw-test upgrade and live terminal/model/browser acceptance.
+2. Done: native gw-test v0.3.12 upgrade and live terminal/model/browser
+   acceptance, including a NetworkPolicy-only Chart at the session root.
 3. Pending: recover the exact old registry artifacts before another old-Agent
    pilot, or prepare a reviewed replacement transaction with verified recovery.
 4. Pending: implement and verify the independent SA and Docker/systemd paths;
    resolve the two unavailable targets. Existing socket-controller review found
    concrete recovery gaps; it is not accepted for live replacement.
-5. Pending: Gateway/console host publication and both environments' user paths.
-   The human question about the SSH-only scripts versus the caller's no-daily-
-   SSH rule remains unanswered; do not infer approval from elapsed time.
+5. Done for the internal endpoint: Gateway v0.3.11 and Web v0.3.13 publication
+   through the existing repository release procedures, with live readback and
+   browser acceptance. The user's direct execution instruction is established;
+   no repeated confirmation is pending. Public delivery remains unverified
+   because its separate management route is unavailable.
 
 ## Resumed Delivery Evidence
 
@@ -112,9 +116,9 @@ targets have not been upgraded to that release.
 - Docker socket-controller review found missing external acceptance, incomplete
   rollback health checks and an ambiguous-create recovery gap. Do not deploy
   gw-silicon or unicom-1 with that incomplete controller.
-- Internal Gateway still reports v0.3.9. Public Gateway and console have separate
-  TLS/static-resource drift; neither environment is accepted as v0.3.11 yet.
-  Browser baseline is space 324; internal console currently shows login.
+- Internal Gateway/Web were subsequently deployed and accepted; the later
+  delivery record below supersedes this round's v0.3.9/browser baseline.
+  Public Gateway and console remain separately unverified.
 
 ## Acceptance And Remaining Dependencies (2026-11-17)
 
@@ -149,8 +153,41 @@ targets have not been upgraded to that release.
   it does not move the immutable v0.3.11 runtime tag.
 - Downloaded Gateway v0.3.11 asset SHA256 is
   `8e7b165632fa61b7a0543ff1821887aa7c6fb9e9260d761ae23c5e5da902619b`.
-  Its live installation and both new Web deployments remain pending the
-  explicit execution-method decision requested from the human.
+  Its live executable now matches that hash; publication is complete on the
+  internal host. No execution-method confirmation remains pending.
+
+## Internal Delivery Follow-through (2026-11-17)
+
+- Gateway v0.3.11: release asset and running executable hashes match, health
+  returns 200, unauthenticated targets return 401, and baseline targets
+  reconnected. Backup:
+  `/usr/local/bin/doops-gateway.rollback-bc8f61264989-20261116T164815Z`.
+- gw-test v0.3.12: upgrade `upgrade_911cf42ebe95a19ccc8938f21eb4f947`
+  succeeded at revision 28, source
+  `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`, image
+  `sha256:9b7435cb01c71bd7290b9f7c3b604455e0b28dac2f6a28d5433ddf0aaad5bd11`.
+  Real managed Helm retained an initial template failure and its correcting
+  success in one request, with no confirmation. Independent readback and
+  cleanup verified the NetworkPolicy-only release and unchanged template.
+- Web v0.3.13: source
+  `6b25b830a92ae16ae3bbd3ae2917e5f84e6e2c0f`, image
+  `sha256:349c41b609cc463a87018c33b9527efb9a0160f965eca300066b024ff915b2df`.
+  The running container matches the image and source. Real browser double-click
+  sent one scale, zero cancels, no confirmation and received a successful
+  terminal result; desktop/mobile and static assets passed. Rollback container:
+  `doops-web-rollback-20261116T174054Z-32848`.
+- `doops.l8ai.cn` is associated with the separate `gw-114-k8s` entry route.
+  Its target is unavailable through the current Gateway and existing recovery
+  connectivity failed; the public backend identity and deployment are still
+  unverified. Do not apply the internal Docker-host procedure to an unverified
+  public EIP or change DNS to make the internal endpoint appear public.
+- Detailed receipts, CI/build provenance and browser evidence are indexed in
+  the repository-root `HELM_GATE_CLEANUP.md`. These results do not complete
+  the other 12 Agent upgrades.
+- Formal v0.3.13 Release workflow `43922104165` and published-asset
+  verification succeeded. Matching CLI/Skill installation completed for the
+  repository, parent workspace and global locations; the existing Gateway
+  login still reaches gw-test. No repeated user confirmation is outstanding.
 
 ## Bounds And Recovery
 

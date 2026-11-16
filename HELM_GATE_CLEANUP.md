@@ -1,7 +1,7 @@
 ---
 name: helm-gate-cleanup
 scope: task
-status: in-progress
+status: complete
 ---
 
 # Helm Gate Cleanup
@@ -587,3 +587,65 @@ incomplete, never a reason to replace tool evidence with a model claim.
   while accepting keyboard activation and a subsequent separate click.
   The 161 focused K8s/transport checks pass; browser verification uses this
   final source rather than the earlier button-position-only build.
+
+### Web Release v0.3.13
+
+- Source `6b25b830a92ae16ae3bbd3ae2917e5f84e6e2c0f` is pushed and verified
+  at the remote member branch. Push CI `43918987441` and PR CI `43919245178`
+  passed Go, contract and secret checks. Independent review accepted the
+  final pointer-gesture correction.
+- Production browser checks passed slow and fast-success/fast-failure
+  double-clicks, explicit stop, keyboard Enter/Space, 390px failure/pending
+  states, no confirmation controls, and public image availability. Each
+  double-click sent one scale and zero cancels. Report:
+  `.local/direct-execution-20261116/local-final-k8s-acceptance.md`.
+- The old `gw-edu-coder` Agent rejected snapshot synchronization with
+  `cos_agent_snapshot_executable_unsupported`. That failure is unresolved
+  for this older Agent. Audited task `43eba05c4a0c8755` instead checked out
+  the already-pushed public Git commit with credential helpers disabled,
+  verified its exact SHA and clean checkout, and exited 0.
+- Build task `3909e67da6b81a3a` exited 0. Registry readback verifies amd64,
+  version v0.3.13 and the exact source label at
+  `docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:349c41b609cc463a87018c33b9527efb9a0160f965eca300066b024ff915b2df`.
+  The build reused the existing managed registry binding in a private temporary
+  authfile; no credential grant or global authentication file changed.
+- Internal Web deployment completed with exit 0. Runtime readback confirms
+  that image and source, build ID `xDO1lqHi65YOhA1URwszQ`, and `/console` HTTP
+  200. Prior container `doops-web-rollback-20261116T174054Z-32848` remains
+  available for rollback.
+- Online browser acceptance passed at 01:45-01:47 China time. A real
+  double-click against `test/doops-direct-smoke-v0313` on
+  `doops-zyj/zyj-test` sent exactly one scale, zero cancels and no `confirm`
+  field. Request `25ca379a-6ab9-463d-9556-5565cbaf1902`, session
+  `console-9u0g1a5t`, returned `open -> output -> result -> done` with
+  `Kubernetes operation complete.` No confirmation dialog was shown.
+  All 15 JavaScript assets and four brand images returned 200; console and
+  network checks had no errors. Desktop and 390px screenshots passed.
+- Independent readback verified the isolated Deployment UID and zero replicas,
+  then cleanup deleted it with exit 0 and an empty final readback. Evidence:
+  `.local/direct-execution-20261116/online-v0313-acceptance.md`,
+  `online-v0313-scale-evidence.json`, and `console-cleanup-v0313.log`.
+- PR 25 merged as `5365ab33727045ba853cac1c56d4aa0f39523a6f`.
+  Its source is verified as an ancestor of main. Tag v0.3.13 points to the
+  exact tested/build source and is pushed. Release workflow `43922104165`
+  completed successfully, including published-asset verification.
+- CLI v0.3.13 and its exact-source Skill/docs were installed into the repository,
+  parent workspace, and existing global Agent/Codex Skill locations. The first
+  download failed with a GitHub TLS interruption before replacement; the
+  same-version retry succeeded. `doops version` reports source
+  `6b25b830a92ae16ae3bbd3ae2917e5f84e6e2c0f`; target readback still works
+  without another login. Agent v0.3.12 remains the verified Helm runtime.
+- The installed Agent K8s Skill hash equals the canonical source:
+  `70c83646f478f269354546df4933c79a3ee39473a2d7efdcc21d15df3da9fff3`.
+  A final deterministic check of the Helm and browser JSON receipts passed:
+  preserved failed attempt, correcting success, successful terminal turn,
+  one online scale, zero cancels and zero browser errors.
+- Public `doops.l8ai.cn` belongs to a separate entry route associated with
+  `gw-114-k8s`, not this Web host. The target is unavailable through the
+  current Gateway; the existing recovery connection also failed. Its
+  backend identity and release are unverified. No public replacement,
+  authorization change, DNS change or proxy change is claimed.
+- Final read-only business check still finds `test/loki` revision 10 failed,
+  with several Pods in ImagePullBackOff or Pending. This task verified the
+  requested platform behavior on `doops-zyj/zyj-test`; it did not mutate that
+  separate Loki deployment or complete the remaining fleet rollout.
