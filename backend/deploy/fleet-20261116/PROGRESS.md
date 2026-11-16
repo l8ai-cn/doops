@@ -80,6 +80,41 @@ yet been verified on the new v0.3.11 candidate.
 5. Reconcile both Gateway/console environments, browser user paths and all 13
    target results. Unavailable targets remain explicitly incomplete.
 
+## Resumed Delivery Evidence
+
+- Runtime source: `32ccf453d6a0744fba590b4c11b0027d65c7800b`, pushed on
+  `fix/public-helm-failure-receipts`; remote visibility and main ancestry verified.
+  PR 22 merged as `b77b8515b0abbc75af51a312587abcf1f1fd80ab`.
+- CI runs `43894521978` and `43895559905` passed. Release v0.3.11 workflow
+  `43899255019` completed successfully, including published-asset verification.
+- Matching image builds completed on gw-edu-coder. Runtime inputs were checked
+  against Git blobs before build; base and Agent in-image probes passed.
+  Agent task `12fab5071aa13459` and Web task `c0eb5478bdd2694c` exited 0.
+  Base: `docker.cnb.cool/l8ai/ai/doops.sh/base-light@sha256:f6f80b13d155aed47df005ba180e7ef7ad0c03956e5ad59c0fa54c2dbf97aeea`.
+  Agent: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:6db6060f3b84e7814f08baeb72c35c4adf1bcae3da2e9d3c8be1c1b622d52f16`.
+  Web: `docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:2568fc82672b8c547483fd5dd30f25b225f961bca6f6d3d720c45f9ffdf8141a`.
+- The first push attempts exited 1 with registry HTTP 401: the builder's existing
+  authfile contained Harbor entries only. The active `cnb-upstream-dev`
+  opaqueSecret binding passed credential preflight. The build wrapper used its
+  existing materialized Secret in a private 0600 temporary authfile, removed at
+  subprocess exit; no global authfile or credential grant was changed.
+- gw-zyj pilot Job `fleet-zyj-v0311-r49` failed before mutation. Helm revision 49
+  remained deployed. The Job exited in its start second while checking its own
+  kubelet-published Ready state. The controller now waits up to 60 seconds for
+  verified self-identity and preserves helper error categories. Twenty-four
+  transaction/registry/timing cases pass; the corrected real pilot is pending.
+- gw-hdu-235 render passed server-side dry-run; no upgrade Job was submitted
+  there while another build task was using that target.
+- Independent readback found the SCU and Unicom Kubernetes SAs/RBAC are external
+  to their Agent releases. Their rollback manifests and operation permissions
+  still need verification before adding that identity mode to the controller.
+- Docker socket-controller review found missing external acceptance, incomplete
+  rollback health checks and an ambiguous-create recovery gap. Do not deploy
+  gw-silicon or unicom-1 with that incomplete controller.
+- Internal Gateway still reports v0.3.9. Public Gateway and console have separate
+  TLS/static-resource drift; neither environment is accepted as v0.3.11 yet.
+  Browser baseline is space 324; internal console currently shows login.
+
 ## Bounds And Recovery
 
 This resumed delivery round is bounded to 120 minutes. Use at most three
