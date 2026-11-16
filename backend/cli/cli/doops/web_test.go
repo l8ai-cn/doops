@@ -23,6 +23,8 @@ func TestBuildWebInstructionKeepsGatewayBoundary(t *testing.T) {
 		"site_id=home",
 		"dist=/root/ws/release/dist",
 		"domain=example.test",
+		"无需再次请求用户确认",
+		"执行前核对 SiteSpec、dist、域名、代理、TLS 和验收条件",
 		"nginx -t",
 		"不要读取或索取密码",
 		"用户需求：publish the approved site",

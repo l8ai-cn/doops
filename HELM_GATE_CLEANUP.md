@@ -1,7 +1,7 @@
 ---
 name: helm-gate-cleanup
 scope: task
-status: complete
+status: in-progress
 ---
 
 # Helm Gate Cleanup
@@ -360,3 +360,71 @@ including token accounting, correction, cancellation and deadline exits.
   Immutable backups and metadata receipts remain for recovery and audit.
   Complete tool output is retained in the task-local
   `.local/helm-recovery-check/` receipt and log artifacts.
+
+## Direct Execution Follow-through (2026-11-16)
+
+The user explicitly requested direct execution without repeated confirmation.
+An explicit operation or apply request carries the user's execution intent;
+target authentication, credential isolation, read-only requests, operation
+ownership and truthful terminal evidence still apply.
+
+- [x] Read the live baseline through `helm-delivery-20261116`: `gw-test` is
+  `doops-zyj/zyj-test`, Agent v0.3.9 at
+  `0d389204508ce989bf6bca7e06438edfbb425f0a`, Helm revision 26 deployed.
+  The installed local CLI is v0.3.7. Source and runtime status are distinct.
+- [x] Read `test/loki`: revision 10 failed with `context deadline exceeded`;
+  current Pods include ImagePullBackOff and Pending. Do not report the
+  platform release as a successful Loki deployment.
+- [x] Match the runtime lock to deployed DoAgent source
+  `af62d43828ce4d83e7cc8c4fa41a8ae128bcad56`. Registry readback verifies amd64
+  digest `sha256:2dd40b6013559019d975169831b6e67d3ea9bb9c60843b8b6863cd84ac5ac5bb`
+  and matching source label. The prior source lock would have downgraded the
+  deadline repair/progress and six-attempt completion-review fixes.
+- [ ] Remove duplicate K8s/Web confirmation parameters and console confirmation
+  controls; verify explicit actions execute once and read-only tools stay read-only.
+- [ ] Align canonical skills, API/help and user documentation; scan for retired
+  confirmation instructions.
+- [ ] Run functional checks, production build and browser workflows; independently
+  review authorization and terminal-evidence behavior.
+- [ ] Commit/push on the existing member branch, verify CI, publish/install matched
+  assets, upgrade the test Agent and record real execution receipts.
+
+Execution bounds: at most six corrective attempts per failing check, at most
+three identical attempts without new evidence, and at most 120 minutes for this
+delivery round. A failed build, unreachable service or missing release access
+must be recorded with its actual error; do not weaken verification, replay an
+unknown mutation, or claim an unpublished change is deployed. Persist each
+completed stage here so the next round resumes from tool evidence.
+
+### Resumed Delivery (2026-11-16)
+
+- Fresh Gateway read at 13:37 UTC still reports source
+  `0d389204508ce989bf6bca7e06438edfbb425f0a`; `agents-test/doops-agent-test`
+  remains deployed at revision 26. The local CLI remains v0.3.7.
+  The confirmation-removal changes are not deployed.
+- Backend removal and canonical documentation are implemented. Focused
+  CLI-to-Gateway-to-Agent and Nginx functional checks passed in the prior
+  verification; the final package and contract checks are being rerun.
+- Independent review identified duplicate-click submission in administrative
+  actions and loss of the previous unknown-outcome receipt when starting a
+  session. Both are being fixed without reinstating confirmation dialogs.
+- This round will finish browser verification, push the existing
+  `fix/public-helm-failure-receipts` branch, verify CI and immutable artifacts,
+  install matching CLI/Skill assets, then upgrade the selected Agent and Web
+  console. Each deployment requires a version and live-operation readback.
+- `test/loki` is still revision 10 / failed. Its state is separate from the
+  platform rollout and must not be reported as a successful Loki deployment.
+- Backend/CLI/skill changes were pushed as
+  `55df739bb9493554086f1fa28aef85648ec19e42`; GitHub CI runs
+  `43885132839` and `43885121461` passed all checks.
+- Final console checks passed 636/636, TypeScript passed and the production
+  Web build succeeded. Browser verification is in progress on that build.
+- The concurrent fleet task owns v0.3.10. This task prepares v0.3.11 with
+  the completed confirmation-removal UI, and limits rollout to `gw-test`
+  and the Web console. Other fleet/Gateway changes are preserved.
+- Source upload exposed a separate reproducible Gateway defect:
+  `validCOSSnapshotRel` rejected `[...path]` because it searched for any `..`
+  substring instead of a parent-directory segment. The regression failed
+  with the actual `cos_key_rejected` before the fix; all COS tests passed
+  afterward. The v0.3.11 Gateway asset must be installed and the same COS
+  upload retried to verify this correction online.

@@ -42,14 +42,14 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 - `ask` 的文字回答是模型写的摘要，不是状态证据，可能写错 revision 或答非所问。发布前后的
   Helm release、Deployment、Pod 状态用 `doops exec`（`helm history`、`kubectl get -o json`）
   或 `doops k8s` 只读入口回读，以回读结果为准。
-- 诊断/方案的 `ask` 写明只读；`--apply` 传递本次变更授权。超出授权范围才补充确认，
-  不按 Chart 资源种类重复授权。
+- 诊断/方案的 `ask` 写明只读；用户明确要求的操作直接执行，`--apply` 传递本次变更意图。
+  已明确的目标和任务不再索要确认，不按 Chart 资源种类或工具调用次数重复授权。
 - Helm 发布可用 `ask --apply`/`mcp_doops_helm`，也可用 `doops exec` 执行明确授权的
   原生命令。参数和终态契约见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - 发布出错后主动读取回执和目标状态，在已有授权内定位并修正可修复问题，持续反馈
   原因、修正和验证进度；不将可自行取得的参数、配置或检查交给用户重复操作。
   缺失终态先只读核对，保留原始结果；具体恢复边界见自然语言发布文档。
-- 运维类变更（重启、扩缩、cordon、删 Pod）用 `doops k8s ... --confirm`；文本不算证据。
+- 运维类变更（重启、扩缩、cordon、删 Pod）用 `doops k8s` 的对应子命令直接执行；文本不算证据。
 - 进入 Kubernetes Agent 所在节点只走 `doops exec` 里的 `nsenter`，并且该 Deployment 的
   `hostAccess.enabled` 必须为 `true`。这是 Gateway 的普通 `exec`：目标 grant 决定能否执行，
   审计记下用户、target、session 和有界命令摘要（最多 512 字节尾部）。不要用 `kubectl exec`、`docker exec` 或直连
@@ -81,7 +81,7 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | DoSql 跨库复制表 | `doops -session <s> sql --target <t> --mode apply --copy-from <源库> --database <目标库> --tables a,b [--dry-run]`（细节见 `docs/DOOPS_USAGE_GUIDE.md`） |
 | K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [-n <ns>\|-A] [-l <sel>] [-o jsonpath=...]` |
 | Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
-| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ... --confirm` |
+| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ...` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
 | 工作区推送 / 下载 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |

@@ -89,7 +89,7 @@ func buildWebInstruction(mode webMode, siteID, dist, domain, request string) str
 		purpose = "只生成 SiteSpec、Nginx 配置计划、验证步骤和回滚方案，不执行修改。"
 	}
 	if mode == webModeApply {
-		purpose = "执行受控网站变更；必须先确认 SiteSpec、dist、域名、代理、TLS 和验收条件，执行 nginx -t、reload、健康检查并保留证据。"
+		purpose = "按用户选定操作执行网站变更，无需再次请求用户确认；执行前核对 SiteSpec、dist、域名、代理、TLS 和验收条件，执行 nginx -t、reload、健康检查并保留证据。"
 	}
 	facts := make([]string, 0, 3)
 	if strings.TrimSpace(siteID) != "" {

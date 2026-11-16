@@ -34,7 +34,6 @@ export function WebsitePanel({
   const [domain, setDomain] = useState("")
   const [dist, setDist] = useState("")
   const [credentials, setCredentials] = useState("")
-  const [confirmed, setConfirmed] = useState(false)
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
@@ -48,10 +47,6 @@ export function WebsitePanel({
   async function run() {
     const text = request.trim()
     if (!text || running || stopPending) return
-    if (mode === "apply" && !confirmed) {
-      setError("执行网站变更前请确认已阅读 SiteSpec、验证和回滚范围")
-      return
-    }
     const credentialRefs = mode === "apply" ? credentials.split(/[\s,]+/).filter(Boolean) : []
     if (credentialRefs.some((value) => !/^[a-z0-9][a-z0-9.-]*$/.test(value))) {
       setError("受管凭据只能填写资源名")
@@ -136,35 +131,31 @@ export function WebsitePanel({
           value={mode}
           disabled={running}
           ariaLabel="网站操作模式"
-          onChange={(value) => { setMode(value); setConfirmed(false) }}
+          onChange={setMode}
           options={(["check", "plan", "apply"] as const).map((value) => ({ value, label: modeLabel(value) }))}
         />
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div className="flex flex-wrap gap-2">
           {QUICK_REQUESTS.map((item) => (
-            <Button key={item.label} type="button" size="sm" disabled={running} onClick={() => { setMode(item.mode); setRequest(item.request); setConfirmed(false); setError("") }} className="text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground">
+            <Button key={item.label} type="button" size="sm" disabled={running} onClick={() => { setMode(item.mode); setRequest(item.request); setError("") }} className="text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground">
               {item.label}
             </Button>
           ))}
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
-          <Input aria-label="站点 ID" value={siteID} onChange={(event) => { setSiteID(event.target.value); setConfirmed(false) }} disabled={running} placeholder="站点 ID" />
-          <Input aria-label="域名" value={domain} onChange={(event) => { setDomain(event.target.value); setConfirmed(false) }} disabled={running} placeholder="域名，例如 app.example.com" />
-          <Input aria-label="dist 路径" value={dist} onChange={(event) => { setDist(event.target.value); setConfirmed(false) }} disabled={running} placeholder="当前 session 的 dist 路径" />
+          <Input aria-label="站点 ID" value={siteID} onChange={(event) => setSiteID(event.target.value)} disabled={running} placeholder="站点 ID" />
+          <Input aria-label="域名" value={domain} onChange={(event) => setDomain(event.target.value)} disabled={running} placeholder="域名，例如 app.example.com" />
+          <Input aria-label="dist 路径" value={dist} onChange={(event) => setDist(event.target.value)} disabled={running} placeholder="当前 session 的 dist 路径" />
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">Nginx<Select scale="sm" aria-label="Nginx 运行方式" value={runtimeMode} disabled={running} onChange={(event) => { setRuntimeMode(event.target.value as "host" | "docker"); setConfirmed(false) }}><option value="host">Host</option><option value="docker">Docker</option></Select></label>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">Nginx<Select scale="sm" aria-label="Nginx 运行方式" value={runtimeMode} disabled={running} onChange={(event) => setRuntimeMode(event.target.value as "host" | "docker")}><option value="host">Host</option><option value="docker">Docker</option></Select></label>
         <label className="flex min-h-28 grow shrink-0 flex-col gap-1.5">
           <span className="text-xs font-medium text-foreground">操作需求</span>
-          <Textarea aria-label="操作需求" value={request} onChange={(event) => { setRequest(event.target.value); setConfirmed(false) }} disabled={running} placeholder="描述站点、域名、dist、代理、TLS 或巡检目标。" className="min-h-28 flex-1 resize-y text-sm leading-6 focus:ring-2 focus:ring-ring/20" />
+          <Textarea aria-label="操作需求" value={request} onChange={(event) => setRequest(event.target.value)} disabled={running} placeholder="描述站点、域名、dist、代理、TLS 或巡检目标。" className="min-h-28 flex-1 resize-y text-sm leading-6 focus:ring-2 focus:ring-ring/20" />
         </label>
-        {mode === "apply" && <>
-          <Input aria-label="受管凭据" value={credentials} onChange={(event) => { setCredentials(event.target.value); setConfirmed(false) }} disabled={running} placeholder="受管凭据资源名，可填写多个，用空格分隔" />
-          <label className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={running} className="mt-0.5 accent-primary" />
-            <span>我已阅读 SiteSpec、Nginx 验证、健康检查和回滚范围，允许 DoWeb 在 Gateway 授权后执行。</span>
-          </label>
-        </>}
+        {mode === "apply" && (
+          <Input aria-label="受管凭据" value={credentials} onChange={(event) => setCredentials(event.target.value)} disabled={running} placeholder="受管凭据资源名，可填写多个，用空格分隔" />
+        )}
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-end gap-2">
           {running || stopPending ? <Button type="button" onClick={stop} disabled={stopPending} variant="danger-outline"><Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}</Button> : <Button type="button" onClick={() => void run()} disabled={!request.trim()} variant="primary"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</Button>}

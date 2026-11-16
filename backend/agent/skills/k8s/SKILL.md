@@ -48,7 +48,7 @@ Secret、ServiceAccount 不开放读取。
   镜像策略或工作负载/Ingress 二次验收。
 - 仅含 NetworkPolicy、ConfigMap、Ingress 或其它合法资源的 Chart 照常发布，
   不要求存在 workload、镜像、CI 成功记录或业务健康证明。
-- `atomic=true` 和 `take_ownership=true` 由用户选择，默认不启用；Helm 的 ownership、
+- `atomic=true` 和 `take_ownership=true` 按任务明确的回滚与接管要求选用，默认不启用；Helm 的 ownership、
   schema、Kubernetes API、等待超时和下载/认证错误如实返回，不通过改标签或关闭校验掩盖。
 - 失败返回 `错误码: 原因`：
   - `helm_mutation_failed`：原生 Helm 执行失败，保留脱敏后的实际原因。
@@ -64,5 +64,5 @@ Secret、ServiceAccount 不开放读取。
 
 ## 运维变更
 
-重启、扩缩、cordon、删 Pod 交回上层用 `doops -session <s> k8s --target <t> ... --confirm`
-在已有具体授权内执行；你在 ask 里只读不改。
+重启、扩缩、cordon、删 Pod 交回上层用 `doops -session <s> k8s --target <t> ...`
+直接执行用户要求的操作，不再要求确认参数或用户重复批准；你在 ask 里只读不改。

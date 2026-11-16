@@ -7,7 +7,6 @@ import {
   appendShellOutput,
   describeShellFailure,
   destructiveCommandReason,
-  execGate,
   latestAssistantShellBlocks,
   shellResultOutcome,
   shellToolArguments,
@@ -25,13 +24,8 @@ interface ExecRun {
   failure?: ShellFailure
 }
 
-interface PendingConfirm {
-  command: string
-  reason: string
-}
-
 // AgentExecBar 是 AI 助手的“AI exec”入口：DoAgent 本身保持只读，命令一律由用户
-// 确认后通过终端页同一条 doops_shell 路径执行（Gateway exec 授权 + 审计）。
+// 主动提交后通过终端页同一条 doops_shell 路径执行（Gateway 目标授权 + 审计）。
 export function AgentExecBar({
   session,
   target,
@@ -54,7 +48,6 @@ export function AgentExecBar({
   const [open, setOpen] = useState(false)
   const [command, setCommand] = useState("")
   const [runs, setRuns] = useState<ExecRun[]>([])
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const [stopPending, setStopPending] = useState(false)
   const [stopError, setStopError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
@@ -75,21 +68,13 @@ export function AgentExecBar({
     update(index, (r) => ({ ...r, progress: "", status: "failed", failure }))
   }
 
-  // submit 先过确认闸门：破坏性命令必须对这条原文点一次“确认执行”，Enter 不会代替确认。
-  function submit(confirmed = "") {
-    if (running || stopPending) return
-    const gate = execGate(command, confirmed)
-    if (gate === "empty") return
-    if (gate === "confirm") {
-      const trimmed = command.trim()
-      setPendingConfirm({ command: trimmed, reason: destructiveCommandReason(trimmed) ?? "" })
-      return
-    }
-    setPendingConfirm(null)
+  function submit() {
+    if (running || stopPending || !command.trim()) return
     void execute(command)
   }
 
   async function execute(raw: string) {
+    if (running || stopPending) return
     let args: ReturnType<typeof shellToolArguments>
     try {
       args = shellToolArguments(sessionId, raw)
@@ -167,7 +152,7 @@ export function AgentExecBar({
     <div className="mx-4 mt-2 flex max-h-[45%] shrink-0 flex-col gap-2 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 text-xs">
       {blocks.length > 0 && (
         <div className="flex flex-col gap-1">
-          <div className="text-muted-foreground">助手建议的命令（需你确认后在 {where} 执行，走 doops_shell 审计路径）</div>
+          <div className="text-muted-foreground">助手建议的命令 · {where}</div>
           {blocks.map((block) => (
             <div key={block.command} className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
@@ -180,13 +165,13 @@ export function AgentExecBar({
                   onClick={() => onRunInTerminal(block.command)}
                   className="shrink-0 rounded-md border border-border px-2 py-1 hover:bg-muted"
                 >
-                  在终端执行
+                  填入终端
                 </button>
               )}
               <button
                 type="button"
-                onClick={() => { setOpen(true); setCommand(block.command); setPendingConfirm(null) }}
-                disabled={running}
+                onClick={() => { setOpen(true); void execute(block.command) }}
+                disabled={running || stopPending}
                 className="shrink-0 rounded-md border border-border px-2 py-1 hover:bg-muted disabled:opacity-40"
               >
                 在此执行
@@ -225,32 +210,11 @@ export function AgentExecBar({
             </div>
           ))}
           {stopError && <div role="alert" className="text-destructive">{stopError}</div>}
-          {pendingConfirm && (
-            <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive">
-              <div>这条命令会{pendingConfirm.reason}，将在 {where} 上直接执行，无法自动撤销。</div>
-              <pre className="mt-1 whitespace-pre-wrap break-all rounded bg-background/70 px-2 py-1 font-mono text-foreground">{pendingConfirm.command}</pre>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => submit(pendingConfirm.command)}
-                  className="rounded-md bg-destructive px-2 py-1 text-destructive-foreground hover:opacity-90"
-                >
-                  确认执行
-                </button>
-                <button type="button" onClick={() => setPendingConfirm(null)} className="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted">
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
           <div className="flex items-end gap-2">
             <textarea
               aria-label="在当前机器执行的命令"
               value={command}
-              onChange={(e) => {
-                setCommand(e.target.value)
-                if (pendingConfirm && e.target.value.trim() !== pendingConfirm.command) setPendingConfirm(null)
-              }}
+              onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault()

@@ -16,7 +16,6 @@ func TestApplyRejectsRemovedStructuredK8sMutationEvidence(t *testing.T) {
 		"resource":  "deployment/doops-agent",
 		"container": "doops-agent",
 		"image":     "repo/doops-agent@sha256:" + strings.Repeat("a", 64),
-		"confirm":   true,
 	})
 	if err := collector.requireCompletedToolEvidence(); err == nil ||
 		!strings.Contains(err.Error(), "mcp_doops_k8s=structured_mutation_tool_required") {

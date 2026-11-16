@@ -395,7 +395,7 @@ export function deploymentSubmitError(raw: string): string {
 // session started after an unconfirmed result could run beside a release that is still going.
 export function deploymentNewSessionWarning(kind: DeploymentOutcome["kind"]): string | undefined {
   if (kind !== "unknown") return undefined
-  return "上一次发布结果未确认，目标可能仍在变更。新的发布会话不会等它结束，请先在「Kubernetes」核对 release 状态。确定要开始新发布吗？"
+  return "上一次发布结果未确认，目标可能仍在变更。新的发布会话不会等它结束，请先在「Kubernetes」核对 release 状态。"
 }
 
 // A stop only asks the Agent to stop; this says what happened to the release when it did not take effect.

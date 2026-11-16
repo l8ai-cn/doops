@@ -20,7 +20,6 @@ import {
   type ModelConfig,
   type ConfigKind,
 } from "@/lib/model-configs"
-import { useAppDialog } from "./app-dialog"
 import {
   LayersIcon,
   PlusIcon,
@@ -79,10 +78,10 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
   const [dispatchCfg, setDispatchCfg] = useState("")
   const [rows, setRows] = useState<Record<string, DispatchRow>>({})
   const [dispatching, setDispatching] = useState(false)
+  const dispatchRef = useRef(false)
   const [formError, setFormError] = useState("")
   const [dispatchError, setDispatchError] = useState("")
   const sessionRef = useRef(randomSession("admin-cfg"))
-  const { confirm, dialog } = useAppDialog()
 
   useEffect(() => {
     setConfigs(loadConfigs())
@@ -131,17 +130,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     setEditing(null)
   }
 
-  async function deleteConfig(id: string) {
-    if (
-      !(await confirm({
-        title: "删除配置",
-        message: "确定删除该配置？",
-        confirmLabel: "删除",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+  function deleteConfig(id: string) {
     const list = removeConfig(id)
     setConfigs(list)
     if (dispatchCfg === id) setDispatchCfg("")
@@ -170,6 +159,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 
   // 应用 / 发布上线
   async function publish() {
+    if (dispatchRef.current) return
     const cfg = configs.find((c) => c.id === dispatchCfg)
     if (!cfg) {
       setDispatchError("请先选择要发布的配置")
@@ -181,6 +171,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
       return
     }
     setDispatchError("")
+    dispatchRef.current = true
     setDispatching(true)
     const init: Record<string, DispatchRow> = {}
     targets.forEach((t) => {
@@ -188,25 +179,29 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     })
     setRows(init)
 
-    let anyOk = false
-    for (const inst of targets) {
-      const key = `${inst.cluster}/${inst.instance}`
-      const target: Target = { cluster: inst.cluster, instance: inst.instance, key }
-      try {
-        await applyConfigToNode(session, target, sessionRef.current, cfg)
-        anyOk = true
-        setRows((p) => ({ ...p, [key]: { key, state: "ok", message: `已写入 ${configTargetPath(cfg)}` } }))
-      } catch (e) {
-        setRows((p) => ({
-          ...p,
-          [key]: { key, state: "err", message: e instanceof Error ? e.message : String(e) },
-        }))
+    try {
+      let anyOk = false
+      for (const inst of targets) {
+        const key = `${inst.cluster}/${inst.instance}`
+        const target: Target = { cluster: inst.cluster, instance: inst.instance, key }
+        try {
+          await applyConfigToNode(session, target, sessionRef.current, cfg)
+          anyOk = true
+          setRows((p) => ({ ...p, [key]: { key, state: "ok", message: `已写入 ${configTargetPath(cfg)}` } }))
+        } catch (e) {
+          setRows((p) => ({
+            ...p,
+            [key]: { key, state: "err", message: e instanceof Error ? e.message : String(e) },
+          }))
+        }
       }
+      if (anyOk) {
+        setConfigs(markPublished(cfg.id))
+      }
+    } finally {
+      dispatchRef.current = false
+      setDispatching(false)
     }
-    if (anyOk) {
-      setConfigs(markPublished(cfg.id))
-    }
-    setDispatching(false)
   }
 
   const selectedCount = Object.values(selected).filter(Boolean).length
@@ -464,7 +459,6 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           )}
         </div>
       </section>
-      {dialog}
     </div>
   )
 }

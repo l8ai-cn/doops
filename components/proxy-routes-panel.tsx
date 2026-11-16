@@ -14,10 +14,9 @@ import {
 import {
   EMPTY_PROXY_ROUTE_FORM,
   describeProxyRouteError,
+  planProxyRouteDelete,
   planProxyRouteSave,
-  proxyRouteDeletePrompt,
   proxyRouteForm,
-  proxyRouteHostChangePrompt,
   proxyRouteListState,
   proxyRouteSavedNotice,
   proxyRouteTargetStatus,
@@ -27,7 +26,6 @@ import {
   type ProxyRouteTargetStatus,
 } from "@/lib/proxy-routes"
 import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon } from "./icons"
-import { useAppDialog } from "./app-dialog"
 
 function fmtTime(v?: string): string {
   if (!v) return "—"
@@ -56,9 +54,9 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
   // 打开编辑时的路由快照；保存时拿它和最新列表做三方合并。
   const [base, setBase] = useState<ProxyRoute | null>(null)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   // 只采用最后一次列表请求的结果，避免慢的旧响应覆盖新数据。
   const seq = useRef(0)
-  const { confirm, dialog } = useAppDialog()
 
   const showError = useCallback((view: ProxyRouteErrorView) => {
     if (view.kind === "error") setError(view.message)
@@ -116,6 +114,8 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
 
   // 保存前重读列表：请求不带 updated_at 时 Gateway 不做版本校验，要在这里查重复域名和并发修改。
   async function save(next: ProxyRouteForm, from: ProxyRoute | null): Promise<boolean> {
+    if (busyRef.current) return false
+    busyRef.current = true
     setBusy(true)
     setError("")
     setNotice("")
@@ -135,17 +135,6 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
         setNotice("没有需要保存的修改（最新数据已是这些值）")
         return true
       }
-      if (
-        plan.hostChange &&
-        !(await confirm({
-          title: "更改域名",
-          message: proxyRouteHostChangePrompt(plan.hostChange),
-          confirmLabel: "更改",
-          tone: "danger",
-        }))
-      ) {
-        return false
-      }
       const saved = await setProxyRoute(session, plan.body)
       setNotice(proxyRouteSavedNotice(saved))
       await fetchRoutes()
@@ -156,6 +145,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
       if (view.reload) await fetchRoutes()
       return false
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -165,44 +155,25 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
   }
 
   async function toggle(route: ProxyRoute) {
-    const action = route.enabled ? "停用" : "启用"
-    if (
-      !(await confirm({
-        title: `${action}代理路由`,
-        message: `确认${action}域名 ${route.host} 的代理路由？`,
-        confirmLabel: action,
-        tone: route.enabled ? "danger" : "default",
-      }))
-    ) {
-      return
-    }
     await save({ ...proxyRouteForm(route), enabled: !route.enabled }, route)
   }
 
-  // 确认框按最新列表展示，避免按过期的域名确认后删掉别的内容。
+  // 删除前检查最新列表，避免按过期的域名删掉已修改的路由。
   async function remove(route: ProxyRoute) {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     setError("")
     setNotice("")
     try {
       const latest = await fetchRoutes("；未执行删除")
       if (!latest) return
-      const prompt = proxyRouteDeletePrompt(route, latest)
-      if (!prompt.ok) {
-        setError(prompt.error)
+      const plan = planProxyRouteDelete(route, latest)
+      if (!plan.ok) {
+        setError(plan.error)
         return
       }
-      if (
-        !(await confirm({
-          title: "删除代理路由",
-          message: prompt.value.message,
-          confirmLabel: "删除",
-          tone: "danger",
-        }))
-      ) {
-        return
-      }
-      const target = prompt.value.route
+      const target = plan.value
       await deleteProxyRoute(session, target.id)
       if (form?.id === target.id) closeForm()
       setNotice(`已删除域名 ${target.host} 的代理路由`)
@@ -212,6 +183,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
       showError(view)
       if (view.reload) await fetchRoutes()
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -455,7 +427,6 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
           </div>
         </>
       )}
-      {dialog}
     </div>
   )
 }

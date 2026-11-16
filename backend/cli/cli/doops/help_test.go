@@ -35,7 +35,7 @@ func TestBuildK8SRequestReportsHelp(t *testing.T) {
 			t.Fatalf("args %v: expected errK8SHelp, got %v", args, err)
 		}
 	}
-	if !strings.Contains(k8sUsage, "--confirm") {
-		t.Fatal("k8s usage must document --confirm for mutations")
+	if strings.Contains(k8sUsage, "--confirm") {
+		t.Fatal("k8s usage must not advertise the removed --confirm flag")
 	}
 }

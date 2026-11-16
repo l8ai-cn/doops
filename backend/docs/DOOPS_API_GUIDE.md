@@ -588,7 +588,7 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 The unified DoWeb domain uses `skill=doweb` and the same target/session and
 Gateway account. `mcp_doops_web_read` accepts only `render`, `check`,
 `config-get` and `domain-list`. The mutating `mcp_doops_web` requires
-`confirm=true` and a runtime-authorized apply. A read tool cannot stand in for
+a runtime-authorized apply, with no additional confirmation field. A read tool cannot stand in for
 mutation evidence. The deterministic `doops_web` RPC maps reads to `ask` and
 mutations to `exec`; website writes hold a target-wide lease because Nginx
 activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mounts.
@@ -616,8 +616,8 @@ session 后按 `cluster/instance/use` 授权和物化，namespace、workload、i
 required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 使用下面的
 自动绑定契约。CLI 用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。
 通用 `ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
-Helm apply 不要求额外的 `confirm` 字段；上面的 `confirm=true` 只属于
-DoWeb 的受管变更工具。Helm 的成功、失败和凭据 origin 边界见
+Helm、Kubernetes 和 DoWeb 的明确变更请求都不要求额外的 `confirm` 字段。
+Gateway target grant、只读工具边界和运行时 apply 授权保持有效。Helm 的成功、失败和凭据 origin 边界见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 #### DoSql 参数契约

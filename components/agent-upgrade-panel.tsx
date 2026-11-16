@@ -38,7 +38,6 @@ function UpgradePanel({ session, target, sessionId }: Props) {
   const [image, setImage] = useState("")
   const [commit, setCommit] = useState("")
   const [ci, setCI] = useState("")
-  const [confirmed, setConfirmed] = useState(false)
   const [running, setRunning] = useState(false)
   const [ready, setReady] = useState(false)
   const [operation, setOperation] = useState<AgentUpgradeOperation | null>(null)
@@ -84,7 +83,6 @@ function UpgradePanel({ session, target, sessionId }: Props) {
     abortRef.current = ac
     setRunning(true)
     setError("")
-    setConfirmed(false)
     let latest = next
     try {
       // Persist the operation identity before any request can create a Job.
@@ -100,7 +98,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
   }
 
   function start(phase: "dry_run" | "preflight" | "rollback") {
-    if (running || !ready || (phase !== "dry_run" && !confirmed)) return
+    if (disabled) return
     setError("")
     const sourceCommit = commit.trim()
     const ciURL = ci.trim()
@@ -142,15 +140,14 @@ function UpgradePanel({ session, target, sessionId }: Props) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {([["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI]] as const).map(([label, value, setter]) => (
           <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}
-            <Input aria-label={label} value={value} disabled={running || !ready} spellCheck={false} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} />
+            <Input aria-label={label} value={value} disabled={running || !ready} spellCheck={false} onChange={(e) => setter(e.target.value)} />
           </label>
         ))}
       </div>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={disabled} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />授权本次 Agent 变更，已核对 CI 来源和回滚范围</label>
       <div className="flex flex-wrap gap-2">
         <Button disabled={disabled || !image || !commit || !ci} onClick={() => start("dry_run")}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />参数预览</Button>
-        <Button disabled={disabled || !confirmed || !image || !commit || !ci} onClick={() => start("preflight")} variant="primary"><Rocket aria-hidden="true" className="size-4 shrink-0" />预检并升级</Button>
-        <Button disabled={disabled || !confirmed} onClick={() => start("rollback")}><RotateCcw aria-hidden="true" className="size-4 shrink-0" />回滚前一成功版本</Button>
+        <Button disabled={disabled || !image || !commit || !ci} onClick={() => start("preflight")} variant="primary"><Rocket aria-hidden="true" className="size-4 shrink-0" />预检并升级</Button>
+        <Button disabled={disabled} onClick={() => start("rollback")}><RotateCcw aria-hidden="true" className="size-4 shrink-0" />回滚前一成功版本</Button>
         {canResume && <Button disabled={running || !ready || offline} onClick={() => operation && execute(operation, true)}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />恢复观察</Button>}
         {running && <Button onClick={() => abortRef.current?.abort()}><Square aria-hidden="true" className="size-4 shrink-0" />停止观察</Button>}
       </div>

@@ -399,7 +399,7 @@ func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *
 			case "doops_agent_prompt":
 				args = map[string]interface{}{"operation": "apply", "instruction": "synthetic release"}
 			case "doops_k8s":
-				args = map[string]interface{}{"operation": "scale", "resource": "deployment/app", "replicas": 2, "confirm": true}
+				args = map[string]interface{}{"operation": "scale", "resource": "deployment/app", "replicas": 2}
 			}
 			lifecycleSend(t, client, 2, tool, "interrupted", args)
 			call := agent.call(t, tool, "interrupted")
@@ -466,7 +466,7 @@ func TestExecutionGuardRemoteFailureNeedsResultEvidence(t *testing.T) {
 	agent := f.agent(t, "lost-response")
 	client := f.client(t, f.admin)
 	lifecycleSend(t, client, 2, "doops_k8s", "failed-write", map[string]interface{}{
-		"operation": "scale", "resource": "deployment/app", "replicas": 2, "confirm": true,
+		"operation": "scale", "resource": "deployment/app", "replicas": 2,
 	})
 	agent.complete(t, agent.call(t, "doops_k8s", "failed-write"), "connection closed after request")
 	lifecycleResponse(t, client, 2, "execution_outcome_unknown")

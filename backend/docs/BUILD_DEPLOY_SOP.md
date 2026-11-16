@@ -220,6 +220,13 @@ Gateway 的持久审计。缺失或冲突的回执不能作为成功证据。
 旧版本镜像里的验证逻辑。无历史 commit 回执时拒绝回滚，须按受审计的恢复方案处理。
 收编备份改为带操作编号的不可变 Secret，保留完整 Deployment 供恢复，不在 ConfigMap
 或日志内长期保存其明文环境变量。Secret 的保密性仍取决于集群 RBAC 和静态加密配置。
+
+2026-11-16 fleet 的旧 Helm Agent 首升控制器和进度保存在
+[`deploy/fleet-20261116/`](../deploy/fleet-20261116/PROGRESS.md)。该一次性控制器的
+`render/run/accept` 只支持独立挂载 kubeconfig、单副本且可保持现有权限和挂载的实例，
+由 Gateway exec 提交独立 Job；它不是通用安装器。真实集群试点通过前不得宣称已支持
+其它运行方式，不能用本地事务测试代替逐 target 的发布验收。
+
 `PREVIEW` 仅表示参数预览，不检查 Helm release、挂载、权限或回滚可行性；`ACCEPTED`
 仅表示 Job 已提交。Job 完成和协议声明不是完整发布验收：还须通过同一 target 的
 `exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、

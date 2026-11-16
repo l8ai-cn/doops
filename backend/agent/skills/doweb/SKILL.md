@@ -92,8 +92,10 @@ and return evidence instead of assuming success.
 ## Required Safety Rule
 
 DoWeb has no silent fallback. If `nginx -t`, reload, health check, artifact copy,
-or rollback fails, report the real failure and stop. Do not mask a broken change
-by silently switching to a different path or skipping validation.
+or rollback fails, retain the failed operation's result. Inspect the cause,
+correct it within the requested task and verify the result, without asking the
+user to approve the same task again. Do not mask a broken change by silently
+switching to a different path or skipping validation.
 
 ## Resource Authority
 
@@ -141,6 +143,8 @@ by silently switching to a different path or skipping validation.
   requires `operation=apply` with this exact skill marker, or an explicitly
   authorized deterministic tool. Ordinary apply cannot call website mutation
   tools without the Nginx resource lease, and website apply cannot call Helm.
+  The explicit operation carries execution intent; there is no additional
+  confirmation field or per-call user approval.
 - DoWeb evidence includes SiteSpec, candidate config, `nginx -t`, reload, health
   and rollback status. The Gateway target grant and DoWeb validation
   evidence are separate concerns.

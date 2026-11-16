@@ -198,7 +198,7 @@ else, and both may be omitted.
 
 Web 控制台的「镜像」标签提供同样的三项操作（构建、复制、Registry 同步）。表单字段与上面的
 CLI 参数一一对应，生成与 CLI 相同的 `doops_shell` 命令；authfile 只填目标上的路径，不接收凭据内容。
-每次执行前须勾选确认，结束后界面列出 Agent 输出中的 manifest digest。
+点击执行直接提交该操作，结束后界面列出 Agent 输出中的 manifest digest。
 
 ## Basic Checks
 
@@ -487,16 +487,16 @@ doops -session ops k8s --target <t> helm list -A
 doops -session ops k8s --target <t> helm history zhiyong -n zyj
 doops -session ops k8s --target <t> helm status zhiyong -n zyj
 doops -session ops k8s --target <t> helm values zhiyong -n zyj   # 只返回 key 路径
-# 以下是 mutation，必须带 --confirm
-doops -session ops k8s --target <t> rollout restart deployment/api --namespace apps --confirm
-doops -session ops k8s --target <t> scale deployment/api --replicas 3 --namespace apps --confirm
-doops -session ops k8s --target <t> node cordon <node> --confirm
-doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
+# 以下子命令直接执行指定变更
+doops -session ops k8s --target <t> rollout restart deployment/api --namespace apps
+doops -session ops k8s --target <t> scale deployment/api --replicas 3 --namespace apps
+doops -session ops k8s --target <t> node cordon <node>
+doops -session ops k8s --target <t> delete pod <pod> --namespace apps
 ```
 
 可用参数：`--namespace`/`-n`、`--all-namespaces`/`-A`、`--selector`/`-l`、`--container`/`-c`、
 `--output`/`-o json|yaml|wide|name|jsonpath=...|custom-columns=...`、`--tail`、`--previous`/`-p`、
-`--since`、`--replicas`、`--timeout`、`--for`、`--confirm`。可读 kind 包括工作负载、Service/Ingress、
+`--since`、`--replicas`、`--timeout`、`--for`。可读 kind 包括工作负载、Service/Ingress、
 ConfigMap、NetworkPolicy、HPA、PDB、RBAC、StorageClass、CRD、事件和存储；Secret 与
 ServiceAccount 不开放。`helm values` 只返回 key 路径，`helm status` 只返回发布名、命名空间、修订和
 `info` 里的状态与时间，不返回 values、manifest、hooks 和 notes，因为它们里可能有明文。
@@ -506,8 +506,9 @@ ServiceAccount 不开放。`helm values` 只返回 key 路径，`helm status` �
 
 Web 控制台的「Kubernetes」标签用同一个 `doops_k8s` 工具和同一组参数完成上述操作：选择操作、
 填写 kind/名称/资源/命名空间等字段后执行，输出与 CLI 相同。写操作（滚动重启、扩缩容、
-cordon/uncordon、删除 Pod）必须先勾选确认框，对应 CLI 的 `--confirm`；未勾选时不会发送请求，
-修改任何字段都会清除已勾选的确认。Web 另有只读的「ConfigMap 键名」，调用 Agent 的
+cordon/uncordon、删除 Pod）点击执行即提交，不再要求确认框或二次批准。
+迁移旧调用时删除 CLI 的 `--confirm` 和 RPC 的 `confirm` 字段；只读与变更操作仍分别处理。
+Web 另有只读的「ConfigMap 键名」，调用 Agent 的
 `configmap-keys`（可选名称、命名空间、全部命名空间、标签选择器），只返回命名空间、名称和
 data/binaryData 键名，不返回值；CLI 目前没有对应子命令。结果超过 64 MiB 时 Agent 拒绝返回，
 需要缩小到单个命名空间或用选择器。
@@ -576,6 +577,10 @@ doops -session build exec --target demo --cmd 'ls -la /root/ws/build | head'
 The default upload uses the Gateway's COS configuration. A missing Gateway COS key or a failed bucket check stops in `cos` and does not fall back to Git. When the Agent is online the snapshot is also copied into `/root/ws/<session>`; otherwise the objects remain in COS and the result says the workspace was not synced.
 
 COS snapshots preserve the executable bit recorded in the Git snapshot. New files and replacements restore as `0755` (executable) or `0644` (not executable); they do not inherit an old destination file's executable bit. Only regular Git files are supported: symbolic links and other tree types are rejected before upload instead of being flattened. Push checks the Gateway's snapshot capability on each connection; the Gateway checks the selected Agent before sending a sync. Upgrade the unsupported component when either capability is missing. Ordinary COS `read/write` do not require snapshot capabilities.
+
+Literal dots in filenames, including Next.js `[...path]` and `[[...path]]` route
+directories, are supported. A `..` path segment remains invalid; a filename
+containing multiple dots is not a parent-directory reference.
 
 Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不暴露本地
 HTTP `/git` 入口。

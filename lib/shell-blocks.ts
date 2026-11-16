@@ -1,6 +1,6 @@
 import { gatewayAuthMessage } from "./gateway-auth.ts"
 import { classifyAgentAdmission } from "./agent-error.ts"
-// AI 助手回复里的 shell 代码块只作为“建议命令”交给用户；执行一律由用户确认后
+// AI 助手回复里的 shell 代码块只作为“建议命令”交给用户；执行一律由用户主动提交后
 // 走终端页同一条 doops_shell 路径。这里只做纯文本解析和参数构造，不拼接凭据。
 
 const SHELL_LANGUAGES = new Set(["bash", "sh", "shell", "zsh", "console"])
@@ -83,7 +83,7 @@ export function latestAssistantShellBlocks(items: readonly AssistantMessageLike[
   return []
 }
 
-// shellToolArguments 构造 doops_shell 参数：只有会话和用户确认过的原始命令。
+// shellToolArguments 构造 doops_shell 参数：只有会话和用户提交的原始命令。
 export function shellToolArguments(sessionId: string, command: string): { session_id: string; command: string } {
   const trimmed = command.trim()
   if (!sessionId) throw new Error("缺少会话")
@@ -91,7 +91,7 @@ export function shellToolArguments(sessionId: string, command: string): { sessio
   return { session_id: sessionId, command: trimmed }
 }
 
-// TerminalPrefill 是“在终端执行”跨标签传递的命令；nonce 让同一条命令可以重复预填。
+// TerminalPrefill 是“填入终端”跨标签传递的命令；nonce 让同一条命令可以重复预填。
 export interface TerminalPrefill {
   command: string
   nonce: number
@@ -250,7 +250,7 @@ const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"])
 const NO_FLAGS: ReadonlySet<string> = new Set()
 
 // destructiveCommandReason 返回命令里第一个会删除、停止或覆盖数据的简单命令的
-// 说明（用于确认提示），安全命令返回 null。它是执行前确认的提示，不是安全边界。
+// 说明（用于命令旁的风险提示），安全命令返回 null。它不拦截执行，也不是安全边界。
 export function destructiveCommandReason(command: string): string | null {
   return commandReason(command)
 }
@@ -333,25 +333,6 @@ function segmentReason(words: readonly string[]): string | null {
     return rewrites ? `改写 Git 历史或工作区（git ${sub}）` : null
   }
   return null
-}
-
-export type ExecGate = "run" | "confirm" | "empty"
-
-// execGate 决定执行栏的下一步：破坏性命令需要对这条原文确认一次，改动后重新确认。
-export function execGate(command: string, confirmed: string): ExecGate {
-  const trimmed = command.trim()
-  if (!trimmed) return "empty"
-  if (destructiveCommandReason(trimmed) && trimmed !== confirmed.trim()) return "confirm"
-  return "run"
-}
-
-// terminalExecGate 只对终端里未经改动的助手预填命令要求确认；用户自己输入或改过的
-// 命令保持终端原有的直接执行行为。
-export function terminalExecGate(command: string, opts: { assistantCommand: string; confirmed: string }): ExecGate {
-  const trimmed = command.trim()
-  if (!trimmed) return "empty"
-  if (!opts.assistantCommand || trimmed !== opts.assistantCommand.trim()) return "run"
-  return execGate(trimmed, opts.confirmed)
 }
 
 export interface ShellOutputState {

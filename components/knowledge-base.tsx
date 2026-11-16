@@ -12,7 +12,6 @@ import {
   TrashIcon,
   CheckIcon,
 } from "./icons"
-import { useAppDialog } from "./app-dialog"
 import { SegmentedControl, Input } from "./ui"
 
 // 知识库根目录（持久化，不随会话工作区清理）
@@ -39,7 +38,9 @@ export function KnowledgeBase({
   const [openDoc, setOpenDoc] = useState<string | null>(null)
   const [content, setContent] = useState("")
   const [dirty, setDirty] = useState(false)
+  const drafts = useRef(new Map<string, string>())
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const [mode, setMode] = useState<Mode>("split")
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -47,7 +48,7 @@ export function KnowledgeBase({
   const [draftName, setDraftName] = useState("")
   const [naming, setNaming] = useState(false)
   const [nameErr, setNameErr] = useState("")
-  const { confirm, dialog } = useAppDialog()
+  const documentNames = [...new Set([...docs, ...drafts.current.keys()])].sort((a, b) => a.localeCompare(b))
 
   const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
 
@@ -89,17 +90,16 @@ export function KnowledgeBase({
   }, [refresh])
 
   async function openFile(name: string) {
-    if (
-      dirty &&
-      !(await confirm({
-        title: "放弃未保存的修改",
-        message: "当前文档有未保存的修改，确定切换吗？",
-        confirmLabel: "切换",
-        tone: "danger",
-      }))
-    ) {
+    if (busyRef.current) return
+    const draft = drafts.current.get(name)
+    if (draft !== undefined) {
+      setOpenDoc(name)
+      setContent(draft)
+      setDirty(true)
+      setStatus(null)
       return
     }
+    busyRef.current = true
     setBusy(true)
     setStatus(null)
     setListErr("")
@@ -127,12 +127,14 @@ export function KnowledgeBase({
       setStatus({ kind: "err", text })
       setListErr(text)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
   async function save() {
-    if (!openDoc || busy) return
+    if (!openDoc || busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     setStatus(null)
     try {
@@ -148,20 +150,23 @@ export function KnowledgeBase({
           if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
           else if (ev.type === "result") {
             setStatus({ kind: "ok", text: "已保存" })
+            drafts.current.delete(openDoc)
             setDirty(false)
           }
         },
       )
       // 新建文档保存后刷新列表
-      if (!docs.includes(openDoc)) refresh()
+      if (!docs.includes(openDoc)) await refresh()
     } catch (err) {
       setStatus({ kind: "err", text: (err as Error).message })
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
   function beginNewDoc() {
+    if (busyRef.current) return
     setNameErr("")
     setNaming(true)
     setTimeout(() => nameRef.current?.focus(), 0)
@@ -174,6 +179,7 @@ export function KnowledgeBase({
   }
 
   function createNamedDoc(raw: string) {
+    if (busyRef.current) return
     let name = raw.trim()
     if (!name) {
       setNameErr("请填写文档名称")
@@ -185,12 +191,14 @@ export function KnowledgeBase({
       return
     }
     cancelNewDoc()
-    if (docs.includes(name)) {
+    if (docs.includes(name) || drafts.current.has(name)) {
       openFile(name)
       return
     }
+    const draft = `# ${name.replace(/\.md$/i, "")}\n\n`
+    drafts.current.set(name, draft)
     setOpenDoc(name)
-    setContent(`# ${name.replace(/\.md$/i, "")}\n\n`)
+    setContent(draft)
     setDirty(true)
     setMode("split")
     setStatus({ kind: "ok", text: "编辑后点击保存即可创建" })
@@ -238,6 +246,7 @@ export function KnowledgeBase({
         )}
         <button
           type="submit"
+          disabled={busy}
           className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
         >
           <PlusIcon width={13} height={13} /> 创建
@@ -247,16 +256,8 @@ export function KnowledgeBase({
   )
 
   async function deleteDoc(name: string) {
-    if (
-      !(await confirm({
-        title: "删除文档",
-        message: `确定删除文档「${name}」？此操作不可恢复。`,
-        confirmLabel: "删除",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     try {
       await callTool(
@@ -269,15 +270,17 @@ export function KnowledgeBase({
         },
         () => {},
       )
+      drafts.current.delete(name)
       if (openDoc === name) {
         setOpenDoc(null)
         setContent("")
         setDirty(false)
       }
-      refresh()
+      await refresh()
     } catch (err) {
       setStatus({ kind: "err", text: (err as Error).message })
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -295,6 +298,7 @@ export function KnowledgeBase({
           <div className="flex items-center gap-0.5">
             <button
               onClick={beginNewDoc}
+              disabled={busy}
               className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               title="新建文档"
             >
@@ -313,12 +317,12 @@ export function KnowledgeBase({
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {listErr ? (
             <p className="px-2 py-3 text-xs text-destructive">{listErr}</p>
-          ) : docs.length === 0 ? (
+          ) : documentNames.length === 0 ? (
             <p className="px-2 py-3 text-xs text-muted-foreground">
               {listBusy ? "加载中…" : "暂无文档，点击 + 新建"}
             </p>
           ) : (
-            docs.map((name) => (
+            documentNames.map((name) => (
               <div
                 key={name}
                 className={`group flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
@@ -327,6 +331,7 @@ export function KnowledgeBase({
               >
                 <button
                   onClick={() => openFile(name)}
+                  disabled={busy}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                 >
                   <FileTextIcon width={13} height={13} className="shrink-0" />
@@ -334,7 +339,8 @@ export function KnowledgeBase({
                 </button>
                 <button
                   onClick={() => deleteDoc(name)}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                  disabled={busy}
+                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
                   title="删除"
                 >
                   <TrashIcon width={13} height={13} />
@@ -390,7 +396,9 @@ export function KnowledgeBase({
                 <textarea
                   ref={taRef}
                   value={content}
+                  disabled={busy}
                   onChange={(e) => {
+                    drafts.current.set(openDoc, e.target.value)
                     setContent(e.target.value)
                     setDirty(true)
                   }}
@@ -424,7 +432,6 @@ export function KnowledgeBase({
           </div>
         )}
       </div>
-      {dialog}
     </div>
   )
 }

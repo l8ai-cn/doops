@@ -60,15 +60,6 @@ export function cleanWorkspaceRequest(sessionId: string): Record<string, string>
   return { session_id: sessionId, workspace: sessionId }
 }
 
-export function cleanWorkspaceConfirmation(sessionId: string) {
-  return {
-    title: "清理工作区",
-    message: `删除本会话的整个工作区和 Git 裸仓库，不可恢复。会话：${sessionId}`,
-    confirmLabel: "删除工作区",
-    tone: "danger" as const,
-  }
-}
-
 type Rewrite = [RegExp, (m: RegExpExecArray) => string]
 
 const CHECK_ERRORS: Rewrite[] = [

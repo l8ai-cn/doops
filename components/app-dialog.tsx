@@ -4,14 +4,6 @@ import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Button, Input } from "./ui"
 
-export type ConfirmOptions = {
-  title: string
-  message: string
-  confirmLabel?: string
-  cancelLabel?: string
-  tone?: "default" | "danger"
-}
-
 export type PromptOptions = {
   title: string
   message?: string
@@ -23,60 +15,40 @@ export type PromptOptions = {
   inputType?: "text" | "password"
 }
 
-type ConfirmRequest = {
-  id: number
-  kind: "confirm"
-  options: ConfirmOptions
-  resolve: (value: boolean) => void
-  settled: boolean
-}
-
 type PromptRequest = {
   id: number
-  kind: "prompt"
   options: PromptOptions
   resolve: (value: string | null) => void
   settled: boolean
 }
 
-type DialogRequest = ConfirmRequest | PromptRequest
-
-function settle(request: DialogRequest, value: boolean | string | null) {
+function settle(request: PromptRequest, value: string | null) {
   if (request.settled) return
   request.settled = true
-  if (request.kind === "confirm") request.resolve(value === true)
-  else request.resolve(typeof value === "string" ? value : null)
+  request.resolve(value)
 }
 
 export function useAppDialog() {
   const seq = useRef(0)
-  const requestRef = useRef<DialogRequest | null>(null)
-  const [request, setRequest] = useState<DialogRequest | null>(null)
+  const requestRef = useRef<PromptRequest | null>(null)
+  const [request, setRequest] = useState<PromptRequest | null>(null)
 
-  const replace = useCallback((next: DialogRequest) => {
+  const replace = useCallback((next: PromptRequest) => {
     const previous = requestRef.current
     if (previous) settle(previous, null)
     requestRef.current = next
     setRequest(next)
   }, [])
 
-  const confirm = useCallback(
-    (options: ConfirmOptions) =>
-      new Promise<boolean>((resolve) => {
-        replace({ id: ++seq.current, kind: "confirm", options, resolve, settled: false })
-      }),
-    [replace],
-  )
-
   const prompt = useCallback(
     (options: PromptOptions) =>
       new Promise<string | null>((resolve) => {
-        replace({ id: ++seq.current, kind: "prompt", options, resolve, settled: false })
+        replace({ id: ++seq.current, options, resolve, settled: false })
       }),
     [replace],
   )
 
-  const close = useCallback((value: boolean | string | null) => {
+  const close = useCallback((value: string | null) => {
     const current = requestRef.current
     if (!current) return
     requestRef.current = null
@@ -94,41 +66,37 @@ export function useAppDialog() {
   }, [])
 
   const dialog = request ? <AppDialog key={request.id} request={request} onClose={close} /> : null
-  return { confirm, prompt, dialog }
+  return { prompt, dialog }
 }
 
 function AppDialog({
   request,
   onClose,
 }: {
-  request: DialogRequest
-  onClose: (value: boolean | string | null) => void
+  request: PromptRequest
+  onClose: (value: string | null) => void
 }) {
   const titleId = useId()
   const messageId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
-  const cancelRef = useRef<HTMLButtonElement>(null)
-  const confirmRef = useRef<HTMLButtonElement>(null)
-  const [value, setValue] = useState(request.kind === "prompt" ? (request.options.defaultValue ?? "") : "")
+  const [value, setValue] = useState(request.options.defaultValue ?? "")
   const [error, setError] = useState("")
-  const danger = request.kind === "confirm" && request.options.tone === "danger"
   const message = request.options.message
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const focusTarget =
-      request.kind === "prompt" ? inputRef.current : danger ? cancelRef.current : confirmRef.current
+    const focusTarget = inputRef.current
     focusTarget?.focus()
     if (focusTarget instanceof HTMLInputElement) focusTarget.select()
     return () => previous?.focus()
-  }, [danger, request.kind])
+  }, [])
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return
       event.preventDefault()
       event.stopPropagation()
-      onClose(request.kind === "confirm" ? false : null)
+      onClose(null)
     }
     document.addEventListener("keydown", onKey, true)
     const previousOverflow = document.body.style.overflow
@@ -137,10 +105,9 @@ function AppDialog({
       document.removeEventListener("keydown", onKey, true)
       document.body.style.overflow = previousOverflow
     }
-  }, [onClose, request.kind])
+  }, [onClose])
 
   function submitPrompt() {
-    if (request.kind !== "prompt") return
     const next = request.options.inputType === "password" ? value : value.trim()
     if (!next) {
       setError(request.options.inputType === "password" ? "请输入密码" : "请填写内容")
@@ -151,7 +118,7 @@ function AppDialog({
   }
 
   function cancel() {
-    onClose(request.kind === "confirm" ? false : null)
+    onClose(null)
   }
 
   if (typeof document === "undefined") return null
@@ -180,8 +147,7 @@ function AppDialog({
           className="space-y-3 p-4"
           onSubmit={(event) => {
             event.preventDefault()
-            if (request.kind === "prompt") submitPrompt()
-            else onClose(true)
+            submitPrompt()
           }}
         >
           {message ? (
@@ -189,29 +155,26 @@ function AppDialog({
               {message}
             </p>
           ) : null}
-          {request.kind === "prompt" ? (
-            <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-              {request.options.label || "内容"}
-              <Input
-                ref={inputRef}
-                value={value}
-                onChange={(event) => {
-                  setValue(event.target.value)
-                  if (error) setError("")
-                }}
-                placeholder={request.options.placeholder}
-                type={request.options.inputType === "password" ? "password" : "text"}
-                autoComplete={request.options.inputType === "password" ? "new-password" : "off"}
-                spellCheck={false}
-                aria-invalid={error ? true : undefined}
-                className="w-full"
-              />
-            </label>
-          ) : null}
+          <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+            {request.options.label || "内容"}
+            <Input
+              ref={inputRef}
+              value={value}
+              onChange={(event) => {
+                setValue(event.target.value)
+                if (error) setError("")
+              }}
+              placeholder={request.options.placeholder}
+              type={request.options.inputType === "password" ? "password" : "text"}
+              autoComplete={request.options.inputType === "password" ? "new-password" : "off"}
+              spellCheck={false}
+              aria-invalid={error ? true : undefined}
+              className="w-full"
+            />
+          </label>
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
           <div className="flex justify-end gap-2 pt-1">
             <Button
-              ref={cancelRef}
               type="button"
               onClick={cancel}
               size="sm"
@@ -219,10 +182,9 @@ function AppDialog({
               {request.options.cancelLabel || "取消"}
             </Button>
             <Button
-              ref={confirmRef}
               type="submit"
               size="sm"
-              variant={danger ? "danger" : "primary"}
+              variant="primary"
             >
               {request.options.confirmLabel || "确认"}
             </Button>

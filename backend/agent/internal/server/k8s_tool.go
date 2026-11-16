@@ -211,13 +211,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		return args
 	}
-	requireMutation := func() error {
-		if !params.Confirm {
-			return fmt.Errorf("confirm=true is required for k8s mutation %q", params.Operation)
-		}
-		return nil
-	}
-
 	switch params.Operation {
 	case "get":
 		if params.Kind == "" {
@@ -324,9 +317,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		return []k8sCommand{{args: timeout(namespace([]string{"rollout", "status", params.Resource}))}}, nil
 	case "rollout-restart":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for rollout restart")
 		}
@@ -335,9 +325,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		return []k8sCommand{{args: namespace([]string{"rollout", "restart", params.Resource})}}, nil
 	case "scale":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for scale")
 		}
@@ -349,17 +336,11 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		return []k8sCommand{{args: namespace([]string{"scale", params.Resource, "--replicas", strconv.Itoa(*params.Replicas)})}}, nil
 	case "cordon", "uncordon":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
 		if params.Name == "" {
 			return nil, fmt.Errorf("node name is required for %s", params.Operation)
 		}
 		return []k8sCommand{{args: []string{params.Operation, params.Name}}}, nil
 	case "delete-pod":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
 		if params.Name == "" {
 			return nil, fmt.Errorf("pod name is required for delete")
 		}

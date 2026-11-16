@@ -335,8 +335,13 @@ func validCOSSnapshotRel(rel string) bool {
 		return true
 	}
 	commit, rest, ok := strings.Cut(rel, "/")
-	if !ok || rest == "" || strings.Contains(rest, "..") {
+	if !ok || rest == "" {
 		return false
+	}
+	for _, segment := range strings.Split(rest, "/") {
+		if segment == ".." {
+			return false
+		}
 	}
 	if !immutableCommit(commit) {
 		return false

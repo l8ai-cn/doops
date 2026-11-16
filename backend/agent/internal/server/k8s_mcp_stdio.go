@@ -146,7 +146,7 @@ func mcpToolsForDomain(domain string) ([]interface{}, error) {
 			k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract. For operation=events, omit resource for namespace-wide events; an object filter must be kind/name. Never use Bash or kubectl as a fallback."),
 			helmMCPToolDefinition(),
 			webMCPToolDefinition(webReadMCPToolName, webReadOperations, "Read a target-local DoWeb site, Nginx or health state without mutation."),
-			webMCPToolDefinition(webMCPToolName, webMutationOperations, "Mutate a target-local DoWeb site through SiteSpec, validation, health and rollback evidence. Requires confirm=true."),
+			webMCPToolDefinition(webMCPToolName, webMutationOperations, "Mutate a target-local DoWeb site through SiteSpec, validation, health and rollback evidence."),
 		}, nil
 	case mcpDomainDoSQL:
 		return []interface{}{
@@ -345,7 +345,6 @@ func webMCPToolDefinition(name string, operations []string, description string) 
 			"required":             []string{"operation"},
 			"properties": map[string]interface{}{
 				"operation":    map[string]interface{}{"type": "string", "enum": operations},
-				"confirm":      map[string]interface{}{"type": "boolean"},
 				"runtime_mode": map[string]interface{}{"type": "string", "enum": []string{"host", "docker"}},
 				"site_id":      map[string]interface{}{"type": "string"},
 				"domain":       map[string]interface{}{"type": "string"},

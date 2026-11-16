@@ -44,6 +44,9 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 			t.Fatalf("unexpected required fields: %#v", required)
 		}
 		properties, _ := schema["properties"].(map[string]interface{})
+		if _, exists := properties["confirm"]; exists {
+			t.Fatalf("removed confirm field remains exposed by %s: %#v", name, properties)
+		}
 		if _, exists := properties["session_id"]; exists {
 			t.Fatalf("runtime-bound session leaked into model-visible schema: %#v", properties)
 		}
@@ -202,7 +205,7 @@ func TestK8SMCPStdioRejectsRemovedK8sMutationTool(t *testing.T) {
 
 func TestK8SMCPStdioReadToolRejectsMutation(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"rollout-restart","resource":"deployment/app","confirm":true}}}` + "\n",
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"rollout-restart","resource":"deployment/app"}}}` + "\n",
 	)
 	var output bytes.Buffer
 	if err := runK8SMCPStdioContext(

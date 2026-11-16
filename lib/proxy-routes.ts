@@ -198,7 +198,7 @@ function hostOwner(routes: ProxyRoute[], host: string, exceptId: string): ProxyR
 }
 
 export type ProxyRouteSavePlan =
-  | { ok: true; unchanged: boolean; body: ProxyRouteBody; hostChange?: { from: string; to: string } }
+  | { ok: true; unchanged: boolean; body: ProxyRouteBody }
   | { ok: false; reason: "invalid" | "duplicate" | "deleted"; error: string }
   | { ok: false; reason: "conflict"; error: string; latest: ProxyRoute; form: ProxyRouteForm }
 
@@ -260,32 +260,24 @@ export function planProxyRouteSave(
   if (MERGE_FIELDS.every((field) => sameFields(result, now, field.keys))) {
     return { ok: true, unchanged: true, body: result }
   }
-  const plan: ProxyRouteSavePlan = { ok: true, unchanged: false, body: result }
-  if (result.host !== now.host) plan.hostChange = { from: now.host, to: result.host }
-  return plan
+  return { ok: true, unchanged: false, body: result }
 }
 
-export function proxyRouteHostChangePrompt(change: { from: string; to: string }): string {
-  return `域名将由 ${change.from} 改为 ${change.to}：保存后 ${change.from} 的请求立即不再转发，${change.to} 需要已解析到 Gateway。确认保存？`
-}
-
-// 删除确认按最新列表里的路由展示，避免按过期的域名确认后删掉了别的内容。
-export function proxyRouteDeletePrompt(
+// 删除只接受点击时显示的路由，已变化的路由留在刷新后的列表中。
+export function planProxyRouteDelete(
   route: ProxyRoute,
   latest: ProxyRoute[],
-): Result<{ route: ProxyRoute; message: string }> {
+): Result<ProxyRoute> {
   const current = latest.find((r) => r.id === route.id)
   if (!current) {
     return { ok: false, error: `路由 ${route.id}（${route.host}）已不存在，可能已被其他管理员删除；列表已刷新` }
   }
-  const renamed = current.host !== route.host ? `（打开列表后域名已由 ${route.host} 改为 ${current.host}）` : ""
-  return {
-    ok: true,
-    value: {
-      route: current,
-      message: `确认删除域名 ${current.host} 的代理路由${renamed}？目标 ${current.cluster}/${current.instance}，删除后该域名的请求不再转发，且无法撤销。`,
-    },
+  const was = canonRoute(route)
+  const now = canonRoute(current)
+  if (!MERGE_FIELDS.every((field) => sameFields(was, now, field.keys))) {
+    return { ok: false, error: `路由 ${route.id}（${current.host}）已被其他管理员修改，未删除；列表已刷新` }
   }
+  return { ok: true, value: current }
 }
 
 export function proxyRouteSavedNotice(route: ProxyRoute): string {

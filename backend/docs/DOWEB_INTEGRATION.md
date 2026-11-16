@@ -41,12 +41,13 @@ or execution path. Nginx bootstrap requires an explicit runtime mode.
 | Console website page | Existing HttpOnly Gateway session | Gateway target grants | Same prompt transport and audit |
 | `doops web` | Existing Gateway auth store | Same target grants | Shared CLI skill prompt client, also used by `doops sql` |
 | Inspection/plan prompt | Gateway user | `ask` on the target | Only `mcp_doops_web_read` reads website state |
-| Publish/config/rollback prompt | Gateway user | `exec` and explicit `apply` | `mcp_doops_web`, `confirm=true`, runtime attestation |
+| Publish/config/rollback prompt | Gateway user | `exec` and explicit `apply` | `mcp_doops_web`, runtime attestation |
 | Deterministic `doops_web` RPC | Gateway user | `ask` for reads, `exec` for changes | Same Agent executor and outcome lifecycle |
 | Credential reference | Existing managed resource | Existing exact credential grant/use | Gateway materialization; no payload in the skill |
 
-`confirm=true` records the intended change, not a second user grant. The MCP
-session is bound by the runtime and excluded from the model-visible schema.
+The explicit operation records the intended change; there is no confirmation
+field or second approval step. The MCP session is bound by the runtime and
+excluded from the model-visible schema.
 Prompt mutations require the exact `skill=doweb` marker so the Gateway acquires
 the shared Nginx resource lease. Generic apply exposes Helm, not website
 mutation tools; DoWeb apply exposes website, not Helm mutation tools.
@@ -89,14 +90,14 @@ the script in a local source checkout; images use
 
 1. One Gateway login can execute both domain CLI commands. Denied actions or
    targets are rejected and recorded by the existing Gateway.
-2. `web_read` rejects mutations; `web` rejects missing confirmation, supplied
-   session and workspace escapes.
+2. `web_read` rejects mutations; `web` executes an authorized operation without
+   a confirmation field and rejects supplied session and workspace escapes.
 3. A real disposable Nginx serves release A, then B, then A after rollback.
 4. Invalid Nginx config and failed HTTP health remain failures; restored files
    are validated and reloaded and the old artifact remains served.
 5. A snippet can supply candidate text without Bash/file-write privileges.
-6. The Console supports runtime selection, confirmation invalidation after
-   edits, disabled controls while running, failure states and target isolation.
+6. The Console supports runtime selection, direct submission of explicit
+   operations, disabled controls while running, failure states and target isolation.
 7. Failed evidence persistence restores both the previous activation and
    release-state index. Supplied snippet health checks are enforced. Failure
    to validate/reload the restored activation produces an unknown outcome,
