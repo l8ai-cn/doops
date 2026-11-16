@@ -33,11 +33,11 @@ const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
   helm values <release>           -n|--namespace ns   (只返回 key 路径，不返回值)
   Secret 与 ServiceAccount 不开放读取。
 
-写操作（必须带 --confirm）:
-  rollout restart <resource>      [-n ns] --confirm
-  scale <resource> --replicas N   [-n ns] --confirm
-  node cordon|uncordon <node>     --confirm
-  delete pod <name>               [-n ns] --confirm
+写操作（选定操作即执行）:
+  rollout restart <resource>      [-n ns]
+  scale <resource> --replicas N   [-n ns]
+  node cordon|uncordon <node>
+  delete pod <name>               [-n ns]
 
 业务发布使用 ask --apply，不用本入口。`
 
@@ -96,9 +96,6 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		}
 		if opts["previous"] == "true" {
 			req.Payload["previous"] = true
-		}
-		if opts["confirm"] == "true" {
-			req.Payload["confirm"] = true
 		}
 		return nil
 	}
@@ -204,19 +201,7 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 	if err := addCommon(); err != nil {
 		return K8SRequest{}, err
 	}
-	if k8sMutation(req.Payload["operation"]) && req.Payload["confirm"] != true {
-		return K8SRequest{}, fmt.Errorf("--confirm is required for k8s mutation %q", req.Payload["operation"])
-	}
 	return req, nil
-}
-
-func k8sMutation(operation interface{}) bool {
-	switch operation {
-	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod":
-		return true
-	default:
-		return false
-	}
 }
 
 func runK8SRequest(caller k8sCaller, req K8SRequest) (string, error) {
@@ -239,7 +224,6 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		"replicas":  "",
 		"timeout":   "",
 		"for":       "",
-		"confirm":   "",
 		"selector":  "",
 		"since":     "",
 	}
@@ -254,8 +238,6 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 			}
 			opts[k8sFlagName(arg)] = args[i+1]
 			i++
-		case "--confirm":
-			opts["confirm"] = "true"
 		case "--all-namespaces", "-A":
 			opts["all-namespaces"] = "true"
 		case "--previous", "-p":

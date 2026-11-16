@@ -92,23 +92,26 @@ func TestBuildK8SCommandsRejectsCredentialBearingKinds(t *testing.T) {
 	}
 }
 
-func TestBuildK8SCommandsRejectsMutationWithoutConfirm(t *testing.T) {
-	_, err := buildK8SCommands(api.K8SParams{
+func TestBuildK8SCommandsAcceptsMutationWithoutConfirm(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
 		SessionID: "mutation",
 		Operation: "rollout-restart",
 		Resource:  "deployment/example",
 		Namespace: "kz-ops",
 	})
-	if err == nil || !strings.Contains(err.Error(), "confirm=true") {
-		t.Fatalf("expected confirmation error, got %v", err)
+	if err != nil {
+		t.Fatalf("explicit mutation rejected: %v", err)
+	}
+	if len(commands) != 1 || strings.Join(commands[0].args, " ") != "rollout restart deployment/example --namespace kz-ops" {
+		t.Fatalf("unexpected mutation command: %#v", commands)
 	}
 }
 
 func TestBuildK8SCommandsRejectsUnsupportedMutationResourceKinds(t *testing.T) {
 	replicas := 2
 	for _, params := range []api.K8SParams{
-		{SessionID: "mutation", Operation: "rollout-restart", Resource: "service/api", Confirm: true},
-		{SessionID: "mutation", Operation: "scale", Resource: "secret/api", Replicas: &replicas, Confirm: true},
+		{SessionID: "mutation", Operation: "rollout-restart", Resource: "service/api"},
+		{SessionID: "mutation", Operation: "scale", Resource: "secret/api", Replicas: &replicas},
 	} {
 		if _, err := buildK8SCommands(params); err == nil {
 			t.Fatalf("unsupported mutation resource accepted for %#v", params)
@@ -179,7 +182,6 @@ func TestBuildK8SCommandsRejectsRemovedSetImageOperation(t *testing.T) {
 		SessionID: "set-image",
 		Operation: "set-image",
 		Resource:  "deployment/example",
-		Confirm:   true,
 	})
 	if err == nil || !strings.Contains(err.Error(), `unsupported k8s operation "set-image"`) {
 		t.Fatalf("removed set-image operation accepted: %v", err)
@@ -202,7 +204,6 @@ func TestBuildK8SCommandsRequiresReplicasAndSession(t *testing.T) {
 		SessionID: "scale",
 		Operation: "scale",
 		Resource:  "deployment/api",
-		Confirm:   true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "replicas is required") {
 		t.Fatalf("expected replicas error, got %v", err)

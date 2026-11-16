@@ -98,7 +98,6 @@ type K8SParams struct {
 	Timeout   string `json:"timeout,omitempty"`
 	Tail      int    `json:"tail,omitempty"`
 	Replicas  *int   `json:"replicas,omitempty"`
-	Confirm   bool   `json:"confirm,omitempty"`
 	// Read-side filters.
 	Selector      string `json:"selector,omitempty"`
 	AllNamespaces bool   `json:"all_namespaces,omitempty"`
@@ -245,7 +244,6 @@ func (p HelmParams) HelmSetFlag(key string) string {
 type WebParams struct {
 	SessionID   string   `json:"session_id"`
 	Operation   string   `json:"operation"`
-	Confirm     bool     `json:"confirm,omitempty"`
 	RuntimeMode string   `json:"runtime_mode,omitempty"`
 	SiteID      string   `json:"site_id,omitempty"`
 	Domain      string   `json:"domain,omitempty"`

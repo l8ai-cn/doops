@@ -20,18 +20,67 @@ import (
 )
 
 func TestWebReadCannotMutateOrChooseSession(t *testing.T) {
-	for _, raw := range []string{
-		`{"name":"web_read","arguments":{"operation":"deploy","confirm":true,"site_id":"demo"}}`,
-		`{"name":"web_read","arguments":{"operation":"check","site_id":"demo","session_id":"other"}}`,
-		`{"name":"web","arguments":{"operation":"deploy","site_id":"demo"}}`,
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{`{"name":"web_read","arguments":{"operation":"deploy","site_id":"demo"}}`, "web_read tool requires a supported read operation"},
+		{`{"name":"web_read","arguments":{"operation":"check","site_id":"demo","session_id":"other"}}`, "session_id is runtime-bound and must not be supplied"},
+		{`{"name":"web","arguments":{"operation":"deploy","site_id":"demo","session_id":"other"}}`, "session_id is runtime-bound and must not be supplied"},
+		{`{"name":"web","arguments":{"operation":"unsupported","site_id":"demo"}}`, "web tool requires a supported mutation"},
 	} {
-		response := callK8SMCPTool(t.Context(), k8sMCPRequest{ID: 1, Params: json.RawMessage(raw)}, "web-test")
-		if response.Error == nil {
-			result, ok := response.Result.(map[string]interface{})
-			if !ok || result["isError"] != true {
-				t.Fatalf("invalid authority admitted: %#v", response)
-			}
+		response := callK8SMCPTool(t.Context(), k8sMCPRequest{ID: 1, Params: json.RawMessage(tc.raw)}, "web-test")
+		if response.Error == nil || response.Error.Code != -32602 || !strings.Contains(response.Error.Message, tc.want) {
+			t.Fatalf("invalid request did not return %q: %#v", tc.want, response)
 		}
+	}
+}
+
+func TestWebMCPMutationsExecuteWithoutConfirm(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	if err := os.Mkdir(filepath.Join(root, "web-test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "executor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOWEB_NODE", "/bin/sh")
+	t.Setenv("DOWEB_SCRIPT", script)
+	for _, operation := range webMutationOperations {
+		t.Run(operation, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]interface{}{
+				"name": "web",
+				"arguments": map[string]interface{}{
+					"operation": operation, "site_id": "demo", "runtime_mode": "host",
+				},
+			})
+			response := callK8SMCPTool(t.Context(), k8sMCPRequest{ID: 1, Params: raw}, "web-test")
+			result, ok := response.Result.(map[string]interface{})
+			if response.Error != nil || !ok || result["isError"] != false ||
+				!strings.Contains(fmt.Sprint(result["content"]), operation+" --site-id demo") {
+				t.Fatalf("explicit web mutation did not execute: %#v", response)
+			}
+		})
+	}
+}
+
+func TestK8SAndWebRejectRemovedConfirmField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, json.RawMessage, notificationSender) (string, error)
+		raw  string
+	}{
+		{"k8s", handleK8STool, `{"session_id":"test","operation":"cordon","name":"node-a","confirm":true}`},
+		{"web", handleWebTool, `{"session_id":"test","operation":"deploy","site_id":"demo","confirm":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.call(t.Context(), json.RawMessage(tc.raw), func(notificationEvent) {})
+			if err == nil || !strings.Contains(err.Error(), `unknown field "confirm"`) {
+				t.Fatalf("removed confirm field accepted: %v", err)
+			}
+		})
 	}
 }
 
@@ -166,7 +215,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		t.Fatalf("Nginx did not serve expected artifact: %q", expected)
 	}
 	writeDist("dist-a", "release-a")
-	result, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-a", HealthURLs: []string{url}})
+	result, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-a", HealthURLs: []string{url}})
 	if err != nil || !strings.Contains(result, "validation") || !strings.Contains(result, "deployed") {
 		t.Fatalf("first publication: %s: %v", result, err)
 	}
@@ -184,7 +233,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if err := os.WriteFile(evidenceDir, []byte("synthetic evidence write failure"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err == nil {
+	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err == nil {
 		t.Fatal("evidence persistence failure became success")
 	}
 	assertBody("release-a")
@@ -198,24 +247,24 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if err := os.Rename(evidenceDir+".saved", evidenceDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-b")
 	writeDist("dist-c", "release-c")
-	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-c", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-c", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-c")
-	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "rollback", SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-b")
-	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "rollback", SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-a")
-	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err == nil {
+	if _, err := call(api.WebParams{Operation: "rollback", SiteID: "demo", HealthURLs: []string{url}}); err == nil {
 		t.Fatal("rollback from oldest release selected a newer release")
 	}
 	assertBody("release-a")
@@ -223,7 +272,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		http.Error(w, "synthetic unhealthy site", http.StatusServiceUnavailable)
 	}))
 	defer failedHealth.Close()
-	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{failedHealth.URL}}); err == nil {
+	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{failedHealth.URL}}); err == nil {
 		t.Fatal("failed HTTP health became success")
 	}
 	assertBody("release-a")
@@ -231,21 +280,21 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if err := os.WriteFile(badConfig, []byte("server { this_is_not_an_nginx_directive; }"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(api.WebParams{Operation: "config-set", Confirm: true, SiteID: "demo", ConfigFile: "invalid.conf"}); err == nil {
+	if _, err := call(api.WebParams{Operation: "config-set", SiteID: "demo", ConfigFile: "invalid.conf"}); err == nil {
 		t.Fatal("invalid Nginx config became success")
 	}
 	assertBody("release-a")
 	if _, err := call(api.WebParams{Operation: "check", SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatalf("site did not recover: %v", err)
 	}
-	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 20m;", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "snippet-set", SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 20m;", HealthURLs: []string{url}}); err != nil {
 		t.Fatalf("natural-language snippet could not be written: %v", err)
 	}
 	snippetBody, err := os.ReadFile(filepath.Join(snippets, "demo", "upload.conf"))
 	if err != nil || string(snippetBody) != "client_max_body_size 20m;" {
 		t.Fatalf("candidate snippet was not persisted: %s: %v", snippetBody, err)
 	}
-	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{failedHealth.URL}}); err == nil {
+	if _, err := call(api.WebParams{Operation: "snippet-set", SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{failedHealth.URL}}); err == nil {
 		t.Fatal("snippet update ignored failed HTTP health")
 	}
 	snippetBody, err = os.ReadFile(filepath.Join(snippets, "demo", "upload.conf"))
@@ -261,20 +310,20 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if withoutSnippets == string(activeConfig) {
 		t.Fatal("managed snippet include missing from functional fixture")
 	}
-	if _, err := call(api.WebParams{Operation: "config-set", Confirm: true, SiteID: "demo", Config: withoutSnippets, HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "config-set", SiteID: "demo", Config: withoutSnippets, HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{url}}); err == nil || !strings.Contains(err.Error(), "does not include the managed snippet") {
+	if _, err := call(api.WebParams{Operation: "snippet-set", SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{url}}); err == nil || !strings.Contains(err.Error(), "does not include the managed snippet") {
 		t.Fatalf("unreferenced snippet reported success: %v", err)
 	}
-	if _, err := call(api.WebParams{Operation: "config-set", Confirm: true, SiteID: "demo", Config: string(activeConfig), HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "config-set", SiteID: "demo", Config: string(activeConfig), HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-a")
 	if err := os.WriteFile(reloadFailure, []byte("synthetic reload failure"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}})
+	_, err = call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}})
 	if !errors.Is(err, errExecutionOutcomeUnknown) {
 		t.Fatalf("failed recovery did not report unknown outcome: %v", err)
 	}
@@ -290,7 +339,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 func TestApplyWebUsesSignedToolEvidenceAndCannotHideFailure(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	bindApplyCollector(collector, "apply-test")
-	input := map[string]interface{}{"operation": "deploy", "site_id": "demo", "dist": "dist", "confirm": true}
+	input := map[string]interface{}{"operation": "deploy", "site_id": "demo", "dist": "dist"}
 	trace := attestedMutationTrace(t, "mcp_doops_web", input)
 	collector.calls["publish"] = trace
 	if err := collector.requireCompletedToolEvidence(); err != nil {
@@ -302,5 +351,30 @@ func TestApplyWebUsesSignedToolEvidenceAndCannotHideFailure(t *testing.T) {
 	collector.calls["unfinished"] = doagentToolTrace{ToolName: "mcp_doops_web", Status: "running"}
 	if !collector.hasUnresolvedMutation() {
 		t.Fatal("unfinished website mutation disappeared")
+	}
+}
+
+func TestApplyWebWithoutConfirmStillRequiresMutationAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*doagentToolTrace)
+		reason string
+	}{
+		{"missing authority", func(trace *doagentToolTrace) { trace.MutationAuthorized = nil }, "mutation_not_authorized"},
+		{"denied authority", func(trace *doagentToolTrace) { trace.MutationAuthorized = boolPointer(false) }, "mutation_not_authorized"},
+		{"wrong authority", func(trace *doagentToolTrace) { trace.MutationAuthorityDigest = "wrong" }, "mutation_authority_binding_mismatch"},
+		{"read-only mode", func(trace *doagentToolTrace) { trace.ExecutionMode = "ask" }, "execution_mode_invalid"},
+		{"forged result", func(trace *doagentToolTrace) { trace.AttestedResultDigest = "wrong" }, "public_result_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			trace := attestedMutationTrace(t, "mcp_doops_web", map[string]interface{}{"operation": "deploy", "site_id": "demo"})
+			tc.mutate(&trace)
+			collector.calls["publish"] = trace
+			if err := collector.requireCompletedToolEvidence(); err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("invalid web evidence accepted: %v, want %s", err, tc.reason)
+			}
+		})
 	}
 }

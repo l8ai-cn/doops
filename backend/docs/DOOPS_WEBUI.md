@@ -24,9 +24,9 @@ current token ID, issue time and optional expiry. The console does not infer
 identity from target visibility or probe an admin-only endpoint. An absent or
 malformed identity endpoint is an explicit error and does not create a cookie.
 Token login therefore displays the real username and restores only that user's
-target/session selection. The token page marks the current login token and its
-revocation confirmation states that the console, CLI and any other clients using
-that same token lose access together. Disconnect only clears the browser cookie;
+target/session selection. The token page marks the current login token; revoking
+it removes access for the console, CLI and any other clients using that same
+token. Disconnect only clears the browser cookie;
 revocation remains a separate explicit action. Password-login tokens are renewed
 by the Gateway on authenticated use, and the console cookie is refreshed when
 `GET /api/session` succeeds; administrator-issued service tokens are not renewed.
@@ -40,7 +40,7 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
 - AI diagnostics run on the Agent and query runtime metadata instead of reading
   settings or API keys. The console sends them, and the database and website pages
   use the same prompt RPC with `operation=ask` (the website page sends
-  `operation=apply` only for an approved change). The deployment form sends
+  `operation=apply` when the user submits a change). The deployment form sends
   `operation=apply` with target, release, namespace, Chart, optional values, task
   text and managed credential references.
 - After Gateway initialization succeeds, the console clears the 45-second
@@ -111,8 +111,14 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   HTTP result and stable errors. Credential/configuration bodies are excluded.
   Unavailable audit storage blocks a mutation.
 - 管理员实例页将在线、近期离线、历史和已归档记录分开计数。历史和已归档记录默认折叠；
-  只有离线记录可在显式确认后归档或恢复。归档不会删除 target 授权、令牌、凭据绑定或审计历史，
+  只有离线记录可归档或恢复，点击对应操作直接提交。归档不会删除 target 授权、令牌、凭据绑定或审计历史，
   Agent 重新连接时会自动恢复该记录。离线超过 90 天的实例记录由 Gateway 自动删除，授权仍保留。
+
+Explicit execution and management buttons submit their operation directly,
+without an extra confirmation dialog or checkbox. Invalid inputs, unavailable
+targets and operations still running retain their actual state restrictions.
+Creating a new session does not replay a previous command or resolve an unknown
+outcome. The original receipt stays visible.
 
 The complete Web/CLI/skill boundary and authorization matrix is documented in
 `UNIFIED_OPERATIONS_WORKBENCH.md`.

@@ -49,9 +49,6 @@ func handleWebTool(ctx context.Context, raw json.RawMessage, push notificationSe
 	if !containsWebString(webReadOperations, params.Operation) && !containsWebString(webMutationOperations, params.Operation) {
 		return "", fmt.Errorf("unsupported web operation %q", params.Operation)
 	}
-	if containsWebString(webMutationOperations, params.Operation) && !params.Confirm {
-		return "", fmt.Errorf("confirm=true is required for web mutation %q", params.Operation)
-	}
 	args, err := webCommandArgs(params)
 	if err != nil {
 		return "", err

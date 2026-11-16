@@ -40,7 +40,8 @@ doops -session native-release exec --target <target> \
   --cmd 'helm upgrade --install <release> https://charts.example/<name>.tgz --namespace <namespace> --wait'
 ```
 
-`--apply` 是调用端的 mutation 授权，Helm 不再要求额外确认字段或逐资源重复授权。
+`--apply` 是调用端的 mutation 授权。用户明确要求的任务直接执行，Helm 不再要求额外
+确认字段或逐资源、逐次修复重复授权；原生 CLI 子命令与控制台执行按钮同样直接提交指定操作。
 缺少执行必需的目标或参数时报告具体缺项，可先读取任务指定的资产，不猜测目标或凭据引用。
 运行时 Helm 资产仅使用任务指定的远程 Chart/values 或本 session workspace 资产。
 首次配置用 `doops -session <s> credential configure` 复用受管凭据系统完成写入、目标绑定、

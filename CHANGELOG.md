@@ -6,6 +6,15 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Changed
+
+- Kubernetes 与 DoWeb 明确操作直接执行，移除重复的 `confirm` 参数和 Kubernetes CLI `--confirm`；旧调用须删除这些字段
+- 控制台执行与管理按钮直接提交操作，去掉二次确认弹窗和确认框；skill 沿用已有任务继续修复，不逐次索要批准
+- 保留 Gateway target 身份认证、凭据隔离、只读工具边界、并发互斥与真实终态；缺失回执不会被改报成功或自动重放
+- 将 DoAgent 运行时锁定到已在线验证的 `af62d438` 和对应镜像摘要，保留截止阶段继续修复与进度通知，避免后续构建降回旧运行时
+
 ## [0.3.9] — 2026-11-16
 
 ### Fixed

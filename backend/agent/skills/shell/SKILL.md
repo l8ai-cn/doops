@@ -86,5 +86,5 @@ nsenter -t 1 -m -u -i -n -- sh -c '
   不以 exec 结果替代 MCP attestation，不把 Helm 成功说成全业务健康。
   exec 不解析受管凭据引用，不能读取或内联凭据 payload 来补齐认证。
 - 运维变更交上层
-  `doops -session <s> k8s --target <t> ... --confirm`，数据库变更交上层
+  `doops -session <s> k8s --target <t> ...`，直接执行已明确的操作；数据库变更交上层
   `doops -session <s> sql --target <t> --mode apply --sql/--file`，不改用 shell。

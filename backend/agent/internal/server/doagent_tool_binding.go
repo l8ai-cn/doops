@@ -763,12 +763,6 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 		return "tool_result_failed"
 	}
 	// An attested rejection can have invalid arguments; only success proves a mutation.
-	if tool == "doops_web" {
-		confirm, _ := inputObject["confirm"].(bool)
-		if !confirm {
-			return "mutation_confirmation_missing"
-		}
-	}
 	operation := strings.ToLower(strings.TrimSpace(stringField(inputObject, "operation")))
 	allowedOperations := helmMutationOperations
 	if tool == "doops_web" {
