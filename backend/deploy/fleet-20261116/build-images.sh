@@ -10,6 +10,13 @@ runtime_repository="${DO_AGENT_REPOSITORY:?runtime registry/repository required}
 [[ "$source_commit" =~ ^[a-f0-9]{40}$ ]]
 [[ "$release" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 source "$backend_dir/runtime-versions.env"
+snapshot_root="$(cd "$backend_dir/.." && pwd)"
+test "$(cat "$snapshot_root/source-commit.txt")" = "$source_commit"
+while IFS=' ' read -r expected_blob source_path; do
+  [[ "$expected_blob" =~ ^[a-f0-9]{40}$ ]]
+  [[ "$source_path" == backend/* && "$source_path" != *..* ]]
+  test "$(git hash-object "$snapshot_root/$source_path")" = "$expected_blob"
+done <"$snapshot_root/source-blobs.txt"
 runtime_image="$runtime_repository@$DO_AGENT_INDEX_DIGEST"
 runtime_labels="$(skopeo inspect --config "docker://$runtime_image")"
 python3 -c 'import json,sys; d=json.load(sys.stdin)["config"]["Labels"]; assert d["org.opencontainers.image.revision"]==sys.argv[1]; assert d["org.opencontainers.image.version"]==sys.argv[2]' \
@@ -35,6 +42,9 @@ buildctl build "${build_inputs[@]}" --opt filename=Dockerfile.base.light \
 base_digest="$(skopeo inspect --format '{{.Digest}}' "docker://$repository/base-light:$source_commit")"
 [[ "$base_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
 base_image="$repository/base-light@$base_digest"
+skopeo inspect --config "docker://$base_image" |
+  python3 -c 'import json,sys; d=json.load(sys.stdin)["config"]["Labels"]; expected={"org.opencontainers.image.revision":sys.argv[1],"org.l8ai.doagent.revision":sys.argv[2],"org.l8ai.doagent.index.digest":sys.argv[3]}; assert all(d.get(k)==v for k,v in expected.items()), "base runtime provenance differs from source lock"' \
+    "$source_commit" "$DO_AGENT_REVISION" "$DO_AGENT_INDEX_DIGEST"
 
 buildctl build "${build_inputs[@]}" --opt filename=Dockerfile \
   --opt "build-arg:DOOPS_AGENT_BASE_IMAGE=$base_image" \
