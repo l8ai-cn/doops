@@ -578,6 +578,10 @@ The default upload uses the Gateway's COS configuration. A missing Gateway COS k
 
 COS snapshots preserve the executable bit recorded in the Git snapshot. New files and replacements restore as `0755` (executable) or `0644` (not executable); they do not inherit an old destination file's executable bit. Only regular Git files are supported: symbolic links and other tree types are rejected before upload instead of being flattened. Push checks the Gateway's snapshot capability on each connection; the Gateway checks the selected Agent before sending a sync. Upgrade the unsupported component when either capability is missing. Ordinary COS `read/write` do not require snapshot capabilities.
 
+Literal dots in filenames, including Next.js `[...path]` and `[[...path]]` route
+directories, are supported. A `..` path segment remains invalid; a filename
+containing multiple dots is not a parent-directory reference.
+
 Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不暴露本地
 HTTP `/git` 入口。
 

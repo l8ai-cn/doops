@@ -422,3 +422,9 @@ completed stage here so the next round resumes from tool evidence.
 - The concurrent fleet task owns v0.3.10. This task prepares v0.3.11 with
   the completed confirmation-removal UI, and limits rollout to `gw-test`
   and the Web console. Other fleet/Gateway changes are preserved.
+- Source upload exposed a separate reproducible Gateway defect:
+  `validCOSSnapshotRel` rejected `[...path]` because it searched for any `..`
+  substring instead of a parent-directory segment. The regression failed
+  with the actual `cos_key_rejected` before the fix; all COS tests passed
+  afterward. The v0.3.11 Gateway asset must be installed and the same COS
+  upload retried to verify this correction online.

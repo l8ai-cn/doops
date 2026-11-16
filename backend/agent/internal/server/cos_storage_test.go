@@ -38,6 +38,22 @@ func TestCOSObjectKeyStaysInsideCallerPrefix(t *testing.T) {
 	}
 }
 
+func TestCOSSnapshotLiteralDotsDoNotEscapeCallerPrefix(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	for _, name := range []string{"app/api/admin/[...path]/route.ts", "app/api/credentials/[[...path]]/route.ts", "notes/backup..txt"} {
+		rel := commit + "/" + name
+		key, err := cosObjectKey("usr_caller", "snapshot", "snapshots", rel)
+		if err != nil || key != "sessions/usr_caller/snapshot/snapshots/"+rel {
+			t.Fatalf("literal filename %q: key=%q err=%v", name, key, err)
+		}
+	}
+	for _, name := range []string{"..", "../outside", "app/../outside", "app/.."} {
+		if validCOSSnapshotRel(commit + "/" + name) {
+			t.Fatalf("traversal segment admitted: %q", name)
+		}
+	}
+}
+
 func TestParseCOSSecretRejectsWrongBucketWithoutEchoingSecret(t *testing.T) {
 	const secret = "synthetic-cos-secret"
 	payload := []byte(`{"data":{"access_key_id":"AKID","secret_access_key":"` + secret + `","endpoint":"https://cos.ap-guangzhou.myqcloud.com","region":"ap-guangzhou","bucket":"other-bucket"}}`)
