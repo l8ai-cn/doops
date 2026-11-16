@@ -489,3 +489,101 @@ failure, and no repeat of a mutation whose result is unknown.
   Helm; related command, native-values and path tests pass. Directory values,
   traversal and absolute paths remain rejected. This correction is prepared
   for v0.3.12; installed acceptance must repeat the same root Chart scenario.
+
+### Control Plane Delivery And Root-Chart Release
+
+- The existing repository-specific control-plane scripts deployed Gateway and
+  Web v0.3.11. Web uses
+  `docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:2568fc82672b8c547483fd5dd30f25b225f961bca6f6d3d720c45f9ffdf8141a`;
+  `/console` returns 200. Its prior container is retained as
+  `doops-web-rollback-20261116T164129Z-92714`.
+- Gateway deployment exited 0. The running executable and release asset both
+  hash to `8e7b165632fa61b7a0543ff1821887aa7c6fb9e9260d761ae23c5e5da902619b`.
+  Health returns 200, unauthenticated target listing returns 401, and the ten
+  targets observed before replacement reconnected. The binary backup remains
+  at `/usr/local/bin/doops-gateway.rollback-bc8f61264989-20261116T164815Z`.
+- The internal endpoint is reachable normally. A forced-host public-name
+  probe returned 200 on the internal host, but subsequent DNS inspection
+  proved the public hostname uses a different host. That probe does not
+  establish public deployment. The public browser still serves old assets.
+  No DNS, VPN or proxy configuration was changed.
+- Session `cos-catchall-v0311-20261117` uploaded three real tracked catch-all
+  route files, including `[...path]` and `[[...path]]`; COS reported
+  `workspace: synced` at snapshot `9c2581473341`.
+- Root-Chart source `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358` is pushed
+  on the existing member branch and merged through PR 24. CI runs
+  `43909029618` and `43909573950` passed every check. Tag v0.3.12 points
+  to that exact source; Release run `43912252775` is in progress.
+- Controlled build task `e47ebcbc4e1f2f00` exited 0 with Agent image
+  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:9b7435cb01c71bd7290b9f7c3b604455e0b28dac2f6a28d5433ddf0aaad5bd11`.
+  Its source, base inputs and runtime probes passed. Release installation
+  and live root-Chart recovery remain pending.
+
+The original deployment phase established v0.3.11 delivery. The newly
+reproduced root-Chart defect has a separate final verification phase, ending
+by 17:25 UTC on November 16 (01:25 China time on November 17), with at most
+three corrective attempts for an unchanged failure. Do not replay the
+interrupted turn; inspect release state first and use a fresh acceptance
+session after deploying the corrected runtime.
+
+### Browser Follow-through
+
+- The real double-click test sent one scale followed by an unintended cancel:
+  the Execute control became Stop in the same position. Session
+  `console-9u0g1a5t`, request `e9d6373c-f4f8-4533-82ce-d5961025f1e0`
+  ended `execution_outcome_unknown`; it was not replayed. Readback found
+  the isolated Deployment at replicas 0 / generation 1, then it was removed.
+- The new UI has no confirmation field or dialog. A stable Execute control
+  and separate Stop control are being verified before the final Web update.
+  The image also omitted `public`; the follow-up includes those tracked assets.
+- Release v0.3.12 finished successfully, including published-asset verification.
+  The newly exposed UI defect is a separate bounded follow-up: at most three
+  corrective attempts and completion or a recorded dependency by 18:00 UTC
+  (02:00 China time). Root-Chart acceptance continues within its existing bound.
+
+### Resumed Acceptance (2026-11-17 01:20 China Time)
+
+The user reiterated continuing the release and direct execution without another
+confirmation. Resume from live receipts; authorization is already established.
+
+1. Verify the deployed root-Chart repair with a real managed Helm failure,
+   correction, successful NetworkPolicy-only release, readback and cleanup.
+2. Finish browser validation of the stable Execute control and separate Stop
+   control, commit/push the scoped Web changes, and verify CI and the image.
+3. Deploy the Web artifact with the existing release procedure, retain rollback
+   state, and verify the actual endpoint version and browser operation.
+
+This resumed round ends by 02:30 China time, with at most three corrective
+attempts for the same unchanged failure. Unknown mutation results require
+readback before another write. Unavailable external delivery remains explicitly
+incomplete, never a reason to replace tool evidence with a model claim.
+
+- Fresh target and CLI reads both report v0.3.12 source
+  `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`.
+- Upgrade `upgrade_911cf42ebe95a19ccc8938f21eb4f947` completed with Helm
+  revision 28, Pod UID `4c8971d6-313b-4c66-aae3-2d9d0d248704`, expected
+  runtime digest, structuredSSH and release-commit acceptance. The receipt is
+  `agents-test/doops-upgrade-receipt-0d461309497d0b4a5b38d0e3-apply`.
+- Release workflow `43912252775` is completed successfully at the same commit.
+- The stable Execute/Stop correction and public asset copy are still local;
+  their deployed acceptance is pending.
+- Installed managed Helm acceptance `helm-root-v0312-20261117` exited 0.
+  Template failure `call_mI8XEEN4CtVxPRQN6KMkGW6C` is retained and resolves
+  to `call_z2U8YLxx23CWaqccogDzIBHb`; the verified mutation receipt reports
+  `outcome=succeeded`, `turn.status=completed`. Both calls used the same
+  workspace-root Chart and release, without another user confirmation.
+- Independent readback confirmed revision 1 deployed, a NetworkPolicy-only
+  manifest and matching template SHA256
+  `35b1be59daa302be09ef1d2b1e249154dc93c089e3a6c36637cb999562334576`.
+  The initial readback's relative-path hash command failed because ordinary
+  exec has a different cwd; an absolute session path confirmed the hash.
+  Cleanup returned exit 0, an empty Helm listing and no same-name policy.
+  Raw receipts and readbacks are in
+  `.local/direct-execution-20261116/root-chart-*-v0312.*`.
+- The console suite passed 637 checks. Independent review then reproduced a
+  fast-result double-click that resubmitted after the first RPC had ended.
+  Two focused regressions reproduced both fast success and fast failure before
+  the fix. Execute now ignores later clicks within the same pointer gesture,
+  while accepting keyboard activation and a subsequent separate click.
+  The 161 focused K8s/transport checks pass; browser verification uses this
+  final source rather than the earlier button-position-only build.
