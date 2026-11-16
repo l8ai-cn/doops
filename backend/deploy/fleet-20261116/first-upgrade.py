@@ -62,8 +62,9 @@ def run(command, stdin=None, timeout=30, raw=False):
 
 
 def failure(error):
-    return {"failureCategory": error.category if isinstance(error, UpgradeError) else "controller_exception",
-            "failureStep": error.step if isinstance(error, UpgradeError) else "controller",
+    helper_error = A is not None and isinstance(error, A.AdoptError)
+    return {"failureCategory": error.category if isinstance(error, UpgradeError) or helper_error else "controller_exception",
+            "failureStep": error.step if isinstance(error, UpgradeError) else "runtime-verification" if helper_error else "controller",
             "failureType": type(error).__name__}
 
 
@@ -225,6 +226,17 @@ def verify(a, image, commit, digest):
                     deadline_seconds=240, clock=time.monotonic, sleep=time.sleep)
 
 
+def controller_digest(a):
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            return A.controller_runtime_digest(a.namespace, a.image)
+        except A.AdoptError as error:
+            if error.category != "controller_identity_unverified" or time.monotonic() >= deadline:
+                raise
+            time.sleep(1)
+
+
 def interrupted(_signum, _frame):
     raise UpgradeError("interrupted")
 
@@ -248,7 +260,7 @@ def upgrade(a):
         created = True
         require(os.environ.get("HELM_DRIVER", "secret") == "secret", "helm_secret_driver_required")
         local_version(a.source_commit, a.release_tag)
-        digest = A.controller_runtime_digest(a.namespace, a.image)
+        digest = controller_digest(a)
         require(digest == a.image.split("@")[1], "platform_digest_required")
         rows = history(a, a.base_revision)
         live = get(a, "deployment", a.workload)

@@ -365,3 +365,25 @@ def test_rollback_registry_identity_at_subprocess_boundary(transaction, monkeypa
     else:
         m.registry(a, reference, {"imagePullSecrets": [{"name": "registry-auth"}]}, OLD_DIGEST)
         assert calls == ["docker://" + reference] + ([child_ref] if layout != "single" else []) + ["docker://" + NEW]
+
+
+def test_controller_waits_for_kubelet_runtime_status(transaction, monkeypatch):
+    m, a, _, _ = transaction
+    calls = []
+
+    def probe(namespace, image):
+        calls.append((namespace, image))
+        if len(calls) < 3:
+            raise m.A.AdoptError("status not published", "controller_identity_unverified")
+        return NEW.split("@")[1]
+
+    monkeypatch.setattr(m.A, "controller_runtime_digest", probe)
+    assert m.controller_digest(a) == NEW.split("@")[1]
+    assert len(calls) == 3
+
+
+def test_helper_failure_keeps_stable_category(transaction):
+    m, _, _, _ = transaction
+    diagnosis = m.failure(m.A.AdoptError(CANARY, "release_commit_mismatch"))
+    assert diagnosis["failureCategory"] == "release_commit_mismatch"
+    assert CANARY not in json.dumps(diagnosis)
