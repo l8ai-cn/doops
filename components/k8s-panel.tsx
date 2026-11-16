@@ -263,18 +263,17 @@ export function K8sPanel({
         {K8S_OUTPUT_HINTS[input.operation] && <p className="text-xs text-muted-foreground">{K8S_OUTPUT_HINTS[input.operation]}</p>}
         {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
-        <div className="flex items-center gap-2">
-          {running ? (
-            <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/40 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/25 disabled:opacity-50">
-              <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "正在停止" : "停止"}
-            </button>
-          ) : (
-            <button type="button" onClick={() => void run()} disabled={disabled} className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
-              <Play aria-hidden="true" className="size-3.5" /> 执行
+        <div className="flex shrink-0 items-center gap-2">
+          <button type="button" onClick={(event) => { if (event.detail <= 1) void run() }} disabled={disabled} className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
+            <Play aria-hidden="true" className="size-3.5 shrink-0" /> 执行
+          </button>
+          {running && (
+            <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-card/40 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/25 disabled:opacity-50">
+              <Square aria-hidden="true" className="size-3.5 shrink-0" /> {stopPending ? "正在停止" : "停止"}
             </button>
           )}
-          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </div>
+        {error && <p role="alert" className="min-w-0 shrink-0 text-xs text-destructive [overflow-wrap:anywhere]">{error}</p>}
 
         <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-border/60 bg-background/60 p-3.5 font-mono text-xs">
           {log.entries.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : (

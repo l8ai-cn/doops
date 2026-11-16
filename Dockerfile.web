@@ -33,6 +33,7 @@ ENV PORT=3000
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY public ./public
 # The console prerenders the release log, but keep the file in the runtime image
 # so a future dynamic /console keeps working with the same cwd contract.
 COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md

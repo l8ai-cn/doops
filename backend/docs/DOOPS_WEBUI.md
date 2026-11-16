@@ -70,6 +70,10 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   stop request keeps the lock until a remote terminal result arrives. Background
   target refreshes do not replace a running terminal's target. Disconnecting an
   idle session displays a pending screen so a new command cannot start mid-logout.
+- Kubernetes Execute stays in the same position and is disabled during a call.
+  Stop is a separate control, so a double-click cannot cancel the submitted
+  operation. Later clicks in the same double-click gesture cannot resubmit even
+  after a fast result. Errors wrap below the controls without compressing their labels.
 - Agents advertising `upgradeAudit` v1 have an image-reference upgrade/rollback form.
   The console runs preflight before apply, sends the source commit and CI URL, and
   joins all stages with one operation ID. Accepted is not completed: the page
