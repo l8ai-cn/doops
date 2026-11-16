@@ -53,7 +53,6 @@ export interface K8sInput {
   since: string
   timeout: string
   replicas: string
-  confirm: boolean
 }
 
 const BLANK_K8S_INPUT: K8sInput = {
@@ -71,7 +70,6 @@ const BLANK_K8S_INPUT: K8sInput = {
   since: "",
   timeout: "",
   replicas: "",
-  confirm: false,
 }
 
 // Logs default to the newest lines; an empty value asks for the whole log.
@@ -161,8 +159,7 @@ function normalizeResource(value: string): string {
   return parts[0].trim().toLowerCase() + "/" + parts[1].trim()
 }
 
-// Builds the doops_k8s arguments. Throws a user-facing error on invalid input,
-// including a write operation that has not been explicitly confirmed.
+// Builds the doops_k8s arguments. Throws a user-facing error on invalid input.
 export function k8sRequest(sessionId: string, input: K8sInput): Record<string, unknown> {
   const spec = K8S_OPERATIONS[input.operation]
   if (!spec) throw new Error("不支持的 Kubernetes 操作")
@@ -246,36 +243,7 @@ export function k8sRequest(sessionId: string, input: K8sInput): Record<string, u
     if (!input.replicas.trim()) throw new Error("请填写副本数")
     payload.replicas = integer(input.replicas.trim(), "副本数")
   }
-  if (spec.mutation) {
-    if (input.confirm !== true) throw new Error("写操作需要先勾选确认")
-    payload.confirm = true
-  }
   return payload
-}
-
-// Human-readable description of what the operation acts on.
-export function k8sSummary(input: K8sInput): string {
-  const namespace = input.namespace.trim()
-  // A blank namespace is not "all": kubectl in the Agent uses its own default namespace.
-  const scope = namespace ? `（命名空间 ${namespace}）` : "（Agent 默认命名空间）"
-  const resource = normalizeResource(input.resource) || "<资源>"
-  const name = input.name.trim() || "<名称>"
-  switch (input.operation) {
-    case "rollout-restart": return `滚动重启 ${resource}${scope}`
-    case "scale": return `将 ${resource} 扩缩到 ${input.replicas.trim() || "?"} 个副本${scope}`
-    case "cordon": return `将节点 ${name} 标记为不可调度`
-    case "uncordon": return `恢复节点 ${name} 的调度`
-    case "delete-pod": return `删除 Pod ${name}${scope}`
-    default: {
-      const label = K8S_OPERATIONS[input.operation]?.label || input.operation
-      return namespace ? `${label}（命名空间 ${namespace}）` : label
-    }
-  }
-}
-
-// Text of the write confirmation; it names the target and the object, like CLI --confirm.
-export function k8sConfirmText(target: { cluster: string; instance: string }, input: K8sInput): string {
-  return `我确认在 ${target.cluster}/${target.instance} 上执行：${k8sSummary(input)}。此操作会改变集群状态（对应 CLI 的 --confirm）。`
 }
 
 export interface K8sCallOptions {
@@ -285,7 +253,7 @@ export interface K8sCallOptions {
   arguments: Record<string, unknown>
 }
 
-// Validates first; nothing is sent when the request is invalid or a write is unconfirmed.
+// Validates first; nothing is sent when the request is invalid.
 export async function runK8s(
   send: (opts: K8sCallOptions) => Promise<void>,
   target: { cluster: string; instance: string },
@@ -294,12 +262,6 @@ export async function runK8s(
 ): Promise<void> {
   const args = k8sRequest(sessionId, input)
   await send({ cluster: target.cluster, instance: target.instance, tool: K8S_TOOL, arguments: args })
-}
-
-// A dispatched write must be confirmed again before it can run a second time,
-// whether it succeeded, failed or ended with an unknown outcome.
-export function k8sFormAfterRun(input: K8sInput): K8sInput {
-  return isK8sMutation(input.operation) ? { ...input, confirm: false } : input
 }
 
 export interface K8sScopedForm {
@@ -311,7 +273,7 @@ export interface K8sScopedForm {
 // target starts empty, so no namespace or object name carries over.
 export function k8sFormFor(scoped: K8sScopedForm | null, targetKey: string): K8sInput {
   if (!scoped || scoped.targetKey !== targetKey) return EMPTY_K8S_INPUT
-  return { ...scoped.input, confirm: false }
+  return { ...scoped.input }
 }
 
 // Saved forms belong to one login session object. Logging out drops the session,

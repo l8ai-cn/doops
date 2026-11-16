@@ -6,7 +6,7 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
-## [Unreleased]
+## [0.3.11] — 2026-11-16
 
 ### Changed
 
@@ -278,4 +278,3 @@
 - token 鉴权与 cluster/instance/action 粒度授权
 - 会话工作区隔离与 `.doops-audit-log` 审计
 - BuildKit 远端构建、Skills 沙盒、doagent ACP 接入
-

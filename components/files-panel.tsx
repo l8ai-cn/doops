@@ -12,7 +12,6 @@ import {
 import { listDirectoryCommand, parseDirectoryListing } from "@/lib/files-listing"
 import {
   checkDeploymentRequest,
-  cleanWorkspaceConfirmation,
   cleanWorkspaceRequest,
   EMPTY_CHECK_INPUT,
   EMPTY_MAINTENANCE_LOG,
@@ -106,7 +105,7 @@ export function FilesPanel({
   const [checkErr, setCheckErr] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
-  const { confirm, prompt, dialog } = useAppDialog()
+  const { prompt, dialog } = useAppDialog()
 
   const list = useCallback(
     async (dir: string) => {
@@ -301,7 +300,6 @@ export function FilesPanel({
       setMaint({ tool: "clean", lines: [], errors: [(err as Error).message], running: false })
       return
     }
-    if (!(await confirm(cleanWorkspaceConfirmation(sessionId)))) return
     setCheckOpen(false)
     if (await runMaintenance("clean", args)) {
       // 工作区已整体删除：不再展示旧目录和已打开的文件，也不重新列举（列根目录会重建空工作区）。

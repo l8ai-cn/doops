@@ -291,12 +291,20 @@ export const commandJournal = new CommandJournal(browserSessionStorage)
 export interface DeployState {
   sessionId: string | null
   draft: string | null
+  previousRelease?: DeployReceipt
+}
+
+// Keep only the last unknown release's identity and status; load its evidence from the hosted session.
+export interface DeployReceipt {
+  sessionId: string
+  status: "unknown"
 }
 
 interface DeployEntry {
   targetKey: string
   sessionId?: string
   draft?: string
+  previousRelease?: DeployReceipt
 }
 
 const MAX_DEPLOY_TARGETS = 20
@@ -308,12 +316,21 @@ function deployKey(scope: StorageScope): string {
 
 function deployEntry(value: unknown): DeployEntry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const { targetKey, sessionId, draft } = value as Record<string, unknown>
+  const { targetKey, sessionId, draft, previousRelease } = value as Record<string, unknown>
   if (!validTargetKey(targetKey)) return null
   const entry: DeployEntry = { targetKey }
   if (validSessionId(sessionId)) entry.sessionId = sessionId
   if (typeof draft === "string" && draft.length <= MAX_DRAFT_LENGTH) entry.draft = draft
+  const receipt = deployReceipt(previousRelease)
+  if (receipt) entry.previousRelease = receipt
   return entry
+}
+
+function deployReceipt(value: unknown): DeployReceipt | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const { sessionId, status } = value as Record<string, unknown>
+  if (!validSessionId(sessionId) || status !== "unknown") return undefined
+  return { sessionId, status }
 }
 
 // A token login stores nothing (persistsScope), yet a running release must stay visible after switching views. Its
@@ -344,17 +361,23 @@ function updateDeployEntry(storage: StorageLike | null, scope: StorageScope, tar
   if (next.sessionId === undefined) delete next.sessionId
   if (next.draft === undefined) delete next.draft
   const rest = entries.filter((entry) => entry.targetKey !== targetKey)
-  writeDeployEntries(storage, scope, next.sessionId || next.draft ? [...rest, next] : rest)
+  writeDeployEntries(storage, scope, next.sessionId || next.draft || next.previousRelease ? [...rest, next] : rest)
 }
 
 export function loadDeployState(storage: StorageLike | null, scope: StorageScope, targetKey: string): DeployState {
   const entry = readDeployEntries(storage, scope).find((candidate) => candidate.targetKey === targetKey)
-  return { sessionId: entry?.sessionId ?? null, draft: entry?.draft ?? null }
+  return {
+    sessionId: entry?.sessionId ?? null,
+    draft: entry?.draft ?? null,
+    ...(entry?.previousRelease ? { previousRelease: entry.previousRelease } : {}),
+  }
 }
 
-export function saveDeploySession(storage: StorageLike | null, scope: StorageScope, targetKey: string, sessionId: string): void {
+export function saveDeploySession(storage: StorageLike | null, scope: StorageScope, targetKey: string, sessionId: string, previousRelease?: DeployReceipt): void {
   if (!validSessionId(sessionId)) return
-  updateDeployEntry(storage, scope, targetKey, { sessionId })
+  const receipt = deployReceipt(previousRelease)
+  if (previousRelease !== undefined && !receipt) return
+  updateDeployEntry(storage, scope, targetKey, { sessionId, ...(receipt ? { previousRelease: receipt } : {}) })
 }
 
 export function saveDeployDraft(storage: StorageLike | null, scope: StorageScope, targetKey: string, draft: string | null): void {

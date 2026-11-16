@@ -26,7 +26,6 @@ import {
   type CredentialVerificationResponse,
   type CredentialVersion,
 } from "@/lib/credentials"
-import { useAppDialog } from "./app-dialog"
 import { SegmentedControl, Button, Select, Input, Textarea } from "./ui"
 import {
   BanIcon,
@@ -91,9 +90,10 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
+  const [mutating, setMutating] = useState(false)
+  const mutationRef = useRef(false)
   const [showCreate, setShowCreate] = useState(false)
   const [action, setAction] = useState<Action>(null)
-  const { confirm, dialog } = useAppDialog()
   const [versionsByCredential, setVersionsByCredential] = useState<
     Record<string, CredentialVersion[]>
   >({})
@@ -183,16 +183,9 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   }
 
   async function revoke(resource: CredentialResource) {
-    if (
-      !(await confirm({
-        title: "吊销凭据",
-        message: `确认吊销凭据「${resource.name}」？已物化资源将进入清理流程。`,
-        confirmLabel: "吊销",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+    if (mutationRef.current) return
+    mutationRef.current = true
+    setMutating(true)
     setError("")
     try {
       await revokeCredential(session, resource.id)
@@ -200,20 +193,16 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       await load()
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      mutationRef.current = false
+      setMutating(false)
     }
   }
 
   async function revokeBinding(resource: CredentialResource, binding: CredentialBinding) {
-    if (
-      !(await confirm({
-        title: "解除绑定",
-        message: `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
-        confirmLabel: "解除绑定",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+    if (mutationRef.current) return
+    mutationRef.current = true
+    setMutating(true)
     setError("")
     try {
       await revokeCredentialBinding(session, resource.id, binding.id)
@@ -221,20 +210,16 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       await load()
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      mutationRef.current = false
+      setMutating(false)
     }
   }
 
   async function promote(resource: CredentialResource, version: CredentialVersion) {
-    if (version.state !== "staged") return
-    if (
-      !(await confirm({
-        title: "激活暂存版本",
-        message: `确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`,
-        confirmLabel: "激活",
-      }))
-    ) {
-      return
-    }
+    if (version.state !== "staged" || mutationRef.current) return
+    mutationRef.current = true
+    setMutating(true)
     setError("")
     try {
       await promoteCredentialVersion(session, resource.id, version.id)
@@ -243,6 +228,9 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       completed(`已激活 ${resource.name} 的版本 ${version.id}`)
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      mutationRef.current = false
+      setMutating(false)
     }
   }
 
@@ -426,6 +414,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                         resource={resource}
                         version={version}
                         disabled={Boolean(session.demo)}
+                        busy={mutating}
                         onVerify={(binding) =>
                           version &&
                           setAction({ kind: "verify", credential: resource, version, binding })
@@ -440,6 +429,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <Button
                         onClick={() => setAction({ kind: "import", credential: resource })}
+                        disabled={mutating}
                         size="sm"
                       >
                         从 Secret 导入
@@ -449,6 +439,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                       <>
                         <Button
                           onClick={() => setAction({ kind: "payload", credential: resource })}
+                          disabled={mutating}
                           size="sm"
                         >
                           写入版本
@@ -465,7 +456,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                               <>
                                 <button
                                   onClick={() => promote(resource, version)}
-                                  className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
+                                  disabled={mutating}
+                                  className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                                 >
                                   激活
                                 </button>
@@ -475,14 +467,16 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                         )}
                         <Button
                           onClick={() => setAction({ kind: "binding", credential: resource })}
+                          disabled={mutating}
                           size="sm"
                         >
                           <ShieldIcon width={12} height={12} /> 绑定目标
                         </Button>
                         <button
                           onClick={() => revoke(resource)}
+                          disabled={mutating}
                           title="吊销凭据"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
                         >
                           <BanIcon width={14} height={14} />
                         </button>
@@ -553,6 +547,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
         <VersionDialog
           credential={action.credential}
           version={action.version}
+          busy={mutating}
           verification={verificationStatuses[`${action.credential.id}:${action.version.id}`]}
           onClose={() => setAction(null)}
           onPromote={() => promote(action.credential, action.version)}
@@ -575,7 +570,6 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
-      {dialog}
     </div>
   )
 }
@@ -583,12 +577,14 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 function VersionDialog({
   credential,
   version,
+  busy,
   verification,
   onClose,
   onPromote,
 }: {
   credential: CredentialResource
   version: CredentialVersion
+  busy: boolean
   verification?: VerificationStatus
   onClose: () => void
   onPromote: () => void
@@ -621,6 +617,7 @@ function VersionDialog({
           {version.state === "staged" && (
             <Button
               onClick={onPromote}
+              disabled={busy}
               variant="primary" size="sm"
             >
               激活版本
@@ -706,12 +703,14 @@ function BindingSummary({
   resource,
   version,
   disabled,
+  busy = false,
   onVerify,
   onRevoke,
 }: {
   resource: CredentialResource
   version?: CredentialVersion
   disabled: boolean
+  busy?: boolean
   onVerify: (binding: CredentialBinding) => void
   onRevoke: (binding: CredentialBinding) => void
 }) {
@@ -734,7 +733,8 @@ function BindingSummary({
             {binding.state === "active" && !disabled && version?.state === "staged" && (
               <button
                 onClick={() => onVerify(binding)}
-                className="rounded border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted"
+                disabled={busy}
+                className="rounded border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted disabled:opacity-50"
               >
                 验证暂存
               </button>
@@ -742,8 +742,9 @@ function BindingSummary({
             {binding.state === "active" && !disabled && (
               <button
                 onClick={() => onRevoke(binding)}
+                disabled={busy}
                 title="解除绑定"
-                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
               >
                 <BanIcon width={12} height={12} />
               </button>

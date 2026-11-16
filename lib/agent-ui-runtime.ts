@@ -24,17 +24,22 @@ export function createDoopsAgentUiRuntime(options: {
   target: Target
   sessionId: string
   codeWorkspace?: CodeWorkspaceSource
+  readOnly?: boolean
 }): AgentSessionRuntimeV2 {
   const codeWorkspace = options.codeWorkspace || createDoopsCodeWorkspace(options)
+  const transport = createDoopsAgentSessionTransport(options)
+  if (options.readOnly) {
+    transport.execute = async () => { throw new Error("原发布回执只读，请返回当前发布会话提交") }
+  }
   return createAgentWorkbenchRuntime({
     sessionId: options.sessionId,
     title: "DoAgent",
     agentLabel: "DoAgent",
     interactionMode: "acp",
-    transport: createDoopsAgentSessionTransport(options),
+    transport,
     createArtifactLoader: () => async ({ artifactId, sessionId }) =>
       loadDoopsWorkspaceArtifact(codeWorkspace, sessionId, artifactId),
-    uploadAttachment: (sessionId, file) => uploadDoopsAttachment(options, sessionId, file),
+    uploadAttachment: options.readOnly ? undefined : (sessionId, file) => uploadDoopsAttachment(options, sessionId, file),
     connectionOptions: { maxConsecutiveFailures: 2 },
     projectSnapshot: (snapshot) => {
       const model = snapshot.configuration?.find((control) => control.id === "model")?.value

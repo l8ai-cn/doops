@@ -1,7 +1,7 @@
 "use client"
 
 import { Button, Select, Input, PageTabs } from "./ui"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   GRANT_ALL,
@@ -184,7 +184,7 @@ function InstancesView({ session }: { session: Session }) {
   const [showHistory, setShowHistory] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [busyKey, setBusyKey] = useState("")
-  const { confirm, dialog } = useAppDialog()
+  const archiveRef = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -217,17 +217,8 @@ function InstancesView({ session }: { session: Session }) {
   ]
 
   async function changeArchive(row: AdminInstance) {
-    const action = row.archived ? "取消归档" : "归档"
-    if (
-      !(await confirm({
-        title: action,
-        message: `确认${action}实例「${row.cluster}/${row.instance}」？归档不会删除授权、令牌、凭据绑定或审计记录。`,
-        confirmLabel: action,
-        tone: row.archived ? "default" : "danger",
-      }))
-    ) {
-      return
-    }
+    if (archiveRef.current) return
+    archiveRef.current = true
     const key = `${row.cluster}/${row.instance}`
     setBusyKey(key)
     setError("")
@@ -238,6 +229,7 @@ function InstancesView({ session }: { session: Session }) {
     } catch (err) {
       setError((err as Error).message)
     } finally {
+      archiveRef.current = false
       setBusyKey("")
     }
   }
@@ -307,7 +299,7 @@ function InstancesView({ session }: { session: Session }) {
                     <button
                       type="button"
                       onClick={() => changeArchive(r)}
-                      disabled={busyKey === `${r.cluster}/${r.instance}`}
+                      disabled={!!busyKey}
                       className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                     >
                       {busyKey === `${r.cluster}/${r.instance}` ? "处理中…" : r.archived ? "取消归档" : "归档"}
@@ -357,7 +349,6 @@ function InstancesView({ session }: { session: Session }) {
           )}
         </div>
       </div>
-      {dialog}
     </div>
   )
 }
@@ -583,7 +574,7 @@ function GrantsView({ session }: { session: Session }) {
   const [instances, setInstances] = useState<AdminInstance[]>([])
   const [instancesError, setInstancesError] = useState("")
   const [busy, setBusy] = useState(false)
-  const { confirm, dialog } = useAppDialog()
+  const busyRef = useRef(false)
 
   const scope = useMemo(() => grantScopeOptions(instances), [instances])
   const instanceChoices = grantInstanceChoices(scope, cluster)
@@ -623,11 +614,13 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function submit() {
+    if (busyRef.current) return
     const checked = validateGrantForm({ userId, cluster, instance }, scope)
     if (!checked.ok) {
       setError(checked.error)
       return
     }
+    busyRef.current = true
     setBusy(true)
     setError("")
     try {
@@ -639,27 +632,24 @@ function GrantsView({ session }: { session: Session }) {
     } catch (e) {
       setError((e as Error).message)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
   async function remove(id: number) {
-    if (
-      !(await confirm({
-        title: "删除授权",
-        message: "确认删除该授权？",
-        confirmLabel: "删除",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
     setError("")
     try {
       await deleteGrant(session, id)
       await load()
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
     }
   }
 
@@ -775,6 +765,7 @@ function GrantsView({ session }: { session: Session }) {
                   <div className="flex justify-end">
                     <Button
                       onClick={() => remove(g.id)}
+                      disabled={busy}
                       size="sm" className="text-destructive"
                     >
                       <TrashIcon width={12} height={12} /> 删除
@@ -793,7 +784,6 @@ function GrantsView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
-      {dialog}
     </div>
   )
 }
@@ -808,11 +798,11 @@ function TokensView({ session }: { session: Session }) {
   const [userName, setUserName] = useState("")
   const [name, setName] = useState("")
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const [created, setCreated] = useState("")
   const [showRevoked, setShowRevoked] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
-  const { confirm, dialog } = useAppDialog()
 
   const groups = useMemo(
     () => groupTokensByUser(rows, users, { now, showRevoked }),
@@ -849,6 +839,8 @@ function TokensView({ session }: { session: Session }) {
   }, [load])
 
   async function submit() {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     setError("")
     setCreated("")
@@ -863,29 +855,24 @@ function TokensView({ session }: { session: Session }) {
     } catch (e) {
       setError((e as Error).message)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
 
   async function revoke(id: string) {
-    if (
-      !(await confirm({
-        title: "撤销令牌",
-        message: id === session.tokenId
-          ? "这是当前登录使用的令牌。撤销后控制台以及复用该令牌的 CLI 和其它客户端都会立即失效，需要重新登录。"
-          : "确认撤销该令牌？所有使用该令牌的客户端将立即失效。",
-        confirmLabel: "撤销",
-        tone: "danger",
-      }))
-    ) {
-      return
-    }
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
     setError("")
     try {
       await revokeToken(session, id)
       await load()
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
     }
   }
 
@@ -1010,6 +997,7 @@ function TokensView({ session }: { session: Session }) {
                           {!t.revoked && (
                             <Button
                               onClick={() => revoke(t.id)}
+                              disabled={busy}
                               size="sm" className="text-destructive"
                             >
                               <BanIcon width={12} height={12} /> 撤销
@@ -1033,7 +1021,6 @@ function TokensView({ session }: { session: Session }) {
           )}
         </table>
       </div>
-      {dialog}
     </div>
   )
 }

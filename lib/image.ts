@@ -147,8 +147,7 @@ function buildPlatform(value: string): string {
   return items.join(",")
 }
 
-function shellRequest(sessionId: string, command: string, confirmed: boolean): ShellToolRequest {
-  if (!confirmed) throw new Error("请先确认本次镜像变更")
+function shellRequest(sessionId: string, command: string): ShellToolRequest {
   if (!sessionId.trim()) throw new Error("缺少操作 session")
   return { tool: "doops_shell", arguments: { session_id: sessionId, command } }
 }
@@ -308,16 +307,16 @@ export function registrySyncCommand(input: RegistrySyncInput): string {
   return parts.join("\n")
 }
 
-export function imageBuildRequest(sessionId: string, input: ImageBuildInput, confirmed: boolean): ShellToolRequest {
-  return shellRequest(sessionId, imageBuildCommand(input), confirmed)
+export function imageBuildRequest(sessionId: string, input: ImageBuildInput): ShellToolRequest {
+  return shellRequest(sessionId, imageBuildCommand(input))
 }
 
-export function imageCopyRequest(sessionId: string, input: ImageCopyInput, confirmed: boolean): ShellToolRequest {
-  return shellRequest(sessionId, imageCopyCommand(input), confirmed)
+export function imageCopyRequest(sessionId: string, input: ImageCopyInput): ShellToolRequest {
+  return shellRequest(sessionId, imageCopyCommand(input))
 }
 
-export function registrySyncRequest(sessionId: string, input: RegistrySyncInput, confirmed: boolean): ShellToolRequest {
-  return shellRequest(sessionId, registrySyncCommand(input), confirmed)
+export function registrySyncRequest(sessionId: string, input: RegistrySyncInput): ShellToolRequest {
+  return shellRequest(sessionId, registrySyncCommand(input))
 }
 
 // 复制带校验时每个镜像最多三步（copy、两次 inspect），各自受单步超时约束；

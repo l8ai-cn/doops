@@ -6,10 +6,8 @@ import { TOOLS } from "@/lib/gateway"
 import {
   appendShellOutput,
   describeShellFailure,
-  destructiveCommandReason,
   prefillToApply,
   shellResultOutcome,
-  terminalExecGate,
   type TerminalPrefill,
 } from "@/lib/shell-blocks"
 import { commandJournal } from "@/lib/console-persistence"
@@ -37,18 +35,13 @@ export function TerminalPanel({
 }) {
   const [command, setCommand] = useState("")
   const appliedPrefillRef = useRef(0)
-  // 记下助手预填的原文：未经改动就执行破坏性命令时需要额外确认一次。
-  const assistantCommandRef = useRef("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const [pendingConfirm, setPendingConfirm] = useState<{ command: string; reason: string } | null>(null)
 
-  // AI 助手“在终端执行”只预填输入框，用户确认（Enter/执行）后才走 doops_shell。
+  // AI 助手“填入终端”只预填输入框，用户主动提交（Enter/执行）后才走 doops_shell。
   useEffect(() => {
     const next = prefillToApply(prefill, appliedPrefillRef.current)
     if (next === null || !prefill) return
     appliedPrefillRef.current = prefill.nonce
-    assistantCommandRef.current = next
-    setPendingConfirm(null)
     setCommand(next)
     inputRef.current?.focus()
     onPrefillApplied?.(prefill.nonce)
@@ -75,17 +68,9 @@ export function TerminalPanel({
     push({ kind: failure.tone === "info" ? "info" : failure.tone === "warn" ? "warn" : "err", text: failure.text })
   }
 
-  async function run(confirmed = "") {
+  async function run() {
     const cmd = command.trim()
-    if (running || stopPending) return
-    const gate = terminalExecGate(cmd, { assistantCommand: assistantCommandRef.current, confirmed })
-    if (gate === "empty") return
-    if (gate === "confirm") {
-      setPendingConfirm({ command: cmd, reason: destructiveCommandReason(cmd) ?? "" })
-      return
-    }
-    setPendingConfirm(null)
-    assistantCommandRef.current = ""
+    if (running || stopPending || !cmd) return
     setHistory((h) => [...h, cmd])
     setHistIdx(-1)
     setCommand("")
@@ -228,32 +213,12 @@ export function TerminalPanel({
         {progress && (
           <div role="status" className="mb-2 font-mono text-xs text-muted-foreground">{progress}</div>
         )}
-        {pendingConfirm && (
-          <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs">
-            <span className="min-w-0 flex-1 text-destructive">
-              这条助手建议的命令会{pendingConfirm.reason}，将在 {target.cluster}/{target.instance} 上执行。确认无误后再执行。
-            </span>
-            <button
-              type="button"
-              onClick={() => void run(pendingConfirm.command)}
-              className="rounded-md bg-destructive px-2 py-1 font-medium text-destructive-foreground hover:opacity-90"
-            >
-              确认执行
-            </button>
-            <button type="button" onClick={() => setPendingConfirm(null)} className="rounded-md border px-2 py-1 hover:bg-muted">
-              取消
-            </button>
-          </div>
-        )}
         <div className="flex items-end gap-2">
           <span className="select-none pb-2 font-mono text-primary">$</span>
           <textarea
             ref={inputRef}
             value={command}
-            onChange={(e) => {
-              setCommand(e.target.value)
-              setPendingConfirm(null)
-            }}
+            onChange={(e) => setCommand(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="hostname && kubectl get nodes"
             rows={1}

@@ -56,7 +56,6 @@ export function ImagePanel({
   const [build, setBuild] = useState<ImageBuildInput>({ context: "", dockerfile: "", platform: "linux/amd64", output: "oci", outputPath: "", image: "", push: false })
   const [copy, setCopy] = useState<ImageCopyInput>({ source: "", destination: "", sourceAuthfile: "", destinationAuthfile: "", all: true, verify: true, timeout: 600 })
   const [sync, setSync] = useState<RegistrySyncInput>({ sourceRegistry: "", targetRegistry: "", tag: "", images: "", sourceAuthfile: "", targetAuthfile: "", timeout: 600 })
-  const [confirmed, setConfirmed] = useState(false)
   const [header, setHeader] = useState("")
   const [outputText, setOutputText] = useState("")
   const [progress, setProgress] = useState("")
@@ -105,7 +104,6 @@ export function ImagePanel({
   }
 
   function changed() {
-    setConfirmed(false)
     setError("")
   }
 
@@ -123,9 +121,9 @@ export function ImagePanel({
   }
 
   function buildRequest(): ShellToolRequest {
-    if (mode === "build") return imageBuildRequest(sessionId, build, confirmed)
-    if (mode === "copy") return imageCopyRequest(sessionId, copy, confirmed)
-    return registrySyncRequest(sessionId, sync, confirmed)
+    if (mode === "build") return imageBuildRequest(sessionId, build)
+    if (mode === "copy") return imageCopyRequest(sessionId, copy)
+    return registrySyncRequest(sessionId, sync)
   }
 
   async function run() {
@@ -196,7 +194,6 @@ export function ImagePanel({
       setRunning(false)
       setStopPending(false)
       setStopNote("")
-      setConfirmed(false)
       onRunningChange(false)
       cancelRef.current = null
     }
@@ -330,13 +327,9 @@ export function ImagePanel({
           </fieldset>
 
           {warning && <p role="status" className="text-xs text-amber-600">{warning}</p>}
-          <label className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs text-foreground">
-            <input type="checkbox" checked={confirmed} disabled={running} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />
-            <span>我确认在 {target.cluster}/{target.instance} 上执行本次{current.label}，它会写入目标路径或 Registry。</span>
-          </label>
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" disabled={!confirmed || running || stopPending} variant="primary">
+            <Button type="submit" disabled={running || stopPending} variant="primary">
               <Send aria-hidden="true" className="size-4" />执行{current.label}
             </Button>
             {running && (

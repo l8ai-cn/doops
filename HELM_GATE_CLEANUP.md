@@ -414,3 +414,11 @@ completed stage here so the next round resumes from tool evidence.
   console. Each deployment requires a version and live-operation readback.
 - `test/loki` is still revision 10 / failed. Its state is separate from the
   platform rollout and must not be reported as a successful Loki deployment.
+- Backend/CLI/skill changes were pushed as
+  `55df739bb9493554086f1fa28aef85648ec19e42`; GitHub CI runs
+  `43885132839` and `43885121461` passed all checks.
+- Final console checks passed 636/636, TypeScript passed and the production
+  Web build succeeded. Browser verification is in progress on that build.
+- The concurrent fleet task owns v0.3.10. This task prepares v0.3.11 with
+  the completed confirmation-removal UI, and limits rollout to `gw-test`
+  and the Web console. Other fleet/Gateway changes are preserved.

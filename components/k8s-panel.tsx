@@ -12,9 +12,7 @@ import {
   createK8sFormStore,
   describeK8sFailure,
   isK8sMutation,
-  k8sConfirmText,
   k8sFields,
-  k8sFormAfterRun,
   k8sResultHint,
   runK8s,
   type K8sField,
@@ -95,8 +93,7 @@ export function K8sPanel({
   }, [session, targetKey, input])
 
   function update(patch: Partial<K8sInput>) {
-    // Any change to what will be sent invalidates a previous write confirmation.
-    setInput((current) => ({ ...current, ...patch, confirm: patch.confirm ?? false }))
+    setInput((current) => ({ ...current, ...patch }))
     setError("")
   }
 
@@ -168,8 +165,6 @@ export function K8sPanel({
         }
       }
     } finally {
-      // A write that reached the Gateway needs a new confirmation, whatever its outcome.
-      if (started) setInput((current) => (current.operation === submitted.operation ? k8sFormAfterRun(current) : current))
       setRunning(false)
       setStopPending(false)
       onRunningChange(false)
@@ -205,7 +200,7 @@ export function K8sPanel({
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div className="flex flex-col gap-2">
           <OperationGroup title="只读" operations={READ_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} />
-          <OperationGroup title="写操作（需确认）" operations={WRITE_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} danger />
+          <OperationGroup title="写操作" operations={WRITE_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} danger />
         </div>
         {spec.cli && <p className="font-mono text-xs text-muted-foreground">doops k8s {spec.cli}</p>}
 
@@ -268,21 +263,14 @@ export function K8sPanel({
         {K8S_OUTPUT_HINTS[input.operation] && <p className="text-xs text-muted-foreground">{K8S_OUTPUT_HINTS[input.operation]}</p>}
         {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
-        {mutation && (
-          <label className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3.5 py-2.5 text-xs text-foreground">
-            <input type="checkbox" className="mt-0.5" checked={input.confirm} disabled={disabled} onChange={(e) => update({ confirm: e.target.checked })} />
-            <span>{k8sConfirmText(target, input)}</span>
-          </label>
-        )}
-
         <div className="flex items-center gap-2">
           {running ? (
             <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/40 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/25 disabled:opacity-50">
               <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "正在停止" : "停止"}
             </button>
           ) : (
-            <button type="button" onClick={() => void run()} disabled={disabled || (mutation && !input.confirm)} className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
-              <Play aria-hidden="true" className="size-3.5" /> {mutation ? "确认执行" : "执行"}
+            <button type="button" onClick={() => void run()} disabled={disabled} className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
+              <Play aria-hidden="true" className="size-3.5" /> 执行
             </button>
           )}
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}

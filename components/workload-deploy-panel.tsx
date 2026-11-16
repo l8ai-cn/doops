@@ -1,7 +1,7 @@
 "use client"
 
 import { AgentWorkspace, type AgentSessionSnapshot } from "@agent-cloud/agent-ui"
-import { ArrowUpCircle, CircleAlert, KeyRound, Loader2, Plus, RefreshCw, Square } from "lucide-react"
+import { ArrowLeft, ArrowUpCircle, CircleAlert, History, KeyRound, Loader2, Plus, RefreshCw, Square } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import type { Session, Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
@@ -12,7 +12,6 @@ import {
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { browserSessionStorage, loadDeployState, saveDeployDraft, saveDeploySession } from "@/lib/console-persistence"
-import { useAppDialog } from "./app-dialog"
 import { DeploymentForm } from "./deployment-form"
 
 // Helm release channel: the same `doops.operations/apply` command as `doops ask --apply`,
@@ -26,17 +25,22 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
 }) {
   // Keep the release session across view switches so a running apply stays visible after returning. It is kept per
   // Gateway, user and target; a token login keeps it in memory only. Logout clears both (console-persistence.ts).
-  const [sessionId, setSessionId] = useState(() => {
-    const saved = loadDeployState(browserSessionStorage(), session, target.key).sessionId
-    return saved && /^deploy-[a-z0-9]{1,16}$/.test(saved) ? saved : randomSession("deploy")
+  const [releaseState, setReleaseState] = useState(() => {
+    const saved = loadDeployState(browserSessionStorage(), session, target.key)
+    return { ...saved, sessionId: saved.sessionId && /^deploy-[a-z0-9]{1,16}$/.test(saved.sessionId) ? saved.sessionId : randomSession("deploy") }
   })
-  useEffect(() => { saveDeploySession(browserSessionStorage(), session, target.key, sessionId) }, [session, target.key, sessionId])
+  const [viewingReceipt, setViewingReceipt] = useState(false)
+  const readOnly = viewingReceipt && !!releaseState.previousRelease
+  const sessionId = readOnly ? releaseState.previousRelease!.sessionId : releaseState.sessionId
+  useEffect(() => {
+    saveDeploySession(browserSessionStorage(), session, target.key, releaseState.sessionId, releaseState.previousRelease)
+  }, [session, target.key, releaseState.sessionId, releaseState.previousRelease])
   const loadDraft = useCallback(() => loadDeployState(browserSessionStorage(), session, target.key).draft, [session, target.key])
   const saveDraft = useCallback((text: string | null) => saveDeployDraft(browserSessionStorage(), session, target.key, text), [session, target.key])
   const codeWorkspace = useMemo(() => createDoopsCodeWorkspace({ session, target, sessionId }), [session, target.cluster, target.instance, sessionId])
   const runtime = useMemo(
-    () => createDoopsAgentUiRuntime({ session, target, sessionId, codeWorkspace }),
-    [session, target.cluster, target.instance, sessionId, codeWorkspace],
+    () => createDoopsAgentUiRuntime({ session, target, sessionId, codeWorkspace, readOnly }),
+    [session, target.cluster, target.instance, sessionId, codeWorkspace, readOnly],
   )
   const subscribe = useCallback((listener: () => void) => runtime.subscribe(sessionId, listener), [runtime, sessionId])
   const getSnapshot = useCallback(() => runtime.getSnapshot(sessionId), [runtime, sessionId])
@@ -48,23 +52,29 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   )
   const availability = deploymentAvailability({ connection: snapshot.connection, error: snapshot.error, supportsApply, running: busy })
   const outcome = deploymentOutcome({ status: snapshot.status, error: snapshot.error })
-  const { confirm, dialog } = useAppDialog()
+  const newSessionWarning = deploymentNewSessionWarning(outcome.kind) ||
+    (releaseState.previousRelease && deploymentNewSessionWarning(releaseState.previousRelease.status))
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState("")
-  const startNewRelease = useCallback(async () => {
-    const warning = deploymentNewSessionWarning(outcome.kind)
-    if (warning && !(await confirm({ title: "开始新发布？", message: warning, confirmLabel: "开始新发布", tone: "danger" }))) return
+  const startNewRelease = useCallback(() => {
+    const current = runtime.getSnapshot(sessionId)
+    if (isDoopsAgentSessionBusy(current)) return
+    const previousRelease = !readOnly && deploymentOutcome(current).kind === "unknown"
+      ? { sessionId, status: "unknown" as const }
+      : releaseState.previousRelease
     setStopError("")
-    setSessionId(randomSession("deploy"))
-  }, [confirm, outcome.kind])
+    setReleaseState((state) => ({ ...state, sessionId: randomSession("deploy"), previousRelease }))
+    setViewingReceipt(false)
+  }, [runtime, sessionId, readOnly, releaseState.previousRelease])
   // A stop only asks the Agent to stop; the server answers once the original call reaches a terminal state.
   const stop = useCallback(async () => {
+    if (readOnly) return
     setStopping(true)
     setStopError("")
     try { await runtime.interrupt(sessionId, crypto.randomUUID()) } catch (error) {
       setStopError(deploymentStopFailure(error instanceof Error ? error.message : String(error)))
     } finally { setStopping(false) }
-  }, [runtime, sessionId])
+  }, [runtime, sessionId, readOnly])
   const reconnect = useCallback(() => {
     if (snapshot.connection !== "disconnected") runtime.close(sessionId)
     void runtime.open(sessionId).catch(() => {
@@ -74,7 +84,6 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {dialog}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold">发布 Helm release</h2>
@@ -87,12 +96,30 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <button
             type="button"
             disabled={busy}
-            onClick={() => void startNewRelease()}
+            onClick={startNewRelease}
             title={`当前会话 ${sessionId}`}
             className="flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           ><Plus aria-hidden="true" className="size-3.5" />新发布</button>
         </div>
       </header>
+      {newSessionWarning && (
+        <div role="status" className="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
+          <p className="min-w-0 flex-1">{newSessionWarning}</p>
+          {releaseState.previousRelease && (
+            <button type="button" disabled={!readOnly && busy}
+              onClick={() => {
+                if (!readOnly && isDoopsAgentSessionBusy(runtime.getSnapshot(sessionId))) return
+                setStopError("")
+                setViewingReceipt((current) => !current)
+              }}
+              title={readOnly ? releaseState.sessionId : releaseState.previousRelease.sessionId}
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs hover:bg-muted disabled:opacity-50">
+              {readOnly ? <ArrowLeft aria-hidden="true" className="size-3.5" /> : <History aria-hidden="true" className="size-3.5" />}
+              {readOnly ? "返回当前发布" : "查看原回执"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Narrow screens scroll the whole page with the form at full height; wide screens scroll each column. */}
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
@@ -100,7 +127,13 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           {!availability.canSubmit && availability.notice && (
             <AvailabilityNotice notice={availability.notice} onReconnect={reconnect} onOpenCredentials={onOpenCredentials} onOpenUpgrade={onOpenUpgrade} />
           )}
-          <DeploymentForm
+          {readOnly ? (
+            <div className="space-y-2 text-xs">
+              <h3 className="text-sm font-medium">原发布回执 · 只读</h3>
+              <p className="break-all font-mono text-muted-foreground">{sessionId}</p>
+              <p className="text-amber-600 dark:text-amber-400">上次记录：发布结果未确认。以原会话实时回执和目标状态为准。</p>
+            </div>
+          ) : <DeploymentForm
             key={sessionId}
             target={target}
             loadDraft={loadDraft}
@@ -109,11 +142,12 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
             blockedReason={availability.canSubmit ? undefined : availability.blockedReason}
             onDeploy={async (input: DeploymentInput) => {
               // The form gates on channel availability; Gateway authorization remains authoritative.
+              if (readOnly) throw new Error("原发布回执只读")
               if (!availability.canSubmit) throw new Error(availability.blockedReason)
               if (!runtime.executeExtension) throw new Error("当前智能体不支持部署变更")
               await runtime.executeExtension(sessionId, crypto.randomUUID(), deploymentExtensionCommand(target, input))
             }}
-          />
+          />}
         </div>
         <div className="flex h-[36rem] min-w-0 flex-col lg:h-auto lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
@@ -121,7 +155,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               <h3 className="text-sm font-medium">执行过程</h3>
               <p className="truncate text-[11px] text-muted-foreground">以 Helm release 的实际终态为准；工具失败、连接中断或缺少终态都不算成功</p>
             </div>
-            {busy && snapshot.capabilities.interrupt && (
+            {!readOnly && busy && snapshot.capabilities.interrupt && (
               <button type="button" disabled={stopping || snapshot.connection !== "connected"} onClick={() => void stop()}
                 className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/50 px-2.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40">
                 <Square aria-hidden="true" className="size-3" />{stopping ? "正在停止…" : "停止"}
@@ -138,7 +172,8 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               presentation="developer"
               runtime={runtime}
               sessionId={sessionId}
-              codeWorkspace={codeWorkspace}
+              readOnly={readOnly}
+              codeWorkspace={readOnly ? undefined : codeWorkspace}
               defaultWorkbenchMode="work"
               showFullscreen={false}
               composer={<RunStatus outcome={outcome} stopError={stopError} onOpenCredentials={onOpenCredentials} />}
