@@ -21,16 +21,17 @@ it is never evidence of a remote Agent version. Use `targets` and audited
 ## Verified Baseline
 
 Fresh read: 2026-11-16 22:50 China time, session fleet-inventory-20261116.
-11 targets are online; two configured routes remain unavailable. No target has
-yet been verified on the new v0.3.11 candidate.
+11 targets were online; two configured routes remain unavailable. As of
+2026-11-17 00:22 China time, gw-test is verified on v0.3.11. The other 12
+targets have not been upgraded to that release.
 
 | Target | Current Agent commit | State / next action |
 |---|---|---|
-| gw-test | 0d389204508ce989bf6bca7e06438edfbb425f0a | v0.3.9 deployed; retain revision 26, recheck image and smoke |
+| gw-test | 32ccf453d6a0744fba590b4c11b0027d65c7800b | v0.3.11 verified; revision 27; Ready, digest, reconnect, execution, model and browser smoke passed |
 | gw-edu-coder | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; kz-ops/doops-agent; mounted admin kubeconfig; BuildKit available |
 | gw-hdu-235 | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; ai/doops-agent, revision 5; mounted kubeconfig |
 | gw-zy | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; independent first-upgrade Job required |
-| gw-zyj | 081f24ab4e92535bce87c23889e242a1ee5f0886 | Online; ai/doops-agent, revision 49; mounted admin kubeconfig; other sessions active |
+| gw-zyj | 081f24ab4e92535bce87c23889e242a1ee5f0886 | Two preflight Jobs failed before replacement; revision 49 unchanged; old registry index is missing |
 | oilan | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; first-upgrade Job and existing SA permissions review |
 | unicom-1 | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; hostname k8s-master; distinct from the doops-system/doops-agent Pod |
 | unicom-k8s | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; doops-system/doops-agent, ServiceAccount doops-unicom-agent |
@@ -57,28 +58,28 @@ yet been verified on the new v0.3.11 candidate.
 - Confirmation-removal backend changes were pushed at
   55df739bb9493554086f1fa28aef85648ec19e42; both GitHub CI runs passed.
   Console changes were pushed at 4144db60eaed9d4b059a2a60ce9e1235617f56f7;
-  its Contract tests and Secret scan passed, Go tests are still running.
-  Consolidate these changes into v0.3.11 after the final merge; v0.3.10 has
-  no published tag or assets. Build only the final immutable committed snapshot.
+  all CI checks passed. These changes are included in formal v0.3.11;
+  v0.3.10 has no published tag or assets.
 - The one-shot first-upgrade controller now has render/run/accept stages,
   immutable Secret backups, rollback, Gateway acceptance and redacted step
-  diagnostics. Fourteen local transaction cases passed. Real-cluster pilot
-  verification is still required; it currently supports mounted independent
-  kubeconfig identities only.
+  diagnostics. Twenty-four local transaction, registry and timing cases pass.
+  It currently supports mounted independent kubeconfig identities only; the
+  old-Agent pilot has not passed. Keep it separate from gw-test's successful
+  native upgrade controller.
 
 ## Current Steps
 
-1. Commit the reviewed controller and progress, push the member branch, verify
-   GitHub CI and merge PR 22. Record remote-visible full commit identities.
-2. Publish matching v0.3.11 CLI/Gateway/Skill assets and build the committed
-   base-light/Agent/Web inputs on the authorized builder. Verify checksums,
-   runtime probes and registry digests; install the matched CLI and Skill.
-3. Pilot gw-test and one old mounted-kubeconfig target. Require terminal Job
-   receipt, Ready, exact imageID/commit, reconnect and execution/model smoke.
-4. Continue remaining Kubernetes and host runtimes with their independent
-   controllers. Read back unknown outcomes before any further mutation.
-5. Reconcile both Gateway/console environments, browser user paths and all 13
-   target results. Unavailable targets remain explicitly incomplete.
+1. Done: commit/push, CI, PR 22 merge, v0.3.11 publication, matched CLI/Skill
+   installation, and base/Agent/Web builds from source 32ccf453.
+2. Done: native gw-test upgrade and live terminal/model/browser acceptance.
+3. Pending: recover the exact old registry artifacts before another old-Agent
+   pilot, or prepare a reviewed replacement transaction with verified recovery.
+4. Pending: implement and verify the independent SA and Docker/systemd paths;
+   resolve the two unavailable targets. Existing socket-controller review found
+   concrete recovery gaps; it is not accepted for live replacement.
+5. Pending: Gateway/console host publication and both environments' user paths.
+   The human question about the SSH-only scripts versus the caller's no-daily-
+   SSH rule remains unanswered; do not infer approval from elapsed time.
 
 ## Resumed Delivery Evidence
 
@@ -114,6 +115,42 @@ yet been verified on the new v0.3.11 candidate.
 - Internal Gateway still reports v0.3.9. Public Gateway and console have separate
   TLS/static-resource drift; neither environment is accepted as v0.3.11 yet.
   Browser baseline is space 324; internal console currently shows login.
+
+## Acceptance And Remaining Dependencies (2026-11-17)
+
+- Native gw-test operation `upgrade_13eb7d2543975e66a7d9aba0a16c478b`
+  returned success; its preflight and apply Jobs completed. Terminal receipt:
+  `agents-test/doops-upgrade-receipt-7db56c508d1daeb5c668c0d0-apply`.
+  Running Pod `doops-agent-test-6dc8467b5b-58r2w`, UID
+  `d2f792ab-d209-400d-8ed8-39be787bf89a`, reports the exact Agent digest above,
+  Ready true and release commit 32ccf453. Helm revision 27 is deployed;
+  `/health/ready` returns ready; DoAgent is 0.2.46.
+- Audited exec and a real read-only model tool call returned the same hostname
+  and release commit. Internal console login, selecting zyj-test, and terminal
+  `hostname && /app/doops-agent -version` returned exit code 0. Captured browser
+  network failures and runtime exceptions were both zero. Screenshot:
+  `.local/fleet-test-browser-20261117.png`. Browser space 324 was finished.
+  This verifies the existing console against the new Agent, not a new Web
+  deployment or new frontend behavior online.
+- Corrected pilot `ai/fleet-zyj-v0311-r49b` failed before replacement at
+  registry-pull. Live Helm revision 49 remains deployed. Separate registry
+  readbacks confirm old gw-zyj 352fa6ef, hdu 778312b1 and edu fd20c510
+  references return artifact not found.
+- vm-0-11 cache verification found old 352fa6ef index bytes and the amd64
+  ce91070a manifest, plus 25 config/layer blobs totaling 571163619 bytes, all
+  hash/size verified. Referenced attestation manifest e1ef14e8 is absent, so a
+  platform-only export cannot prove restoration of the original index digest.
+  No export, push, grant expansion or missing-baseline override was performed.
+- gw-114-k8s and gw-jm still return target unavailable through the current
+  Gateway login. Their runtime state and recovery channel remain unverified.
+- Follow-up operational source `03e1a52c1b160e9ac7026869f4b616e399b876b4`
+  is pushed and remote-visible; CI runs 43902413371 and 43904928141 passed.
+  PR 23 covers the temporary build auth and controller timing correction;
+  it does not move the immutable v0.3.11 runtime tag.
+- Downloaded Gateway v0.3.11 asset SHA256 is
+  `8e7b165632fa61b7a0543ff1821887aa7c6fb9e9260d761ae23c5e5da902619b`.
+  Its live installation and both new Web deployments remain pending the
+  explicit execution-method decision requested from the human.
 
 ## Bounds And Recovery
 

@@ -380,11 +380,11 @@ ownership and truthful terminal evidence still apply.
   digest `sha256:2dd40b6013559019d975169831b6e67d3ea9bb9c60843b8b6863cd84ac5ac5bb`
   and matching source label. The prior source lock would have downgraded the
   deadline repair/progress and six-attempt completion-review fixes.
-- [ ] Remove duplicate K8s/Web confirmation parameters and console confirmation
+- [x] Remove duplicate K8s/Web confirmation parameters and console confirmation
   controls; verify explicit actions execute once and read-only tools stay read-only.
-- [ ] Align canonical skills, API/help and user documentation; scan for retired
+- [x] Align canonical skills, API/help and user documentation; scan for retired
   confirmation instructions.
-- [ ] Run functional checks, production build and browser workflows; independently
+- [x] Run functional checks, production build and browser workflows; independently
   review authorization and terminal-evidence behavior.
 - [ ] Commit/push on the existing member branch, verify CI, publish/install matched
   assets, upgrade the test Agent and record real execution receipts.
@@ -428,3 +428,64 @@ completed stage here so the next round resumes from tool evidence.
   with the actual `cos_key_rejected` before the fix; all COS tests passed
   afterward. The v0.3.11 Gateway asset must be installed and the same COS
   upload retried to verify this correction online.
+
+### Artifact And Online Verification Phase
+
+The implementation phase is complete. The additional COS defect requires a
+Gateway release as well as the originally planned Agent/Web rollout. This
+phase starts at 15:25 UTC with a 90-minute ceiling, three attempts per unchanged
+failure, and no repeat of a mutation whose result is unknown.
+
+- Release source is pinned to
+  `b01d7bff48fb95714ee49cbc05a9114a603b9946`, including the COS fix.
+  The shared member branch subsequently contains the separate fleet controller
+  commit; this task's build uses its pinned source.
+- Audited source acquisition task `f6d5d5e766b3d4e4` exited 0 after retrieving
+  the public Git repository anonymously and verifying that exact commit.
+  The failed COS upload remains recorded and must be verified after Gateway
+  rollout; it is not treated as successful.
+- Agent/base build task: `816d8b7ca819dab2`, session
+  `doops-direct-b01d7bff`; Web build task: `ee689546ea5dcbcb`, session
+  `doops-web-b01d7bff`. Both run on `gw-hdu-235` using its existing registry
+  authentication. Artifacts are pending, not yet deployed.
+- Browser K8s scale submitted exactly once without `confirm`; the production
+  Web build and console test suite have passed. Remaining browser scenarios
+  and online receipts are pending.
+
+### Formal Release And Live Acceptance (2026-11-17)
+
+- The formal v0.3.11 tag identifies
+  `32ccf453d6a0744fba590b4c11b0027d65c7800b`. The earlier b01d candidate
+  Agent build exited 0, but its Web build exited 1 during npm downloads.
+  Formal artifacts use the shared fleet build from the release commit.
+- CLI and installed global Skill both report the formal release commit.
+  The installed Skill states that an explicit task does not require repeated
+  confirmation; Kubernetes commands no longer use `--confirm`.
+- Independent Gateway readback confirms `gw-test` is v0.3.11, Helm revision
+  27 deployed, Pod UID `d2f792ab-d209-400d-8ed8-39be787bf89a`, Ready true,
+  and imageID
+  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:6db6060f3b84e7814f08baeb72c35c4adf1bcae3da2e9d3c8be1c1b622d52f16`.
+  DoAgent reports 0.2.46.
+- The independent production-build browser review passed direct submission,
+  double-click prevention, failure/403/busy states, retained unknown receipts
+  and the 390px viewport. Evidence:
+  `.local/direct-execution-20261116/browser-handoff-acceptance.md`.
+- Live direct-operation and NetworkPolicy recovery checks use session
+  `direct-helm-v0311-20261117`. Gateway/Web deployment and online browser
+  acceptance remain to be established; do not infer them from Agent rollout.
+- Business `test/loki` remains revision 10 / failed with a recorded Helm
+  deadline error. Platform release success does not establish Loki readiness.
+- Live Kubernetes restart and scale both completed without a confirmation
+  flag. Readback found generation 2 and the new restart annotation; the
+  zero-replica verification Deployment was deleted afterward.
+- The root-directory Helm Chart exposed another real rejection:
+  `cleanWorkspaceRelativePath` rejected `.` even though it denotes the bound
+  session directory. The model repeatedly tried invalid alternative paths;
+  the caller interrupted the turn (exit 130), then independently verified
+  that the test release and NetworkPolicy did not exist. No Helm success
+  is claimed for that interrupted turn.
+- The same root-directory case failed locally before the fix. Removing only
+  the `.` rejection makes both `.` and `./` render successfully with real
+  Helm; related command, native-values and path tests pass. Directory values,
+  traversal and absolute paths remain rejected. This correction is prepared
+  for v0.3.12; installed acceptance must repeat the same root Chart scenario.

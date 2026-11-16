@@ -6,6 +6,12 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [0.3.12] — 2026-11-17
+
+### Fixed
+
+- 受管 Helm 支持 session 工作区根目录的 Chart（`chart="."` 或 `"./"`），避免合法路径被误拒后反复猜测；values 仍须为文件，路径不能逃逸 session
+
 ## [0.3.11] — 2026-11-16
 
 ### Changed

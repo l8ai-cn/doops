@@ -105,12 +105,66 @@ func TestBuildHelmRollbackUsesSupportedHelmFlags(t *testing.T) {
 	}
 }
 
+func TestHelmWorkspaceRootChartRendersWithRealHelm(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, "release")
+	for name, body := range map[string]string{
+		"Chart.yaml":               "apiVersion: v2\nname: root-chart\nversion: 1.0.0\n",
+		"values.yaml":              "message: default\n",
+		"overlay.yaml":             "message: root-chart-accepted\n",
+		"templates/configmap.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: root-chart\ndata:\n  message: {{ .Values.message | quote }}\n",
+	} {
+		path := filepath.Join(workspace, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, chart := range []string{".", "./"} {
+		t.Run(chart, func(t *testing.T) {
+			params := testWorkspaceHelmParams()
+			params.Chart = chart
+			params.ValueFiles = []string{"overlay.yaml"}
+			command, err := buildHelmCommand(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if command.cwd != workspace || command.args[2] != "." {
+				t.Fatalf("root chart resolved incorrectly: cwd=%q args=%q", command.cwd, command.args)
+			}
+			args := []string{"template", command.release, command.args[2]}
+			for index, arg := range command.args {
+				if arg == "--values" {
+					args = append(args, arg, command.args[index+1])
+				}
+			}
+			render := exec.CommandContext(t.Context(), "helm", args...)
+			render.Dir = command.cwd
+			manifest, err := render.CombinedOutput()
+			if err != nil || !strings.Contains(string(manifest), `message: "root-chart-accepted"`) {
+				t.Fatalf("root chart rendering failed: %v: %s", err, manifest)
+			}
+		})
+	}
+}
+
 func TestBuildHelmCommandRejectsOnlyTransportAndCredentialViolations(t *testing.T) {
 	tests := []struct {
 		name      string
 		mutate    func(api.HelmParams, string) api.HelmParams
 		wantError string
 	}{
+		{
+			name: "values cannot be workspace directory",
+			mutate: func(params api.HelmParams, _ string) api.HelmParams {
+				params.ValueFiles = []string{"."}
+				return params
+			},
+			wantError: "must be a regular file",
+		},
 		{
 			name: "absolute chart path",
 			mutate: func(params api.HelmParams, root string) api.HelmParams {

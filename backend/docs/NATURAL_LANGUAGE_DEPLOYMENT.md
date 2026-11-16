@@ -186,7 +186,8 @@ staging，实际 Helm 使用该已校验文件。允许任务指定的 `value_fi
 凭据选择与重定向边界见 [受管凭据](CREDENTIAL_RESOURCES.md#helm-repository)。
 
 需要使用已绑定 session workspace 中的 Helm 资产时，任务必须显式传
-`asset_source=workspace`。此模式接受任意 session 相对 Chart 目录，必须包含 regular
+`asset_source=workspace`。此模式接受任意 session 相对 Chart 目录；Chart 位于 session
+根目录时使用 `chart="."`，无需搬入子目录。目录必须包含 regular
 `Chart.yaml`；`value_files` 可为零或多个任意 session 相对 regular 文件，不要求在 Chart
 目录内，也不限定文件名。绝对路径、`..` 和 symlink escape 在 mutation 前拒绝。
 与 remote 一样允许非敏感 Chart-specific `set_strings`。Helm 在精确 `/root/ws/<session>`

@@ -393,7 +393,7 @@ func cleanWorkspaceRelativePath(value string) (string, error) {
 		}
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(value))
-	if cleaned == "." || filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+	if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path must stay inside the session workspace")
 	}
 	return filepath.ToSlash(cleaned), nil
