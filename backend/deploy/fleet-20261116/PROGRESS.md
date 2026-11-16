@@ -20,21 +20,23 @@ it is never evidence of a remote Agent version. Use `targets` and audited
 
 ## Verified Baseline
 
-Fresh read: 2026-11-16 21:52 China time, session fleet-inventory-20261116.
+Fresh read: 2026-11-16 22:50 China time, session fleet-inventory-20261116.
+11 targets are online; two configured routes remain unavailable. No target has
+yet been verified on the new v0.3.11 candidate.
 
 | Target | Current Agent commit | State / next action |
 |---|---|---|
 | gw-test | 0d389204508ce989bf6bca7e06438edfbb425f0a | v0.3.9 deployed; retain revision 26, recheck image and smoke |
-| gw-edu-coder | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; independent first-upgrade Job required |
-| gw-hdu-235 | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; independent first-upgrade Job required |
+| gw-edu-coder | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; kz-ops/doops-agent; mounted admin kubeconfig; BuildKit available |
+| gw-hdu-235 | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; ai/doops-agent, revision 5; mounted kubeconfig |
 | gw-zy | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; independent first-upgrade Job required |
-| gw-zyj | 081f24ab4e92535bce87c23889e242a1ee5f0886 | Online; independent first-upgrade Job required; other sessions active |
+| gw-zyj | 081f24ab4e92535bce87c23889e242a1ee5f0886 | Online; ai/doops-agent, revision 49; mounted admin kubeconfig; other sessions active |
 | oilan | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; first-upgrade Job and existing SA permissions review |
-| unicom-1 | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; verify actual workload identity before Job |
-| unicom-k8s | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; independent first-upgrade Job required |
-| gw-scu | 3cba4acdfa904bd8d5673eda4b1097125eed2585 | Online; independent first-upgrade Job required |
+| unicom-1 | 8683d67174e19a1750e9b19de99a0816cdb8ea79 | Online; hostname k8s-master; distinct from the doops-system/doops-agent Pod |
+| unicom-k8s | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online; doops-system/doops-agent, ServiceAccount doops-unicom-agent |
+| gw-scu | 3cba4acdfa904bd8d5673eda4b1097125eed2585 | Online; doops-system/doops-agent-scu, release doops-scu, ServiceAccount doops-agent |
 | gw-silicon | 76abae08a36d920c0058486d2d8ab86880c4c121 | Online standalone Docker; use independent socket controller |
-| gw-keyi | 57bd0ec05b5661dce4b384a823b51780c8f0eca5 | Online old protocol; discover runtime and controller access |
+| gw-keyi | 57bd0ec05b5661dce4b384a823b51780c8f0eca5 | Online; systemd doops-agent.service, /usr/local/bin/doops-agent.bin |
 | gw-114-k8s | Unavailable | Not visible to current Gateway login; check inventory/grant before calling offline |
 | gw-jm | Unavailable | Not visible to current Gateway login; check inventory/grant before calling offline |
 
@@ -52,16 +54,31 @@ Fresh read: 2026-11-16 21:52 China time, session fleet-inventory-20261116.
   It used uncommitted build-input edits and an old base after a failed base check.
   Audit and rebuild the committed inputs before expanding rollout; a label alone
   is insufficient provenance.
-- The member branch contains concurrent confirmation-removal work. Preserve it;
-  do not mix a moving worktree into this fleet deployment artifact.
+- Confirmation-removal backend changes were pushed at
+  55df739bb9493554086f1fa28aef85648ec19e42; both GitHub CI runs passed.
+  Console changes were pushed at 4144db60eaed9d4b059a2a60ce9e1235617f56f7;
+  its Contract tests and Secret scan passed, Go tests are still running.
+  Consolidate these changes into v0.3.11 after the final merge; v0.3.10 has
+  no published tag or assets. Build only the final immutable committed snapshot.
+- The one-shot first-upgrade controller now has render/run/accept stages,
+  immutable Secret backups, rollback, Gateway acceptance and redacted step
+  diagnostics. Fourteen local transaction cases passed. Real-cluster pilot
+  verification is still required; it currently supports mounted independent
+  kubeconfig identities only.
 
 ## Current Steps
 
-1. Audit exact source and prepare pinned, repeatable build inputs; compare checksums.
-2. Review reuse of the released independent controller, including rollback and
-   Gateway acceptance. Pilot one old target before wider rollout.
-3. Roll target by target, retain per-target terminal receipts, verify imageID,
-   commit, health and user path, then reconcile GitOps and remote Git visibility.
+1. Commit the reviewed controller and progress, push the member branch, verify
+   GitHub CI and merge PR 22. Record remote-visible full commit identities.
+2. Publish matching v0.3.11 CLI/Gateway/Skill assets and build the committed
+   base-light/Agent/Web inputs on the authorized builder. Verify checksums,
+   runtime probes and registry digests; install the matched CLI and Skill.
+3. Pilot gw-test and one old mounted-kubeconfig target. Require terminal Job
+   receipt, Ready, exact imageID/commit, reconnect and execution/model smoke.
+4. Continue remaining Kubernetes and host runtimes with their independent
+   controllers. Read back unknown outcomes before any further mutation.
+5. Reconcile both Gateway/console environments, browser user paths and all 13
+   target results. Unavailable targets remain explicitly incomplete.
 
 ## Bounds And Recovery
 
