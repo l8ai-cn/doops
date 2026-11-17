@@ -65,6 +65,7 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 协议能力 | `doops -session <s> capabilities --target <t> --require structuredSSH\|executionLifecycle`（调用前暴露能力缺失） |
 | 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version` 参数） |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
+| 节点资源 | `doops -session <s> info --target <t>`（CPU/内存/磁盘） |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
@@ -72,18 +73,18 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |
 | DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|discover [--database <name>] --request '<req>'` |
 | DoSql 原样查询 | `doops -session <s> sql --target <t> --mode query (--sql '<sql>'\|--file <f>) [--credential <name>]` |
-| DoSql 原样变更 | `doops -session <s> sql --target <t> --mode apply (--sql '<sql>'\|--file <f>) [--credential <name>] [--verify '<select>'] [--dry-run]` |
+| DoSql 原样变更 | `doops -session <s> sql --target <t> --mode apply (--sql '<sql>'\|--file <f>) [--credential <name>] [--verify '<select>'] [--dry-run 执行后回滚]` |
 | DoSql 跨库复制表 | `doops -session <s> sql --target <t> --mode apply --copy-from <源库> --database <目标库> --tables a,b [--dry-run]` |
-| K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [-n <ns>\|-A] [-l <sel>] [-o jsonpath=...]` |
+| K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [-n <ns>\|-A] [-l <sel>] [-o jsonpath=...]`（Secret 与 ServiceAccount 不开放读取） |
 | Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
-| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ...` |
+| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|uncordon\|delete pod ...` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
 | 工作区推送 / 下载 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
 | OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...` |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
-| 用户与授权 | `doops -session <s> admin user create\|list --target <t> ...`；`doops -session <s> admin grant list\|add\|delete --target <t> ...` |
+| 用户与授权 | `doops -session <s> admin user create\|list\|password\|disable --target <t> ...`；`doops -session <s> admin grant list\|add\|delete --target <t> ...` |
 | 网站代理路由 | `doops -session <s> admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（普通 ask 不提供） |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览参数，不校验活体 release、挂载或权限）；`--rollback` 恢复上一已验证 revision。旧 Agent 无 `upgradeAudit v1` 时失败（`upgrade_audit_unsupported`），首升须经 Gateway exec 提交独立 Job，见 `docs/BUILD_DEPLOY_SOP.md` |

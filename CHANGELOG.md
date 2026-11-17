@@ -11,7 +11,8 @@
 ### Changed
 
 - Operator Skill 补充 `capabilities` 与 `version` 命令入口，并写明 `upgrade` 在缺少 `upgradeAudit v1` 的旧 Agent 上必然失败、`--dry-run` 只预览参数而不校验活体 release、挂载或权限
-- Operator Skill 按渐进引导收敛：红线不再重述命令表中的操作细节，同一主题只留一处入口与文档指针，体积从 11938 降到 10030 字节
+- Operator Skill 按渐进引导收敛：红线不再重述命令表中的操作细节，同一主题只留一处入口与文档指针
+- Operator Skill 命令表按实际 CLI 校正：补 `uncordon`、`admin user password|disable`、`info`，说明 `k8s` 不开放读取 Secret/ServiceAccount，并写明 `sql --dry-run` 会先执行再回滚
 
 ## [0.3.14] — 2026-11-18
 
