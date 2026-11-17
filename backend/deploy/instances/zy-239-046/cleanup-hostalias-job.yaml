@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doops-zy-239-hostalias-cleanup
+  namespace: default
+  labels:
+    app.kubernetes.io/name: doops-config-cleanup
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: cluster-node0014.172.16.50.239
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: aiedulab-regcred
+      containers:
+        - name: cleanup
+          image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:9b7435cb01c71bd7290b9f7c3b604455e0b28dac2f6a28d5433ddf0aaad5bd11
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/cleanup/cleanup.py"]
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: script
+              mountPath: /cleanup
+              readOnly: true
+            - name: root-kube
+              mountPath: /root/.kube
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: doops-zy-239-hostalias-assets
+        - name: root-kube
+          hostPath:
+            path: /root/.kube
+            type: Directory

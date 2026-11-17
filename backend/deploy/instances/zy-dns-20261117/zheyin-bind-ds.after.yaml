@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: zheyin-bind
+  namespace: dns-system
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: zheyin-bind
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: '2026-11-12T17:30:38+08:00'
+      creationTimestamp: null
+      labels:
+        app: zheyin-bind
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - docker11
+                - docker12
+      containers:
+      - args:
+        - -g
+        - -c
+        - /etc/bind/named.conf
+        image: 172.16.99.88:8443/k8s-deploy/ubuntu-bind9:latest-arm64
+        imagePullPolicy: IfNotPresent
+        name: bind9
+        ports:
+        - containerPort: 53
+          hostPort: 53
+          name: dns-udp
+          protocol: UDP
+        - containerPort: 53
+          hostPort: 53
+          name: dns-tcp
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          tcpSocket:
+            port: 53
+          timeoutSeconds: 1
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/bind/named.conf
+          name: config
+          readOnly: true
+          subPath: named.conf
+        - mountPath: /etc/bind/zones/db.zjcm.edu.cn.default
+          name: config
+          readOnly: true
+          subPath: db.zjcm.edu.cn.default
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: zheyin-bind-config
+        name: config
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate

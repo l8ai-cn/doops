@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doops-edu-046-cutover-r2
+  namespace: kz-ops
+  labels:
+    app.kubernetes.io/name: doops-self-upgrade
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2400
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: 192.168.0.24
+      automountServiceAccountToken: false
+      hostNetwork: false
+      containers:
+        - name: controller
+          image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:9b7435cb01c71bd7290b9f7c3b604455e0b28dac2f6a28d5433ddf0aaad5bd11
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/release/cutover.py"]
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: release
+              mountPath: /release
+              readOnly: true
+            - name: kube-admin
+              mountPath: /root/.kube/config
+              readOnly: true
+      volumes:
+        - name: release
+          configMap:
+            name: doops-edu-046-assets-r2
+        - name: kube-admin
+          hostPath:
+            path: /etc/kubernetes/admin.conf
+            type: File

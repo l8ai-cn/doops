@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doops-hdu-046-cutover
+  namespace: ai
+  labels:
+    app.kubernetes.io/name: doops-self-upgrade
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2400
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: 1e07451bc39b
+      automountServiceAccountToken: false
+      hostNetwork: false
+      containers:
+        - name: controller
+          image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:9b7435cb01c71bd7290b9f7c3b604455e0b28dac2f6a28d5433ddf0aaad5bd11
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/release/cutover.py"]
+          env:
+            - name: KUBECONFIG
+              value: /root/.kube/config
+          volumeMounts:
+            - name: release
+              mountPath: /release
+              readOnly: true
+            - name: kubeconfig
+              mountPath: /root/.kube/config
+              readOnly: true
+      volumes:
+        - name: release
+          configMap:
+            name: doops-hdu-046-assets
+        - name: kubeconfig
+          hostPath:
+            path: /etc/rancher/k3s/k3s.yaml
+            type: File

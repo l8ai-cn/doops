@@ -1,0 +1,189 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zheyin-bind-config
+  namespace: dns-system
+data:
+  db.zjcm.edu.cn.default: |
+    $TTL 3600
+    @        IN SOA ns1.zjcm.edu.cn. admin.zjcm.edu.cn. (
+             2026111202 300 120 1209600 300 )
+    @        IN NS ns1.zjcm.edu.cn.
+    @        IN NS ns2.zjcm.edu.cn.
+    ns1      IN A 172.16.55.3
+    ns2      IN A 172.16.55.4
+
+    *                     IN A     172.16.99.247
+    apipoa                IN A     172.16.50.210
+    assess                IN A     172.16.99.180
+    attendance            IN A     172.16.88.245
+    authcenter            IN A     172.16.70.31
+    bd                    IN A     172.16.60.63
+    canteen               IN A     172.16.55.1
+    canteen1              IN A     172.16.55.1
+    ceec                  IN A     47.114.1.135
+    cwgzh                 IN A     172.16.99.247
+    cxydtsg               IN A     172.16.99.247
+    dacx                  IN A     172.16.99.101
+    dangan                IN A     172.16.70.39
+    data                  IN A     172.16.50.196
+    datacenter            IN A     172.16.50.170
+    datagovernance        IN A     172.16.60.248
+    ddm                   IN A     172.16.99.244
+    _dmarc                IN TXT   "v=DMARC1; p=none; fo=1; ruf=mailto:dmarc@qiye.163.com; rua=mailto:dmarc_report@qiye.163.com"
+    dns                   IN A     172.16.55.3
+    _dnsauth              IN TXT   "k176d3h718ld51txv9kkp2q4t1nxtfm7"
+    _dnsauth              IN TXT   "202505260000000vktsznrvnoox5c3m5s6uxo7l8f1v2e5fstzc75ai8mj9mawzn"
+    dsc                   IN A     172.16.70.123
+    ehall                 IN A     172.16.99.141
+    ermo                  IN A     172.16.99.247
+    fc                    IN A     172.16.99.247
+    fza                   IN A     172.16.50.10
+    fzh                   IN A     172.16.99.247
+    gbgl                  IN A     172.16.99.242
+    grid                  IN A     172.16.99.110
+    @                     IN MX    5 hzmx01.mxmail.netease.com.
+    @                     IN MX    10 hzmx02.mxmail.netease.com.
+    itc                   IN A     172.16.50.192
+    jpkc                  IN A     172.16.60.201
+    jsjy                  IN A     47.114.1.135
+    jw8                   IN CNAME xxl.free.idcfengye.com.
+    kljs                  IN A     172.16.99.117
+    kp                    IN A     172.16.99.219
+    ky                    IN A     172.16.70.16
+    libwx                 IN A     172.16.80.69
+    mail                  IN CNAME mailhz.qiye.163.com.
+    midata                IN A     172.16.99.162
+    mobilehall            IN A     172.16.70.121
+    music                 IN A     172.16.99.247
+    musicres              IN A     172.16.99.195
+    nginx131              IN A     172.16.70.131
+    nginx132              IN A     172.16.70.132
+    ns                    IN A     172.16.55.100
+    oa                    IN A     172.16.99.152
+    oawps                 IN A     172.16.99.247
+    pay                   IN A     172.16.99.181
+    rczp                  IN A     172.16.70.13
+    renshi                IN A     172.16.99.116
+    rl                    IN A     172.16.99.146
+    rs                    IN A     172.16.70.13
+    @                     IN TXT   "v=spf1 include:spf.163.com -all"
+    @                     IN A     47.114.1.135
+    sjztys                IN A     172.16.50.244
+    skl                   IN A     172.16.99.143
+    teleport              IN A     172.16.93.13
+    v                     IN CNAME v.zjcm.edu.cn.w.kunlunca.com.
+    visit                 IN A     172.16.99.247
+    vxesxi01              IN A     172.16.99.11
+    vxesxi02              IN A     172.16.99.12
+    vxesxi03              IN A     172.16.99.13
+    vxesxi04              IN A     172.16.99.14
+    vxesxi05              IN A     172.16.99.15
+    vxesxi06              IN A     172.16.99.16
+    VXManager             IN A     172.16.99.9
+    VXVCenter             IN A     172.16.99.10
+    water                 IN A     172.16.60.70
+    webvpn                IN A     172.16.99.99
+    www                   IN A     47.114.1.135
+    www                   IN AAAA  2408:4005:2:1200:13be:8309:b979:bde8
+    www1                  IN A     114.55.91.187
+    www2                  IN A     172.16.60.113
+    www3                  IN A     47.114.58.206
+    www.xycg.zjcm.edu.cn. IN CNAME 11565aat.mh.chaoxing.com.
+    xf                    IN A     172.16.60.73
+    xgb                   IN A     47.114.1.135
+    xinli                 IN A     172.16.70.102
+    xjx                   IN A     47.114.1.135
+    xxmh                  IN A     172.16.70.4
+    xzzy                  IN A     172.16.99.124
+    yjs                   IN A     172.16.70.93
+    yjscs                 IN A     172.16.60.235
+    yjsjy                 IN A     172.16.70.93
+    ykt                   IN A     172.16.70.80
+    yktmh                 IN A     172.16.60.34
+    youjian               IN A     172.16.50.243
+    yqfk                  IN A     172.16.99.206
+    yx                    IN A     172.16.70.100
+    yysyzx                IN A     172.16.50.192
+    zaxy                  IN A     172.16.60.80
+    zc                    IN A     172.16.70.88
+    zcy                   IN A     172.16.70.112
+    zhdj                  IN A     172.16.99.113
+    zjyd                  IN A     172.16.60.71
+    zp                    IN A     172.16.99.114
+    zq                    IN A     172.16.70.6
+    zs                    IN A     172.16.99.247
+    zycz                  IN A     172.16.99.247
+    zyyd                  IN A     172.16.60.70
+    zyzq                  IN A     172.16.50.192
+
+    ; BEGIN generated records from records/zjcm-address-groups.json
+    agents        IN A     172.16.99.80
+    agents        IN A     172.16.99.81
+    amp           IN A     172.16.99.80
+    amp           IN A     172.16.99.81
+    git           IN A     172.16.99.80
+    git           IN A     172.16.99.81
+    oamh-message  IN A     172.16.99.80
+    oamh-message  IN A     172.16.99.81
+    oamh-portal   IN A     172.16.99.80
+    oamh-portal   IN A     172.16.99.81
+    zhengfang-ops IN A     172.16.99.80
+    zhengfang-ops IN A     172.16.99.81
+    ; END generated records from records/zjcm-address-groups.json
+  named.conf: |
+    acl "internal_clients" {
+        127.0.0.1;
+        10.0.0.0/8;
+        172.16.0.0/12;
+        192.168.0.0/16;
+    };
+
+    options {
+        directory "/var/cache/bind";
+        listen-on port 53 { any; };
+        listen-on-v6 { none; };
+
+        recursion yes;
+        allow-recursion { internal_clients; };
+        allow-query-cache { internal_clients; };
+        forward only;
+        forwarders {
+            223.5.5.5;
+            119.29.29.29;
+        };
+        allow-query { any; };
+        allow-transfer { none; };
+
+        auth-nxdomain no;
+        dnssec-validation no;
+        notify no;
+    };
+
+    logging {
+        channel default_log {
+            stderr;
+            severity info;
+            print-time yes;
+            print-category yes;
+            print-severity yes;
+        };
+        category default { default_log; };
+        category queries { default_log; };
+    };
+
+    view "default" {
+        match-clients { any; };
+        recursion yes;
+        allow-recursion { internal_clients; };
+        allow-query-cache { internal_clients; };
+        allow-query { any; };
+
+
+        zone "zjcm.edu.cn" IN {
+            type master;
+            file "/etc/bind/zones/db.zjcm.edu.cn.default";
+            allow-transfer { none; };
+            notify no;
+        };
+    };

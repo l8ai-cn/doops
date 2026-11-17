@@ -1,0 +1,6 @@
+current hostAliases: [{"hostnames": ["doops.aiedulab.cn"], "ip": "203.0.113.10"}]
+Traceback (most recent call last):
+  File "/cleanup/cleanup.py", line 60, in <module>
+    assert len(pods) == 1, f"expected 1 pod, got {len(pods)}"
+           ^^^^^^^^^^^^^^
+AssertionError: expected 1 pod, got 2
