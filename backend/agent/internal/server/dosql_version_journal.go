@@ -92,11 +92,105 @@ func doSQLVersionJournalPath(target doSQLTarget) (string, error) {
 	return path, nil
 }
 
+// encoding/json renders an invalid UTF-8 byte as the \ufffd escape, while a
+// valid U+FFFD rune is rendered as raw UTF-8. Hashing a struct therefore used to
+// produce different bytes than hashing the same struct after a read-back. All
+// string fields are normalized before hashing and before writing, so the bytes
+// on disk and the bytes covered by the hash are always identical.
+func normalizeDoSQLJournalString(value string) string {
+	return strings.ToValidUTF8(value, "\uFFFD")
+}
+
+func normalizeDoSQLVersionEntry(entry doSQLVersionEntry) doSQLVersionEntry {
+	entry.Event = normalizeDoSQLJournalString(entry.Event)
+	entry.OperationID = normalizeDoSQLJournalString(entry.OperationID)
+	entry.Credential = normalizeDoSQLJournalString(entry.Credential)
+	entry.Fingerprint = normalizeDoSQLJournalString(entry.Fingerprint)
+	entry.Status = normalizeDoSQLJournalString(entry.Status)
+	entry.Error = normalizeDoSQLJournalString(entry.Error)
+	entry.RecordedAt = normalizeDoSQLJournalString(entry.RecordedAt)
+	entry.PrevHash = normalizeDoSQLJournalString(entry.PrevHash)
+	entry.Hash = normalizeDoSQLJournalString(entry.Hash)
+	if entry.Statements != nil {
+		statements := make([]string, len(entry.Statements))
+		for index, statement := range entry.Statements {
+			statements[index] = normalizeDoSQLJournalString(statement)
+		}
+		entry.Statements = statements
+	}
+	return entry
+}
+
 func doSQLEntryHash(entry doSQLVersionEntry) string {
+	entry = normalizeDoSQLVersionEntry(entry)
 	entry.Hash = ""
 	encoded, _ := json.Marshal(entry)
 	sum := sha256.Sum256(append([]byte(entry.PrevHash+"\n"), encoded...))
 	return hex.EncodeToString(sum[:])
+}
+
+// doSQLEntryHashFromRaw computes the chain hash from the bytes that are
+// actually on disk, with only the top-level "hash" value blanked out. This is
+// the only way to verify entries written before normalization was introduced:
+// their hash covers the lossy \ufffd escape, while unmarshalling turns that
+// escape into a valid rune that would serialize differently.
+func doSQLEntryHashFromRaw(raw []byte, prevHash string) (string, bool) {
+	blanked, ok := blankDoSQLJournalHash(raw)
+	if !ok {
+		return "", false
+	}
+	sum := sha256.Sum256(append([]byte(prevHash+"\n"), blanked...))
+	return hex.EncodeToString(sum[:]), true
+}
+
+// blankDoSQLJournalHash replaces the value of the top-level "hash" member with
+// an empty string without touching any other byte, including whitespace and
+// field order. Those bytes are part of the original hash input.
+func blankDoSQLJournalHash(raw []byte) ([]byte, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, false
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return nil, false
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, false
+		}
+		valueStart := decoder.InputOffset()
+		for valueStart < int64(len(raw)) {
+			switch raw[valueStart] {
+			case ':', ' ', '\t', '\r', '\n':
+				valueStart++
+				continue
+			}
+			break
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		valueEnd := decoder.InputOffset()
+		if key != "hash" {
+			continue
+		}
+		if valueStart > valueEnd || valueEnd > int64(len(raw)) {
+			return nil, false
+		}
+		blanked := make([]byte, 0, len(raw)-int(valueEnd-valueStart)+2)
+		blanked = append(blanked, raw[:valueStart]...)
+		blanked = append(blanked, '"', '"')
+		blanked = append(blanked, raw[valueEnd:]...)
+		return blanked, true
+	}
+	return nil, false
 }
 
 // withDoSQLJournal holds an exclusive file lock for the whole read-verify-append
@@ -135,7 +229,12 @@ func readDoSQLJournal(file *os.File) ([]doSQLVersionEntry, error) {
 			continue
 		}
 		var entry doSQLVersionEntry
-		if err := json.Unmarshal(line, &entry); err != nil || entry.PrevHash != prev || entry.Hash != doSQLEntryHash(entry) {
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return nil, fmt.Errorf("dosql_version_journal_corrupt: entry %d is not valid JSON", len(entries)+1)
+		}
+		// A begin without an end only leaves the version unfinished; it does
+		// not break the chain. Only a real hash-chain break is corruption.
+		if entry.PrevHash != prev || !doSQLJournalHashMatches(line, entry) {
 			return nil, fmt.Errorf("dosql_version_journal_corrupt: entry %d breaks the hash chain", len(entries)+1)
 		}
 		prev = entry.Hash
@@ -147,7 +246,21 @@ func readDoSQLJournal(file *os.File) ([]doSQLVersionEntry, error) {
 	return entries, nil
 }
 
+// doSQLJournalHashMatches trusts the original line bytes, so historical entries
+// remain verifiable exactly as written. Re-serializing is only a fallback for a
+// line whose hash value cannot be located in the raw bytes; accepting a
+// normalized re-serialization whenever the raw bytes disagree would let an
+// encoding-only edit pass the chain check.
+func doSQLJournalHashMatches(raw []byte, entry doSQLVersionEntry) bool {
+	hash, ok := doSQLEntryHashFromRaw(raw, entry.PrevHash)
+	if !ok {
+		return entry.Hash == doSQLEntryHash(entry)
+	}
+	return hash == entry.Hash
+}
+
 func appendDoSQLJournal(file *os.File, entries []doSQLVersionEntry, entry doSQLVersionEntry) error {
+	entry = normalizeDoSQLVersionEntry(entry)
 	if len(entries) > 0 {
 		entry.PrevHash = entries[len(entries)-1].Hash
 	}

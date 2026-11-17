@@ -1,6 +1,10 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -66,6 +70,121 @@ func TestDoSQLVersionJournalReportsABeginWithoutAnEndAsUnfinished(t *testing.T) 
 	next, err := beginDoSQLVersion(path, "dbop_b", "cred", "sha256:bb", []string{"SELECT 1"})
 	if err != nil || next != one+1 {
 		t.Fatalf("version after an unfinished one = %d, %v", next, err)
+	}
+}
+
+func TestDoSQLVersionJournalNormalizesInvalidUTF8BeforeHashing(t *testing.T) {
+	path := newDoSQLJournalPath(t)
+	invalidUTF8 := string([]byte{0xff, 0xfe})
+	statement := "SELECT '" + invalidUTF8 + "'"
+	one, err := beginDoSQLVersion(path, "dbop_"+invalidUTF8, "cred", "sha256:aa", []string{statement})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("\uFFFD")) {
+		t.Fatalf("new entry was not stored as valid UTF-8: %q", raw)
+	}
+	if bytes.Contains(raw, []byte(invalidUTF8)) {
+		t.Fatalf("new entry kept invalid UTF-8 bytes on disk: %q", raw)
+	}
+	// The write side must hash the same bytes that the read side verifies.
+	var written doSQLVersionEntry
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.Hash != doSQLEntryHash(written) {
+		t.Fatal("stored entry does not match its hash after a parse and reserialize")
+	}
+	if _, err := listDoSQLVersions(path); err != nil {
+		t.Fatalf("journal with invalid UTF-8 input did not verify: %v", err)
+	}
+	if err := endDoSQLVersion(path, one, "dbop_"+invalidUTF8, "cred", "sha256:aa",
+		doSQLDirectResult{Status: "verified"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	two, err := beginDoSQLVersion(path, "dbop_next", "cred", "sha256:bb", []string{"SELECT 1"})
+	if err != nil || two != one+1 {
+		t.Fatalf("version after invalid UTF-8 entry = %d, %v", two, err)
+	}
+	summaries, err := listDoSQLVersions(path)
+	if err != nil {
+		t.Fatalf("journal did not verify after appending: %v", err)
+	}
+	if len(summaries) != 2 || summaries[0].Status != "verified" {
+		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+}
+
+// legacyDoSQLEntryHash reproduces the old writer exactly: it hashes the raw
+// json.Marshal output, which escapes invalid UTF-8 bytes as \ufffd.
+func legacyDoSQLEntryHash(entry doSQLVersionEntry) string {
+	entry.Hash = ""
+	encoded, _ := json.Marshal(entry)
+	sum := sha256.Sum256(append([]byte(entry.PrevHash+"\n"), encoded...))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestDoSQLVersionJournalVerifiesHistoricalEscapedReplacementEntry(t *testing.T) {
+	path := newDoSQLJournalPath(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	entry := doSQLVersionEntry{
+		Version: 1, Event: doSQLJournalBegin, OperationID: "dbop_legacy", Credential: "cred",
+		Fingerprint: "sha256:aa", Statements: []string{"SELECT '" + string([]byte{0xff, 0xfe}) + "'"},
+		RecordedAt: "2026-01-01T00:00:00Z",
+	}
+	entry.Hash = legacyDoSQLEntryHash(entry)
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`\ufffd`)) {
+		t.Fatalf("test entry is not in the historical escaped form: %s", encoded)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := listDoSQLVersions(path)
+	if err != nil {
+		t.Fatalf("historical entry did not verify from its original bytes: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].Status != "unfinished" {
+		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+	// The historical entry is untouched and a new entry must still link to it.
+	next, err := beginDoSQLVersion(path, "dbop_next", "cred", "sha256:bb", []string{"SELECT 2"})
+	if err != nil || next != 2 {
+		t.Fatalf("version after historical entry = %d, %v", next, err)
+	}
+	if _, err := listDoSQLVersions(path); err != nil {
+		t.Fatalf("chain broke after appending to a historical journal: %v", err)
+	}
+}
+
+func TestDoSQLVersionJournalTreatsBeginWithoutEndAsUnfinishedNotCorrupt(t *testing.T) {
+	path := newDoSQLJournalPath(t)
+	one, err := beginDoSQLVersion(path, "dbop_a", "cred", "sha256:aa", []string{"DROP TABLE t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := listDoSQLVersions(path)
+	if err != nil {
+		t.Fatalf("an unfinished begin was reported as corruption: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].Version != one || summaries[0].Status != "unfinished" {
+		t.Fatalf("unexpected summaries: %#v", summaries)
+	}
+	next, err := beginDoSQLVersion(path, "dbop_b", "cred", "sha256:bb", []string{"SELECT 1"})
+	if err != nil || next != one+1 {
+		t.Fatalf("version after unfinished begin = %d, %v", next, err)
+	}
+	if _, err := listDoSQLVersions(path); err != nil {
+		t.Fatalf("second apply on an unfinished journal was blocked: %v", err)
 	}
 }
 
