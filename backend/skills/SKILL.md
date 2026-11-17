@@ -24,8 +24,8 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | Web 控制台 | `docs/DOOPS_WEBUI.md` |
 | DoSql / DoWeb 等统一工作台 skill | `docs/UNIFIED_OPERATIONS_WORKBENCH.md` |
 
-权威源码是仓库 `backend/skills/SKILL.md`；`.agent/skills/doops/` 是安装副本，只能由
-`scripts/install.sh` 从 Release CLI 内嵌 commit 同步，不要直接改。`docs/` 源码在 `backend/docs/`。
+权威源是 `backend/skills/SKILL.md`；`.agent/skills/doops/` 为安装副本，只由 `scripts/install.sh`
+从 Release CLI 内嵌 commit 同步，勿直改。`docs/` 源码在 `backend/docs/`。
 
 ## 红线
 
@@ -46,9 +46,9 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
   已明确的目标和任务不再索要确认，不按 Chart 资源种类或工具调用次数重复授权。
 - Helm 发布可用 `ask --apply`/`mcp_doops_helm`，也可用 `doops exec` 执行明确授权的
   原生命令。参数和终态契约见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
-- 发布出错后主动读取回执和目标状态，在已有授权内定位并修正可修复问题，持续反馈
-  原因、修正和验证进度；不将可自行取得的参数、配置或检查交给用户重复操作。
-  缺失终态先只读核对，保留原始结果；具体恢复边界见自然语言发布文档。
+- 发布出错后主动回读回执与目标状态，在既有授权内定位并修正；不把可自行取得的参数、
+  配置或检查交给用户重复操作。缺失终态先只读核对并保留原始结果，恢复边界见
+  `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - 运维类变更（重启、扩缩、cordon、删 Pod）用 `doops k8s` 的对应子命令直接执行；文本不算证据。
 - 进入 Kubernetes Agent 所在节点只走 `doops exec` 里的 `nsenter`，并且该 Deployment 的
   `hostAccess.enabled` 必须为 `true`。这是 Gateway 的普通 `exec`：目标 grant 决定能否执行，
@@ -58,9 +58,8 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 - 小文本用 `read/write`，目录和大文件用 `push/pull`；不用 base64、tar 或分片替代。
 - `pull` 用新目录；已有 Git 目标会被 `reset --hard`，仅复用本任务无本地改动的下载目录，不能用业务仓库。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
-- DoOps 自身镜像构建、Agent 独立控制器升级和 Gateway 宿主机发布统一见
-  `docs/BUILD_DEPLOY_SOP.md`。这些维护要求不作为普通业务 Helm 发布的准入条件；
-  Agent 不能从自身进程替换承载它的 workload。
+- DoOps 镜像构建、Agent 独立控制器升级、Gateway 宿主机发布见 `docs/BUILD_DEPLOY_SOP.md`；
+  不作为普通业务 Helm 发布准入条件。Agent 不能从自身进程替换承载它的 workload。
 - 签发 token、建用户会输出秘密；按使用指南 “Gateway Admin Tokens” 存入 `0600` 私密文件，
   不读回对话。`--save-as` 不隐藏输出；无私密交付位置不签发，不 SSH 改 Gateway DB。
 
@@ -69,6 +68,8 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 需求 | 命令 |
 | :--- | :--- |
 | 路由 / 在线 / 准入 | `doops -session <s> list`（本地）；`doops -session <s> sync --target <t>`（补路由）；`doops -session <s> targets --target <t> [--admission]` |
+| 协议能力 | `doops -session <s> capabilities --target <t> --require structuredSSH\|executionLifecycle`（调用前暴露能力缺失） |
+| 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version` 参数） |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`；Gateway 按 target grant 授权并审计） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
@@ -91,7 +92,7 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 用户与授权 | `doops -session <s> admin user create\|list --target <t> ...`；`doops -session <s> admin grant list\|add\|delete --target <t> ...` |
 | 网站代理路由 | `doops -session <s> admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（私密签发见使用指南；普通 ask 不提供） |
-| Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`doops -session <s> upgrade --target <t> --rollback` |
+| Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览参数，不校验活体 release、挂载或权限）；`--rollback` 恢复上一已验证 revision。旧 Agent 无 `upgradeAudit v1` 时失败（`upgrade_audit_unsupported`），首升须经 Gateway exec 提交独立 Job，见 `docs/BUILD_DEPLOY_SOP.md` |
 | CI 非交互登录 | `printf '%s' "$TOKEN" \| doops -session <s> login --gateway <u> --token-stdin` |
 | 首次登录 | `doops -session <s> login --gateway <url>`（自动发现target） |
 
