@@ -223,7 +223,7 @@ Changes are not a node command. The earlier `execute` command, which required a
 signed `dosql.operation-approval.v1` artifact that nothing issued, was removed.
 Mutations run only through the Agent's direct `--sql/--file` path with optional
 read-only verification and a per-database version journal. Rollback-capable
-batches execute with verification in one transaction. MySQL/Oracle DDL commits
+batches execute with verification in one transaction. MySQL DDL commits
 implicitly: DDL dry-run is rejected with `dosql_dry_run_ddl_unsupported`, and
 mixing DDL and DML is rejected with `dosql_mixed_ddl_dml_unsupported`. Execute
 authorized DDL separately without `--dry-run`, inspect `implicit_commits` and

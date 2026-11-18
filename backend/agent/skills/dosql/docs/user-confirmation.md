@@ -67,7 +67,7 @@ authorization unit) and the target must carry a database credential binding. The
 `doops sql --mode apply --sql/--file`, which submits the statements verbatim,
 runs rollback-capable batches with the optional read-only `--verify` in one
 transaction, and records a version in the per-database hash-chained journal
-before touching the database. MySQL/Oracle DDL commits implicitly; later
+before touching the database. MySQL DDL commits implicitly; later
 verification failure cannot undo it. Explain this boundary before an authorized
 DDL operation, execute it separately from DML without `--dry-run`, and read back
 the schema. MongoDB non-transactional operations have the same dry-run and mixing

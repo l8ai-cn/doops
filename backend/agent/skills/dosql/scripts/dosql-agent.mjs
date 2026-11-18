@@ -111,7 +111,85 @@ const FORWARD_WRITE_COMMANDS = new Set([
   "execute-forward-artifacts",
 ]);
 
+// Command catalogue shown by --help. Keep it in sync with the dispatch switch;
+// the test suite asserts the two never drift apart.
+const COMMAND_GROUPS = {
+  "discover and read": [
+    "classify",
+    "query",
+    "scan",
+    "discover-databases",
+    "discover-resources",
+    "register-database",
+    "resolve-database",
+  ],
+  change: [
+    "compare-databases",
+    "derive-change-plan-from-comparison",
+    "render-forward-change-artifacts",
+    "execute-forward-artifacts",
+    "render-forward-evidence-metadata-commit",
+    "render-change-metadata-commit",
+    "render-metadata-commit",
+    "execute-metadata-commit",
+    "record-metadata-commit-execution",
+    "record-execution",
+  ],
+  journal: ["inspect-journal", "migrate-journal"],
+  timeline: [
+    "replay-timeline",
+    "resolve-timeline-at",
+    "project-current-head",
+    "check-head-drift",
+    "import-drift",
+    "create-baseline-records",
+    "create-timepoint-state-manifest",
+    "derive-baseline-records-from-structure-snapshots",
+    "derive-initial-baseline-from-structure-snapshot",
+    "render-baseline-records-commit",
+    "render-timeline-artifacts-metadata-commit",
+    "render-timepoint-state-query",
+    "execute-timepoint-state-query",
+  ],
+  "rollback and restore": [
+    "plan-rollback",
+    "plan-rollback-at",
+    "render-rollback-artifacts",
+    "render-data-rollback-artifacts",
+    "render-schema-rollback-artifacts",
+    "execute-rollback-artifacts",
+    "verify-rollback-restore",
+    "derive-restore-baseline-records",
+    "render-restore-evidence-metadata-commit",
+    "render-restore-plan-metadata-commit",
+    "render-snapshot-restore-artifacts",
+    "execute-restore-checks",
+    "verify-restore",
+    "finalize-restore",
+  ],
+};
+
+function helpText() {
+  const lines = [
+    "dosql-agent <command> --input <json> --output <path>",
+    "",
+    "Every command takes a JSON input file and writes a JSON response to --output.",
+    "",
+    "Commands:",
+  ];
+  for (const [group, names] of Object.entries(COMMAND_GROUPS)) {
+    lines.push(`  ${group}:`);
+    for (const name of names) lines.push(`    ${name}`);
+  }
+  return lines.join("\n");
+}
+
 async function main(argv) {
+  const requested = argv[2];
+  if (!requested || requested === "help" || requested === "--help" || requested === "-h") {
+    process.stdout.write(helpText() + "\n");
+    return;
+  }
   const { command, inputPath, outputPath } = parseArgs(argv);
   let response;
   let operationId;

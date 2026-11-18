@@ -59,9 +59,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
-	credential  管理 Gateway 凭据元数据与版本
-	registry    通用 OCI 镜像 registry sync（DoOps 目标机执行）
+  credential  管理 Gateway 凭据元数据与版本
+  registry    通用 OCI 镜像 registry sync（DoOps 目标机执行）
   version     查看 DoOps 发布身份（release tag 和精确提交）
+  guide       按场景打印有序命令（onboard/diagnose/release/credential/...）
+  history     查看本地操作历史；password/token 等字段已脱敏
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        下载已上传的 COS 快照；--storage gateway 获取远端当前工作区

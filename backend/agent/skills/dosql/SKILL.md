@@ -34,7 +34,7 @@ Use exactly one route for each database task. Do not silently switch routes:
 
 | User intent | Public route | What it actually does |
 | --- | --- | --- |
-| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires the target grant (one Agent = one authorization unit; the Gateway derives the internal action) and the target's bound database credential. Statements run verbatim with optional `--verify`, and every real apply takes a version in the per-database journal. Rollback-capable batches use one transaction; MySQL/Oracle DDL commits implicitly, rejects dry-run and DDL/DML mixing, and cannot be undone by a later verification failure. There is no model-driven or signed-approval mutation path. |
+| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires the target grant (one Agent = one authorization unit; the Gateway derives the internal action) and the target's bound database credential. Statements run verbatim with optional `--verify`, and every real apply takes a version in the per-database journal. Rollback-capable batches use one transaction; MySQL DDL commits implicitly, rejects dry-run and DDL/DML mixing, and cannot be undone by a later verification failure. There is no model-driven or signed-approval mutation path. |
 | Copy whole tables between two bound databases | `doops sql --mode apply --copy-from <src> --database <dst> --tables a,b` | The Agent reads and writes in batches, outside the model. |
 | Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps before the apply. Version/state claims require live evidence; supplied examples and fixture versions are not real database state. |
 | Find database instances/assets | `doops sql --mode discover` or `mcp_dosql_read operation=discover` | Uses target Kubernetes Pod/Service/Deployment/StatefulSet metadata; never reads Secret values or connects to the database. |
@@ -74,14 +74,11 @@ Connection URI restrictions and the legacy migration procedure are owned by
 - Generate MySQL/PostgreSQL SQL migration scripts.
 - Generate MongoDB migration scripts or controlled command documents.
 - Execute read queries and migrations through the DoSql CLI.
-- Use `scripts/dosql-agent.mjs` for the first implemented Agent commands:
-  `classify`, `query`, `discover-databases`, `discover-resources`, `register-database`, `resolve-database`,
-  `compare-databases`, `derive-change-plan-from-comparison`,
-  `render-forward-change-artifacts`, `execute-forward-artifacts`,
-  `render-forward-evidence-metadata-commit`, `scan`, `record-execution`,
-  `inspect-journal`, `migrate-journal`,
-  `replay-timeline`, timeline lookup, rollback planning,
-  restore-node baseline derivation.
+- Use `scripts/dosql-agent.mjs <command> --input <json> --output <path>`. Run it with
+  `--help` for the grouped catalogue of every command (discover and read, change,
+  journal, timeline, rollback and restore). The test suite fails when the catalogue
+  and the dispatch switch drift apart, so `--help` is the authoritative list rather
+  than a snapshot in this document.
 - Record SQL/MongoDB execution lifecycle into append-only JSONL journals before
   importing the same events into the future control-plane database.
 - Return affected rows, schema snapshots, dry-run output and verification

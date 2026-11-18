@@ -56,7 +56,7 @@ selects the database, and direct `--sql/--file` requests may add
 private materialization channel; the model receives metadata.
 
 DoSql applies statement classification, journal and verification rules.
-Dry-run requires rollback-capable statements. MySQL/Oracle implicit-commit DDL
+Dry-run requires rollback-capable statements. MySQL implicit-commit DDL
 must run separately from DML without `--dry-run`; verification cannot undo
 already committed DDL. Read back the resulting structure or data and compare it
 with the task's acceptance criteria.

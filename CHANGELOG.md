@@ -8,11 +8,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- DoSQL agent 脚本支持 `--help`，按 discover/read、change、journal、timeline、rollback/restore 分组列出全部命令；测试保证清单与实现不会漂移
+
 ### Changed
 
 - Operator Skill 补充 `capabilities` 与 `version` 命令入口，并写明 `upgrade` 在缺少 `upgradeAudit v1` 的旧 Agent 上必然失败、`--dry-run` 只预览参数而不校验活体 release、挂载或权限
 - Operator Skill 按渐进引导收敛：红线不再重述命令表中的操作细节，同一主题只留一处入口与文档指针
-- Operator Skill 命令表按实际 CLI 校正：补 `uncordon`、`admin user password|disable`、`info`，说明 `k8s` 不开放读取 Secret/ServiceAccount，并写明 `sql --dry-run` 会先执行再回滚
+- Operator Skill 命令表按实际 CLI 校正：补 `uncordon`、`admin user password|disable`、`info`、`history` 与 `-contract`，说明 `k8s` 不开放读取 Secret/ServiceAccount，并写明 `sql --dry-run` 会先执行再回滚
+
+### Fixed
+
+- CLI 顶层 help 补上 `guide` 与 `history` 两个实际可用但未列出的命令，并修正 `credential`、`registry` 两行的 tab 缩进
+- DoSQL 文档不再声称支持 Oracle：实现只支持 MySQL、PostgreSQL 和 MongoDB
 
 ## [0.3.14] — 2026-11-18
 

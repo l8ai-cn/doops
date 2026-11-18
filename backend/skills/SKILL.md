@@ -63,9 +63,10 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | :--- | :--- |
 | 路由 / 在线 / 准入 | `doops -session <s> list`（本地）；`doops -session <s> sync --target <t>`（补路由）；`doops -session <s> targets --target <t> [--admission]` |
 | 协议能力 | `doops -session <s> capabilities --target <t> --require structuredSSH\|executionLifecycle`（调用前暴露能力缺失） |
-| 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version` 参数） |
+| 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version`）；`doops -contract` 输出机器可读契约版本 |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | 节点资源 | `doops -session <s> info --target <t>`（CPU/内存/磁盘） |
+| 本地历史 | `doops history`（本机操作历史，password/token 等已脱敏） |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |

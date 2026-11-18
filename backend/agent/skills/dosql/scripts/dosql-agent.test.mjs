@@ -13,6 +13,25 @@ import {
 
 const CLI = new URL("./dosql-agent.mjs", import.meta.url).pathname;
 
+test("--help lists every dispatched command", async () => {
+  const source = await readFile(CLI, "utf8");
+  const implemented = [...source.matchAll(/case "([a-z-]+)":/g)].map((match) => match[1]);
+  const help = spawnSync(process.execPath, [CLI, "--help"], { encoding: "utf8" });
+  assert.equal(help.status, 0, help.stderr);
+  for (const name of implemented) {
+    assert.ok(
+      help.stdout.includes(`    ${name}\n`),
+      `${name} is dispatched but missing from --help`,
+    );
+  }
+  const listed = [...help.stdout.matchAll(/^    ([a-z-]+)$/gm)].map((match) => match[1]);
+  assert.deepEqual(
+    listed.slice().sort(),
+    implemented.slice().sort(),
+    "--help and the dispatch switch drifted apart",
+  );
+});
+
 test("classify command returns operation policy as JSON", async () => {
   const result = await runCli("classify", {
     operationId: "dbop_classify_001",
