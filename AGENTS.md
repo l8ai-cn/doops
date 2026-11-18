@@ -155,6 +155,12 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   records `skill_commit` and every `skill_path`. Preserve runtime config/auth when replacing
   Skill/docs. Installation scope is documented in `backend/docs/CLUSTER_INSTALL_GUIDE.md`.
   Do not edit installed copies first.
+- Command templates in `backend/skills/SKILL.md` and the operator docs are executed by the
+  contract tests. `backend/test/test_sql_skill_contract.py` extracts backtick spans that start with
+  `doops`, splits them with `shlex`, reads optional flags from `[--flag]`, expands alternatives
+  from `(--a|--b)` and `a|b`, and substitutes `<placeholder>` before running the real CLI. Keep
+  wording and caveats outside the backtick span: text inside it becomes a stray argument and the
+  extracted command fails.
 - One `doops login` is shared by configured targets on the same normalized Gateway URL. Target
   credential listing and use inherit target operation authority; management enforces ownership.
 
