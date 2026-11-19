@@ -20,7 +20,7 @@ import (
 const webMCPToolName = "web"
 
 var (
-	webReadOperations     = []string{"render", "check", "config-get", "domain-list"}
+	webReadOperations     = []string{"render", "check", "config-get", "domain-list", "site-list"}
 	webMutationOperations = []string{
 		"deploy", "rollback", "config-set", "snippet-set", "install-nginx", "domain-set",
 	}

@@ -10,6 +10,10 @@
 
 ### Added
 
+- 控制台「网站」默认列出当前目标通过 DoWeb 发布的站点，可筛选域名、查看当前及上一发布版本并进入巡检。站点列表需要支持 `doops_web site-list` 的 Agent。
+- 控制台「数据库」标签默认展示当前目标发现的实例，支持筛选、查看发现详情，并将选中资产带入 DoSql 只读查询。
+- 控制台的「Kubernetes」标签默认显示 Pod 列表，可切换 Deployment、节点和命名空间，按名称或命名空间筛选，点击资源名称查看详情。
+
 - DoSQL agent 脚本支持 `--help`，按 discover/read、change、journal、timeline、rollback/restore 分组列出全部命令；测试保证清单与实现不会漂移
 
 ### Changed

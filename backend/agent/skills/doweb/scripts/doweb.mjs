@@ -49,7 +49,7 @@ function loadRuntimeLayout() {
 function parseArgs(argv) {
   const [command, ...rest] = argv
   if (!command || command.startsWith("--")) {
-    throw new Error("usage: doweb <render|deploy|check|rollback|config-get|config-set|snippet-set|install-nginx|domain-set|domain-list> [flags]")
+    throw new Error("usage: doweb <render|deploy|check|rollback|config-get|config-set|snippet-set|install-nginx|domain-set|domain-list|site-list> [flags]")
   }
   const options = {}
   for (let i = 0; i < rest.length; i += 1) {
@@ -675,6 +675,39 @@ async function commandDomainSet(options) {
   process.stdout.write("\n")
 }
 
+function commandSiteList(options) {
+  const dir = join(paths(options).baseDir, "state")
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error
+    entries = []
+  }
+  const sites = []
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) continue
+    const siteID = normalizeSiteID(entry.name.slice(0, -5))
+    if (!entry.isFile() || entry.name !== `${siteID}.json`) throw new Error(`invalid DoWeb state entry: ${entry.name}`)
+    const raw = readFileSync(join(dir, entry.name), "utf8")
+    let state
+    try {
+      state = JSON.parse(raw)
+    } catch {
+      throw new Error(`invalid DoWeb state JSON for ${siteID}`)
+    }
+    if (state?.site_id !== siteID || typeof state.current_release !== "string" || !state.current_release ||
+        typeof state.updated_at !== "string" || !Number.isFinite(Date.parse(state.updated_at)) ||
+        (state.previous_release != null && typeof state.previous_release !== "string")) {
+      throw new Error(`invalid DoWeb release record for ${siteID}`)
+    }
+    sites.push({ site_id: siteID, domain: validateDomain(state.domain), current_release: state.current_release,
+      previous_release: state.previous_release ?? null, updated_at: state.updated_at })
+  }
+  sites.sort((a, b) => a.site_id.localeCompare(b.site_id))
+  process.stdout.write(`${JSON.stringify({ sites })}\n`)
+}
+
 async function commandDomainList(options) {
   const domainPaths = paths(options)
   process.stdout.write(JSON.stringify({ status: "ok", domains: listDomainRegistry(domainPaths) }, null, 2))
@@ -756,6 +789,7 @@ async function commandRollback(options) {
     const targetIndex = releases.lastIndexOf(targetRelease)
     writeState(sitePaths.statePath, {
       ...state,
+      domain: spec.domain,
       current_release: targetRelease,
       previous_release: targetIndex > 0 ? releases[targetIndex - 1] : null,
       updated_at: new Date().toISOString(),
@@ -855,6 +889,8 @@ async function main() {
       return commandInstallNginx(options)
     case "domain-set":
       return commandDomainSet(options)
+    case "site-list":
+      return commandSiteList(options)
     case "domain-list":
       return commandDomainList(options)
     default:

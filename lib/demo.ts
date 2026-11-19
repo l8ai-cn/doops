@@ -371,6 +371,7 @@ function k8sOutput(args: Record<string, unknown>): string[] {
   const name = String(args.name || "")
   switch (args.operation) {
     case "get":
+      if (args.output === "json") return [demoK8sResourceJson(String(args.kind))]
       if (/^nodes?$/.test(String(args.kind)))
         return [
           "NAME          STATUS   ROLES           AGE   VERSION\n",
@@ -430,6 +431,32 @@ function k8sOutput(args: Record<string, unknown>): string[] {
   }
 }
 
+function demoK8sResourceJson(kind: string): string {
+  const resources: Record<string, object[]> = {
+    nodes: [
+      { metadata: { name: "node-a", creationTimestamp: "2026-08-19T08:00:00Z" }, status: { conditions: [{ type: "Ready", status: "True" }] } },
+      { metadata: { name: "node-b", creationTimestamp: "2026-08-19T08:00:00Z" }, status: { conditions: [{ type: "Ready", status: "True" }] } },
+    ],
+    namespaces: [
+      { metadata: { name: "apps", creationTimestamp: "2026-09-01T08:00:00Z" }, status: { phase: "Active" } },
+      { metadata: { name: "agents", creationTimestamp: "2026-09-01T08:00:00Z" }, status: { phase: "Active" } },
+      { metadata: { name: "monitoring", creationTimestamp: "2026-09-01T08:00:00Z" }, status: { phase: "Active" } },
+    ],
+    deployments: [
+      { metadata: { name: "api", namespace: "apps", creationTimestamp: "2026-10-29T08:00:00Z" }, spec: { replicas: 2 }, status: { readyReplicas: 2, availableReplicas: 2 } },
+      { metadata: { name: "worker", namespace: "apps", creationTimestamp: "2026-10-27T08:00:00Z" }, spec: { replicas: 1 }, status: { readyReplicas: 1, availableReplicas: 1 } },
+      { metadata: { name: "doops-agent", namespace: "agents", creationTimestamp: "2026-10-25T08:00:00Z" }, spec: { replicas: 2 }, status: { readyReplicas: 1, availableReplicas: 1 } },
+    ],
+    pods: [
+      { metadata: { name: "api-7c9d8f6b5d-2xk4p", namespace: "apps", creationTimestamp: "2026-11-16T08:00:00Z" }, status: { phase: "Running", containerStatuses: [{ ready: true }] } },
+      { metadata: { name: "api-7c9d8f6b5d-q8mzn", namespace: "apps", creationTimestamp: "2026-11-16T08:00:00Z" }, status: { phase: "Running", containerStatuses: [{ ready: true }] } },
+      { metadata: { name: "worker-0", namespace: "apps", creationTimestamp: "2026-11-14T08:00:00Z" }, status: { phase: "Running", containerStatuses: [{ ready: true }] } },
+      { metadata: { name: "doops-agent-0", namespace: "agents", creationTimestamp: "2026-11-18T08:00:00Z" }, status: { phase: "Pending", containerStatuses: [{ ready: false }] } },
+    ],
+  }
+  return JSON.stringify({ apiVersion: "v1", kind: "List", items: resources[kind] || [] }) + "\n"
+}
+
 export function demoAssistantReply(prompt: string): string {
   const p = prompt.toLowerCase()
   if (/状态|检查|巡检|status|健康|检查一下/.test(p)) {
@@ -482,7 +509,7 @@ export function demoApplyReply(): string {
 }
 
 export async function demoCallTool(
-  opts: { tool: string; arguments: Record<string, unknown>; signal?: AbortSignal },
+  opts: { cluster?: string; instance?: string; tool: string; arguments: Record<string, unknown>; signal?: AbortSignal },
   onEvent: (ev: RpcEvent) => void,
 ): Promise<void> {
   const { tool, arguments: args, signal } = opts
@@ -491,6 +518,31 @@ export async function demoCallTool(
     const cmd = String(args.command || args.cmd || "")
     await emitChunks(shellOutput(cmd), onEvent, signal, 160)
     onEvent({ type: "result", result: { content: [{ type: "text", text: "exit code: 0" }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_web" && args.operation === "site-list") {
+    const sites = [
+      { site_id: "portal", domain: "portal.example.test", current_release: "demo-2", previous_release: "demo-1", updated_at: "2026-11-18T09:45:00Z" },
+      { site_id: "docs", domain: "docs.example.test", current_release: "demo-1", previous_release: null, updated_at: "2026-11-17T08:10:00Z" },
+    ]
+    onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify({ sites }) }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_database_inventory") {
+    const { cluster, instance } = opts
+    if (!cluster || !instance) throw new Error("数据库发现需要指定目标")
+    const candidates = [
+      { service: "orders-postgres", engine: "postgres", port: 5432, database_name: "orders" },
+      { service: "billing-mysql", engine: "mysql", port: 3306, database_name: "billing" },
+      { service: "events-mongodb", engine: "mongodb", port: 27017 },
+    ].map((row) => ({ ...row, cluster, instance, namespace: "data", source: "StatefulSet", host: `${row.service}.data.svc`,
+      database_asset_id: `dbscan_${cluster}_${instance}_data_${row.service}_${row.engine}`,
+      status: row.database_name ? "candidate" : "needs_database_name_or_credential" }))
+    onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify({ status: "discovered", candidates }) }] } })
     onEvent({ type: "done" })
     return
   }

@@ -211,7 +211,7 @@ export async function callTool(
     opts.onCancelReady?.(async () => {
       demoController.abort()
     })
-    await demoCallTool({ tool: opts.tool, arguments: opts.arguments, signal: opts.signal || demoController.signal }, onEvent)
+    await demoCallTool({ ...opts, signal: opts.signal || demoController.signal }, onEvent)
     return
   }
   const requestId = globalThis.crypto.randomUUID()

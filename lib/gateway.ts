@@ -173,6 +173,7 @@ export const TOOLS = {
   nodeInfo: "doops_node_info",
   checkDeployment: "doops_check_deployment",
   cleanWorkspace: "doops_clean_workspace",
+  databaseInventory: "doops_database_inventory",
 } as const
 
 // 把 http(s):// 规整成 ws(s):// 基地址，去掉尾部斜杠

@@ -587,7 +587,7 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 
 The unified DoWeb domain uses `skill=doweb` and the same target/session and
 Gateway account. `mcp_doops_web_read` accepts only `render`, `check`,
-`config-get` and `domain-list`. The mutating `mcp_doops_web` requires
+`config-get`, `domain-list` and `site-list`. The latter returns `{ "sites": [...] }` with the site ID, domain, current/previous release and update time from each DoWeb release record. The mutating `mcp_doops_web` requires
 a runtime-authorized apply, with no additional confirmation field. A read tool cannot stand in for
 mutation evidence. The deterministic `doops_web` RPC maps reads to `ask` and
 mutations to `exec`; website writes hold a target-wide lease because Nginx

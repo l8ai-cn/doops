@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'"
+    />
+    <title>DoOps · 资源管理评审</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #11181e;
+        --panel: #19232b;
+        --line: #33414b;
+        --ink: #edf2f4;
+        --muted: #acb9c0;
+        --accent: #74d7c4;
+        --danger: #ffad99;
+        font:
+          15px/1.55 system-ui,
+          "PingFang SC",
+          sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header,
+      nav {
+        padding: 0 max(4vw, 16px);
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        gap: 22px;
+      }
+      header {
+        height: 54px;
+      }
+      header strong {
+        color: var(--accent);
+        font-size: 21px;
+      }
+      header small {
+        margin-left: auto;
+      }
+      nav {
+        overflow: auto;
+        gap: 8px;
+      }
+      nav a {
+        padding: 13px 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        border-bottom: 2px solid transparent;
+      }
+      nav a[aria-current] {
+        border-color: var(--accent);
+        color: var(--ink);
+      }
+      main {
+        max-width: 1190px;
+        margin: 30px auto;
+        padding: 0 24px 48px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 30px;
+        line-height: 1.3;
+      }
+      h2 {
+        font-size: 17px;
+      }
+      small,
+      .muted,
+      dt,
+      .trail {
+        color: var(--muted);
+      }
+      .trail {
+        margin-bottom: 13px;
+        font-size: 13px;
+      }
+      .heading,
+      .bar,
+      .buttons {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .heading,
+      .bar {
+        justify-content: space-between;
+      }
+      .heading {
+        margin-bottom: 19px;
+      }
+      .bar {
+        margin-bottom: 14px;
+      }
+      .buttons {
+        gap: 8px;
+      }
+      .card,
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--panel);
+        padding: 19px;
+      }
+      .card + .card {
+        margin-top: 14px;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 12px;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      button,
+      a {
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
+      }
+      .primary {
+        background: var(--accent);
+        color: #112521;
+        font-weight: 650;
+        border-color: transparent;
+      }
+      .danger {
+        color: var(--danger);
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .scroll {
+        overflow: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+        white-space: nowrap;
+      }
+      th,
+      td {
+        padding: 12px 13px;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      tbody tr:last-child td {
+        border: 0;
+      }
+      td small {
+        display: block;
+        font-size: 12px;
+      }
+      #detail dl,
+      dialog dl {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 9px 24px;
+        margin: 14px 0 0;
+      }
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      dialog {
+        width: min(490px, 94vw);
+        color: var(--ink);
+        max-height: 90dvh;
+        overflow: auto;
+      }
+      dialog::backdrop {
+        background: #000a;
+      }
+      dialog label {
+        display: grid;
+        gap: 5px;
+        margin: 10px 0;
+      }
+      dialog form .buttons {
+        justify-content: flex-end;
+        margin-top: 20px;
+      }
+      #message:not(:empty),
+      #notice:not(:empty) {
+        margin: 12px 0;
+        color: var(--accent);
+      }
+      #error {
+        color: var(--danger);
+      }
+      #search {
+        width: min(100%, 325px);
+      }
+      .log {
+        padding-left: 20px;
+        color: var(--muted);
+      }
+      .note {
+        margin: 12px 0;
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 620px) {
+        main {
+          padding: 0 12px 30px;
+          margin-top: 20px;
+        }
+        .card {
+          padding: 12px;
+        }
+        header,
+        nav {
+          gap: 3px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+        .bar {
+          align-items: flex-start;
+        }
+        #search {
+          width: 100%;
+        }
+        td,
+        th {
+          padding: 9px;
+        }
+        header small {
+          font-size: 11px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header><strong>DoOps</strong><small>产品评审 · 本地模拟</small></header>
+    <nav aria-label="资源入口">
+      <a href="#vm">虚拟机</a><a href="#k8s">Kubernetes</a
+      ><a href="#db">数据库</a><a href="#web">网站</a>
+    </nav>
+    <main>
+      <div class="trail" id="trail"></div>
+      <div class="heading">
+        <h1 id="title" tabindex="-1"></h1>
+        <div class="buttons" id="actions"></div>
+      </div>
+      <p role="status" id="notice"></p>
+      <section class="card" id="list">
+        <div class="bar">
+          <h2 id="count"></h2>
+          <input
+            id="search"
+            type="search"
+            aria-label="搜索资源"
+            placeholder="搜索名称、编号或范围"
+          />
+        </div>
+        <div class="scroll">
+          <table>
+            <thead id="thead"></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <p id="empty" class="note" hidden>没有匹配的资源</p>
+        <details id="listHistory" hidden>
+          <summary>查看最近操作</summary>
+          <ul id="listLog" class="log"></ul>
+        </details>
+      </section>
+      <div id="detail" hidden></div>
+    </main>
+    <dialog id="dialog" aria-labelledby="dialogTitle">
+      <h2 id="dialogTitle"></h2>
+      <p id="context" class="muted"></p>
+      <form id="form">
+        <div id="inputs"></div>
+        <p id="message"></p>
+        <dl id="preview"></dl>
+        <p id="error" role="alert"></p>
+        <div class="buttons">
+          <button type="button" id="cancel">取消</button
+          ><button id="submit" class="primary">预览变更</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      function el(tag, text) {
+        const node = document.createElement(tag);
+        if (text !== undefined) node.textContent = String(text);
+        return node;
+      }
+      function button(label, fn, style = "") {
+        const b = el("button", label);
+        b.type = "button";
+        b.className = style;
+        b.onclick = fn;
+        return b;
+      }
+      function link(label, href) {
+        const a = el("a", label);
+        a.href = href;
+        return a;
+      }
+      function facts(pairs) {
+        const dl = el("dl");
+        for (const [key, value] of pairs)
+          dl.append(el("dt", key), el("dd", value));
+        return dl;
+      }
+      const pages = {
+        vm: { label: "虚拟机", scope: "资产 / 机器", create: "创建虚拟机" },
+        k8s: {
+          label: "工作负载",
+          scope: "控制台 / Kubernetes / test",
+          create: "新建工作负载",
+        },
+        db: {
+          label: "数据库实例",
+          scope: "控制台 / 数据库 / test",
+          create: "创建数据库实例",
+        },
+        web: {
+          label: "站点",
+          scope: "控制台 / 网站 / test",
+          create: "发布站点",
+        },
+      };
+      const data = {
+        vm: [],
+        k8s: [
+          {
+            id: "dep-01",
+            name: "api",
+            ns: "apps",
+            image: "api:v12",
+            replicas: 2,
+          },
+          {
+            id: "dep-02",
+            name: "worker",
+            ns: "jobs",
+            image: "worker:v3",
+            replicas: 1,
+          },
+        ],
+        db: [
+          {
+            id: "db-01",
+            name: "orders-postgres",
+            engine: "PostgreSQL",
+            storage: 100,
+            dbs: [{ name: "orders", limit: 80 }],
+          },
+          {
+            id: "db-02",
+            name: "reports-postgres",
+            engine: "PostgreSQL",
+            storage: 60,
+            dbs: [],
+          },
+        ],
+        web: [
+          {
+            id: "site-01",
+            name: "portal",
+            domain: "portal.example.test",
+            release: "v12",
+            online: true,
+          },
+          {
+            id: "site-02",
+            name: "docs",
+            domain: "docs.example.test",
+            release: "v4",
+            online: true,
+          },
+        ],
+      };
+      // Provider IDs and asset IDs have separate lifecycles in the simulation.
+      const provider = new Map();
+      function seedVM(id, name, host, cpu, ram, ip, power, bound = true) {
+        const platformId = bound ? "ins-" + id.slice(3) : "";
+        if (bound) provider.set(platformId, { cpu, ram, power, host });
+        data.vm.push({
+          id,
+          name,
+          host,
+          cpu,
+          ram,
+          ip,
+          platformId,
+          agent: bound ? "已关联" : "未接入",
+        });
+      }
+      seedVM("vm-07", "报表服务", "phy-01", 4, 16, "192.0.2.17", "运行中");
+      seedVM("vm-08", "订单服务", "phy-02", 8, 32, "192.0.2.18", "运行中");
+      seedVM("vm-09", "测试构建机", "phy-01", 4, 8, "192.0.2.19", "已关机");
+      seedVM(
+        "vm-10",
+        "待接入实例",
+        "phy-03",
+        2,
+        4,
+        "192.0.2.20",
+        "未知",
+        false,
+      );
+      provider.set("ins-104", {
+        cpu: 2,
+        ram: 4,
+        power: "运行中",
+        host: "phy-03",
+        detached: true,
+      });
+      const logs = [],
+        filters = { vm: "", k8s: "", db: "", web: "" };
+      let serial = 20,
+        pending = null,
+        notice = "";
+      function route() {
+        const [, key, id] =
+          location.hash.match(/^#(vm|k8s|db|web)(?:\/([\w-]+))?$/) || [];
+        return { key: key || "vm", id };
+      }
+      function path(key, id) {
+        return "#" + key + (id ? "/" + id : "");
+      }
+      function power(row) {
+        return provider.get(row.platformId)?.power || "未验证";
+      }
+      function summary(key, row) {
+        switch (key) {
+          case "vm":
+            return [
+              row.host,
+              `${row.cpu} 核 / ${row.ram} GiB`,
+              row.ip,
+              power(row),
+            ];
+          case "k8s":
+            return [row.ns, row.image, `${row.replicas} / ${row.replicas}`];
+          case "db":
+            return [row.engine, `${row.storage} GiB`, row.dbs.length];
+          case "web":
+            return [row.domain, row.release, row.online ? "已上线" : "已下线"];
+        }
+      }
+      const columns = {
+        vm: ["宿主", "规格", "管理地址", "电源状态"],
+        k8s: ["命名空间", "镜像", "就绪 / 期望"],
+        db: ["引擎", "容量", "逻辑库数"],
+        web: ["域名", "活动版本", "路由状态"],
+      };
+      function paintList(key) {
+        const term = filters[key].trim().toLowerCase();
+        const rows = data[key].filter((row) =>
+          [row.name, row.id, ...summary(key, row)]
+            .join(" ")
+            .toLowerCase()
+            .includes(term),
+        );
+        $("count").textContent = `${pages[key].label}列表 · ${rows.length}`;
+        const head = el("tr");
+        for (const name of ["名称 / 编号", ...columns[key]])
+          head.append(el("th", name));
+        $("thead").replaceChildren(head);
+        $("tbody").replaceChildren();
+        for (const row of rows) {
+          const tr = el("tr"),
+            td = el("td");
+          td.append(link(row.name, path(key, row.id)), el("small", row.id));
+          tr.append(td);
+          for (const value of summary(key, row)) tr.append(el("td", value));
+          $("tbody").append(tr);
+        }
+        $("empty").hidden = rows.length > 0;
+        const events = logs.filter((event) => event.key === key);
+        $("listHistory").hidden = !events.length;
+        $("listLog").replaceChildren(
+          ...events.map((event) => el("li", event.text)),
+        );
+      }
+      function section(title) {
+        const block = el("section");
+        block.className = "card";
+        block.append(el("h2", title));
+        return block;
+      }
+      function showDetail(key, row) {
+        const detail = $("detail"),
+          info = section("基本信息");
+        detail.append(info);
+        const pairs = [
+          ["资源编号", row.id],
+          ...columns[key].map((c, i) => [c, summary(key, row)[i]]),
+        ];
+        if (key === "vm")
+          pairs.push(
+            ["虚拟化平台", row.platformId ? "测试虚拟化平台" : "待关联"],
+            ["平台实例 ID", row.platformId || "待关联"],
+            ["DoOps Agent", row.agent],
+          );
+        info.append(facts(pairs));
+        if (key === "vm" && !row.platformId) {
+          const msg = el(
+            "p",
+            "关联虚拟化平台实例后，可执行开关机、变更规格和销毁。",
+          );
+          msg.className = "note";
+          info.append(msg);
+        }
+        if (key === "db") {
+          const catalog = section("逻辑库"),
+            bar = el("div");
+          bar.className = "buttons";
+          bar.append(button("新建逻辑库", () => operate(key, row, "addDB")));
+          catalog.append(bar);
+          for (const db of row.dbs) {
+            const entry = el("p");
+            entry.className = "buttons";
+            entry.append(
+              el("span", `${db.name} · 连接上限 ${db.limit}`),
+              button("编辑 " + db.name, () => operate(key, row, "editDB", db)),
+              button(
+                "删除 " + db.name,
+                () => operate(key, row, "dropDB", db),
+                "danger",
+              ),
+            );
+            catalog.append(entry);
+          }
+          detail.append(catalog);
+        }
+        const audit = section("操作记录"),
+          records = logs.filter((l) => l.key === key && l.id === row.id);
+        if (!records.length) audit.append(el("p", "暂无模拟操作"));
+        else {
+          const list = el("ul");
+          list.className = "log";
+          for (const event of records) list.append(el("li", event.text));
+          audit.append(list);
+        }
+        detail.append(audit);
+      }
+      function render() {
+        const { key, id } = route(),
+          page = pages[key],
+          row = data[key].find((r) => r.id === id);
+        const listView = !id;
+        document.querySelectorAll("nav a").forEach((a) => {
+          if (a.hash === path(key)) a.setAttribute("aria-current", "page");
+          else a.removeAttribute("aria-current");
+        });
+        $("list").hidden = !listView;
+        $("detail").hidden = listView;
+        $("detail").replaceChildren();
+        $("actions").replaceChildren();
+        $("notice").textContent = notice;
+        $("trail").replaceChildren(document.createTextNode(page.scope + " / "));
+        $("title").textContent = listView
+          ? page.label + "管理"
+          : row?.name || "资源已移除";
+        if (listView) {
+          $("trail").append(page.label);
+          $("search").value = filters[key];
+          $("actions").append(
+            button(page.create, () => operate(key, null, "create"), "primary"),
+          );
+          if (key === "vm")
+            $("actions").prepend(
+              button("登记已有虚拟机", () => operate(key, null, "register")),
+            );
+          paintList(key);
+          return;
+        }
+        $("trail").append(link("返回" + page.label + "列表", path(key)));
+        if (!row) {
+          $("detail").append(el("p", "该资源已移除，可返回列表查看其他资源。"));
+          return;
+        }
+        showDetail(key, row);
+        const add = (label, op, style = "") =>
+          $("actions").append(
+            button(label, () => operate(key, row, op), style),
+          );
+        if (key === "vm") {
+          add("编辑台账", "edit", "primary");
+          if (row.platformId) {
+            add("变更规格", "resize");
+            add(power(row) === "运行中" ? "关机" : "开机", "power");
+            add("销毁实例", "delete", "danger");
+          } else if ([...provider.values()].some((v) => v.detached))
+            add("关联已有实例", "bind");
+          add("移出台账", "detach", "danger");
+        } else {
+          add(
+            { k8s: "更新工作负载", db: "调整实例容量", web: "更新站点" }[key],
+            "edit",
+            "primary",
+          );
+          if (key === "web")
+            add(row.online ? "下线站点" : "重新上线", "toggle");
+          add(
+            { k8s: "删除工作负载", db: "销毁数据库实例", web: "删除站点" }[key],
+            "delete",
+            "danger",
+          );
+        }
+      }
+      $("search").oninput = (e) => {
+        const { key } = route();
+        filters[key] = e.target.value;
+        paintList(key);
+      };
+      window.addEventListener("hashchange", () => {
+        if ($("dialog").open) $("dialog").close();
+        render();
+        $("title").focus();
+      });
+      const names = {
+        register: "登记已有虚拟机",
+        bind: "关联已有实例",
+        resize: "变更规格",
+        detach: "移出台账",
+        addDB: "新建逻辑库",
+        editDB: "修改逻辑库",
+        dropDB: "删除逻辑库",
+      };
+      function operationLabel(key, row, op) {
+        if (op === "create") return pages[key].create;
+        if (names[op]) return names[op];
+        if (op === "power") return power(row) === "运行中" ? "关机" : "开机";
+        if (op === "toggle") return row.online ? "下线站点" : "重新上线";
+        if (op === "delete")
+          return {
+            vm: "销毁实例",
+            k8s: "删除工作负载",
+            db: "销毁数据库实例",
+            web: "删除站点",
+          }[key];
+        return {
+          vm: "编辑台账",
+          k8s: "更新工作负载",
+          db: "调整实例容量",
+          web: "更新站点",
+        }[key];
+      }
+      function fieldsFor(key, row, op, db) {
+        const defs = [];
+        function field(key, label, value = "", type = "text", options) {
+          defs.push({ key, label, value, type, options });
+        }
+        if (op === "create" || op === "register") field("name", "名称");
+        if (key === "vm") {
+          if (op === "edit") field("name", "显示名称", row.name);
+          if (["create", "register"].includes(op))
+            field("host", "宿主", "phy-01", "select", [
+              "phy-01",
+              "phy-02",
+              "phy-03",
+            ]);
+          if (["create", "register", "resize"].includes(op)) {
+            field("cpu", "vCPU（核）", row?.cpu ?? 4, "number");
+            field("ram", "内存（GiB）", row?.ram ?? 16, "number");
+          }
+          if (["register", "edit"].includes(op))
+            field("ip", "管理地址", row?.ip === "待分配" ? "" : row?.ip || "");
+          if (op === "bind") {
+            const ids = [...provider]
+              .filter(([, v]) => v.detached)
+              .map(([id]) => id);
+            field("platformId", "待关联的平台实例", ids[0], "select", ids);
+          }
+        } else if (key === "k8s" && ["create", "edit"].includes(op)) {
+          if (!row) field("ns", "命名空间", "apps");
+          field("image", "镜像", row?.image || "app:v1");
+          field("replicas", "期望副本", row?.replicas ?? 2, "number");
+        } else if (key === "db") {
+          if (["create", "edit"].includes(op))
+            field("storage", "实例容量（GiB）", row?.storage ?? 100, "number");
+          if (op === "addDB") field("dbName", "逻辑库名称");
+          if (["addDB", "editDB"].includes(op))
+            field("limit", "连接上限", db?.limit ?? 80, "number");
+        } else if (key === "web" && ["create", "edit"].includes(op)) {
+          field("domain", "域名", row?.domain || "");
+          field("release", "发布版本", row?.release || "v1");
+        }
+        return defs;
+      }
+      function consequence(key, row, op) {
+        if (op === "detach")
+          return row.platformId
+            ? `仅移除资产登记；平台实例 ${row.platformId} 仍为${power(row)}。`
+            : "移除这条资产登记。";
+        if (op === "delete")
+          return {
+            vm: `销毁平台实例 ${row.platformId}，停止服务，释放计算资源。示例策略保留独立数据盘。`,
+            db: `销毁计算实例及其 ${row.dbs?.length || 0} 个逻辑库。恢复需使用独立备份。`,
+            web: "清理本站点路由、配置和发布记录。DNS 和共享证书由其各自系统管理。",
+            k8s: "移除 Deployment 及其管理的副本，保留关联 Service 和 PVC。",
+          }[key];
+        if (op === "dropDB")
+          return "移除所选逻辑库及其内容，其他逻辑库继续提供服务。";
+        if (op === "register")
+          return "新增资产登记，平台关联前电源状态显示为未验证。";
+        if (op === "power")
+          return power(row) === "运行中"
+            ? "关闭该虚拟机；机内服务将停止。"
+            : "启动该虚拟机并核对电源状态。";
+        if (op === "resize")
+          return "此示例平台要求关机后调整规格，再由用户决定何时开机。";
+        if (op === "toggle")
+          return row.online
+            ? "移除活动路由并保留版本，可重新上线。"
+            : "恢复已保留版本的路由。";
+        return "提交后在本地模拟资源中回读结果。";
+      }
+      function operate(key, row, op, db = null) {
+        const label = operationLabel(key, row, op);
+        const defs = fieldsFor(key, row, op, db);
+        pending = { key, row, op, db, defs, label, stage: "edit", values: {} };
+        $("dialogTitle").textContent = label;
+        $("context").textContent = [
+          pages[key].scope,
+          row?.name,
+          row?.id,
+          db?.name,
+        ]
+          .filter(Boolean)
+          .join(" / ");
+        $("error").textContent = "";
+        $("inputs").replaceChildren();
+        $("preview").replaceChildren();
+        $("message").textContent = consequence(key, row, op);
+        $("submit").disabled = false;
+        $("submit").className = "primary";
+        for (const f of defs) {
+          const holder = el("label", f.label),
+            input = el(f.type === "select" ? "select" : "input");
+          input.name = f.key;
+          input.required = true;
+          if (f.type === "select") {
+            for (const v of f.options) input.append(el("option", v));
+          } else {
+            input.type = f.type;
+            if (f.type === "number") {
+              input.min = f.key === "replicas" ? "0" : "1";
+              input.step = "1";
+            }
+          }
+          input.value = f.value;
+          holder.append(input);
+          $("inputs").append(holder);
+        }
+        $("inputs").hidden = false;
+        $("submit").textContent = "预览变更";
+        if (!defs.length) review();
+        if (op === "resize" && power(row) === "运行中") {
+          $("error").textContent = "请先关机，再变更规格。";
+          $("submit").disabled = true;
+        }
+        if (op === "delete" && key === "web" && row.online) {
+          $("error").textContent = "请先下线站点，再删除。";
+          $("submit").disabled = true;
+        }
+        $("dialog").showModal();
+      }
+      function review() {
+        const { key, row, op, db, defs, label, values } = pending;
+        $("inputs").hidden = true;
+        const pairs = defs.map((f) => [
+          f.label,
+          op === "edit" || op === "resize" || op === "editDB"
+            ? `${f.value} → ${values[f.key]}`
+            : values[f.key],
+        ]);
+        if (!pairs.length)
+          pairs.push(["对象", db?.name || row.name], ["操作", label]);
+        $("preview").replaceChildren(...facts(pairs).children);
+        $("submit").textContent = "确认" + label;
+        $("submit").className = ["delete", "detach", "dropDB"].includes(op)
+          ? "danger"
+          : "primary";
+        pending.stage = "review";
+      }
+      function validate(p) {
+        const { key, row, op, values: v } = p;
+        if (
+          Object.values(v).some((value) => typeof value === "string" && !value)
+        )
+          return "请填写完整信息。";
+        if (
+          v.name &&
+          data[key].some(
+            (r) =>
+              r !== row &&
+              r.name === v.name &&
+              (key !== "k8s" || r.ns === v.ns),
+          )
+        )
+          return "范围内已有同名资源。";
+        if (
+          v.domain &&
+          data.web.some((r) => r !== row && r.domain === v.domain)
+        )
+          return "该域名已被其他站点使用。";
+        if (v.domain && !/^[a-z\d-]+(?:\.[a-z\d-]+)+$/i.test(v.domain))
+          return "请填写有效的站点域名。";
+        if (op === "addDB" && row.dbs.some((d) => d.name === v.dbName))
+          return "该实例已有同名逻辑库。";
+        if (key === "db" && op === "edit" && v.storage < row.storage)
+          return "此示例存储仅支持扩容。";
+        return "";
+      }
+      function apply(p) {
+        const { key, op, values: v, db } = p;
+        let row = p.row;
+        if (op === "create" || op === "register") {
+          const id =
+            { vm: "vm", db: "db", web: "site", k8s: "dep" }[key] +
+            "-" +
+            ++serial;
+          row = { id, ...v };
+          if (key === "vm") {
+            row.platformId = op === "create" ? "ins-" + serial : "";
+            row.agent = "未接入";
+            row.ip = v.ip || "待分配";
+            if (row.platformId)
+              provider.set(row.platformId, {
+                cpu: v.cpu,
+                ram: v.ram,
+                host: v.host,
+                power: "运行中",
+              });
+          }
+          if (key === "db")
+            Object.assign(row, { engine: "PostgreSQL", dbs: [] });
+          if (key === "web") row.online = true;
+          data[key].push(row);
+        } else if (op === "delete" || op === "detach") {
+          if (row.platformId) {
+            if (op === "delete") provider.delete(row.platformId);
+            else provider.get(row.platformId).detached = true;
+          }
+          data[key].splice(data[key].indexOf(row), 1);
+        } else if (op === "edit") Object.assign(row, v);
+        else if (op === "resize") {
+          Object.assign(row, v);
+          Object.assign(provider.get(row.platformId), v);
+        } else if (op === "power") {
+          provider.get(row.platformId).power =
+            power(row) === "运行中" ? "已关机" : "运行中";
+        } else if (op === "bind") {
+          const live = provider.get(v.platformId);
+          Object.assign(row, {
+            platformId: v.platformId,
+            cpu: live.cpu,
+            ram: live.ram,
+            host: live.host,
+          });
+          live.detached = false;
+        } else if (op === "toggle") row.online = !row.online;
+        else if (op === "addDB")
+          row.dbs.push({ name: v.dbName, limit: v.limit });
+        else if (op === "editDB") db.limit = v.limit;
+        else if (op === "dropDB") row.dbs.splice(row.dbs.indexOf(db), 1);
+        notice = `模拟完成 · ${p.label} · ${db?.name || row.name}`;
+        logs.unshift({ key, id: row.id, text: notice });
+        $("dialog").close();
+        const removed = op === "delete" || op === "detach";
+        const next = path(key, removed ? null : row.id);
+        if (location.hash === next) render();
+        else location.hash = next;
+      }
+      $("form").onsubmit = (e) => {
+        e.preventDefault();
+        if (!pending || $("submit").disabled) return;
+        const p = pending;
+        if (p.stage === "edit") {
+          p.values = Object.fromEntries(
+            p.defs.map((f) => {
+              const v = $("form").elements.namedItem(f.key).value;
+              return [f.key, f.type === "number" ? Number(v) : v.trim()];
+            }),
+          );
+          const error = validate(p);
+          $("error").textContent = error;
+          if (error) return;
+          review();
+          $("submit").focus();
+        } else if (p.stage === "review") {
+          p.stage = "done";
+          apply(p);
+        }
+      };
+      $("cancel").onclick = () => $("dialog").close();
+      $("dialog").onclose = () => {
+        pending = null;
+      };
+      document.querySelector("nav").addEventListener("click", () => {
+        notice = "";
+      });
+      render();
+    </script>
+  </body>
+</html>

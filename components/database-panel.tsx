@@ -1,11 +1,12 @@
 "use client"
 
-import { Database, Send, Square } from "lucide-react"
+import { Send, Square } from "lucide-react"
 import { useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
 import { AgentRunOutput } from "@/components/agent-run-output"
+import { DatabaseInventory, type DatabaseCandidate } from "./database-inventory"
 
 type DatabaseMode = "query" | "discover" | "plan"
 
@@ -35,6 +36,18 @@ export function DatabasePanel({
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
+  const operationsRef = useRef<HTMLDetailsElement>(null)
+  const requestRef = useRef<HTMLTextAreaElement>(null)
+
+  function openQuery(database: DatabaseCandidate) {
+    setMode("query")
+    setDatabaseHint([database.database_asset_id, database.engine, `${database.namespace}/${database.service}`, database.database_name].filter(Boolean).join(" · "))
+    setRequest("")
+    setError("")
+    setAgentRun(null)
+    if (operationsRef.current) operationsRef.current.open = true
+    requestRef.current?.focus()
+  }
 
   function push(note: AgentRunNote) {
     setAgentRun((current) => current && addAgentRunNote(current, note))
@@ -105,92 +118,87 @@ export function DatabasePanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-card px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Database aria-hidden="true" className="size-4 text-primary" />
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">数据库工作台</h2>
-            <p className="truncate text-xs text-muted-foreground">DoSql · {target.cluster}/{target.instance}</p>
+    <div className="h-full overflow-y-auto p-4">
+      <DatabaseInventory session={session} target={target} sessionId={sessionId} running={running} onQuery={openQuery} />
+      <details className="card-surface mt-4 p-4" ref={operationsRef}>
+        <summary className="cursor-pointer text-sm font-semibold">数据库操作</summary>
+        <div className="mt-4 flex flex-col gap-3">
+          <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
+            {(["query", "discover", "plan"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={mode === value}
+                disabled={running}
+                onClick={() => setMode(value)}
+                className={`rounded px-2 py-1 text-xs transition-colors ${mode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                {modeLabel(value)}
+              </button>
+            ))}
           </div>
-        </div>
-        <div className="flex items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
-          {(["query", "discover", "plan"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={mode === value}
-              disabled={running}
-              onClick={() => setMode(value)}
-              className={`rounded px-2 py-1 text-xs transition-colors ${mode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              {modeLabel(value)}
-            </button>
-          ))}
-        </div>
-      </header>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_REQUESTS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                disabled={running}
+                onClick={() => {
+                  setMode(item.mode)
+                  setRequest(item.request)
+                  setError("")
+                }}
+                className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-        <div className="flex flex-wrap gap-2">
-          {QUICK_REQUESTS.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              disabled={running}
-              onClick={() => {
-                setMode(item.mode)
-                setRequest(item.request)
-                setError("")
-              }}
-              className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+          <div className="grid gap-2">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-xs font-medium text-foreground">数据库提示</span>
+              <input
+                value={databaseHint}
+                onChange={(event) => setDatabaseHint(event.target.value)}
+                disabled={running}
+                placeholder="数据库名称或资产提示（可选）"
+                className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
+              />
+            </label>
+          </div>
 
-        <div className="grid gap-2">
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-xs font-medium text-foreground">数据库提示</span>
-            <input
-              value={databaseHint}
-              onChange={(event) => setDatabaseHint(event.target.value)}
+          <label className="flex min-h-32 grow shrink-0 flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">操作需求</span>
+            <textarea
+              ref={requestRef}
+              value={request}
+              onChange={(event) => setRequest(event.target.value)}
               disabled={running}
-              placeholder="数据库名称或资产提示（可选）"
-              className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
+              placeholder="描述数据库、环境和要查询或计划的业务目标，不要粘贴密码或连接串。"
+              className="min-h-32 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60"
             />
           </label>
+
+          {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+
+          <div className="flex items-center justify-end gap-2">
+            {running || stopPending ? (
+              <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60">
+                <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
+                <Send aria-hidden="true" className="size-3.5" /> 运行 DoSql
+              </button>
+            )}
+          </div>
+
+          <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
+            <AgentRunOutput run={agentRun} running={running} empty="结果、journal 和 evidence 会由目标 Agent 返回，并进入统一 Gateway 审计。" />
+          </section>
         </div>
-
-        <label className="flex min-h-32 grow shrink-0 flex-col gap-1.5">
-          <span className="text-xs font-medium text-foreground">操作需求</span>
-          <textarea
-            value={request}
-            onChange={(event) => setRequest(event.target.value)}
-            disabled={running}
-            placeholder="描述数据库、环境和要查询或计划的业务目标，不要粘贴密码或连接串。"
-            className="min-h-32 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60"
-          />
-        </label>
-
-        {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-
-        <div className="flex items-center justify-end gap-2">
-          {running || stopPending ? (
-            <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60">
-              <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}
-            </button>
-          ) : (
-            <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
-              <Send aria-hidden="true" className="size-3.5" /> 运行 DoSql
-            </button>
-          )}
-        </div>
-
-        <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
-          <AgentRunOutput run={agentRun} running={running} empty="结果、journal 和 evidence 会由目标 Agent 返回，并进入统一 Gateway 审计。" />
-        </section>
-      </div>
+      </details>
     </div>
   )
 }

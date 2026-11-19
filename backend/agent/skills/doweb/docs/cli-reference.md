@@ -69,6 +69,10 @@ Important flags:
 The bundled executor rejects SSH and password arguments. Normal operations
 reuse the Gateway login, target and grants.
 
+## `site-list`
+
+`node /app/skills/doweb/scripts/doweb.mjs site-list` reads the configured DoWeb `state/` directory and returns `{ "sites": [...] }`. Each record contains `site_id`, `domain`, `current_release`, `previous_release` and `updated_at`. The timestamp belongs to the last recorded deployment or rollback. A missing state directory yields an empty list. Invalid release records and filesystem read errors fail the request.
+
 ## `domain-set` and `domain-list`
 
 Record trusted base-domain metadata for automatic subdomain assignment.

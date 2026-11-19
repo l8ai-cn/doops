@@ -198,6 +198,20 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		raw, _ := json.Marshal(params)
 		return handleWebTool(context.Background(), raw, func(notificationEvent) {})
 	}
+	listSites := func() []map[string]interface{} {
+		t.Helper()
+		result, err := call(api.WebParams{Operation: "site-list"})
+		var inventory struct {
+			Sites []map[string]interface{} `json:"sites"`
+		}
+		if err != nil || json.Unmarshal([]byte(result), &inventory) != nil || inventory.Sites == nil {
+			t.Fatalf("list published sites: %s: %v", result, err)
+		}
+		return inventory.Sites
+	}
+	if sites := listSites(); len(sites) != 0 {
+		t.Fatalf("unpublished target has sites: %v", sites)
+	}
 	assertBody := func(expected string) {
 		deadline := time.Now().Add(3 * time.Second)
 		client := &http.Client{Timeout: time.Second}
@@ -219,6 +233,11 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if err != nil || !strings.Contains(result, "validation") || !strings.Contains(result, "deployed") {
 		t.Fatalf("first publication: %s: %v", result, err)
 	}
+	sites := listSites()
+	if len(sites) != 1 || sites[0]["site_id"] != "demo" || sites[0]["domain"] != "localhost" || sites[0]["previous_release"] != nil || sites[0]["current_release"] == nil {
+		t.Fatalf("first publication missing from inventory: %v", sites)
+	}
+	firstRelease := sites[0]["current_release"]
 	assertBody("release-a")
 	writeDist("dist-b", "release-b")
 	statePath := filepath.Join(root, "state", "state", "demo.json")
@@ -252,7 +271,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	}
 	assertBody("release-b")
 	writeDist("dist-c", "release-c")
-	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "localhost", Dist: "dist-c", HealthURLs: []string{url}}); err != nil {
+	if _, err := call(api.WebParams{Operation: "deploy", SiteID: "demo", Domain: "new.example.test", Dist: "dist-c", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
 	assertBody("release-c")
@@ -262,6 +281,10 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	assertBody("release-b")
 	if _, err := call(api.WebParams{Operation: "rollback", SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
+	}
+	restored := listSites()
+	if len(restored) != 1 || restored[0]["current_release"] != firstRelease || restored[0]["domain"] != "localhost" || restored[0]["previous_release"] != nil {
+		t.Fatalf("inventory did not follow rollback: %v", restored)
 	}
 	assertBody("release-a")
 	if _, err := call(api.WebParams{Operation: "rollback", SiteID: "demo", HealthURLs: []string{url}}); err == nil {

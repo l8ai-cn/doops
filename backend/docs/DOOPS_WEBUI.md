@@ -70,6 +70,7 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   stop request keeps the lock until a remote terminal result arrives. Background
   target refreshes do not replace a running terminal's target. Disconnecting an
   idle session displays a pending screen so a new command cannot start mid-logout.
+- Open **Kubernetes** in the console to browse Pods, Deployments, nodes and namespaces on the selected target. The initial view lists Pods across namespaces. Select a kind or filter by name or namespace to find a resource. Click its name to run a read-only `describe` in the operations panel. Refresh reloads the lists through `doops_k8s` and shows read errors for the affected kind.
 - Kubernetes Execute stays in the same position and is disabled during a call.
   Stop is a separate control, so a double-click cannot cancel the submitted
   operation. Later clicks in the same double-click gesture cannot resubmit even
@@ -103,12 +104,14 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   Users can read their own history; global audit requires platform admin.
   Credential owners also see events that reference their credentials. Audit
   query indexes are created when the Gateway starts.
-- The database page routes through the same `doops_agent_prompt` Gateway RPC and
+- The **Database** tab opens the selected target’s `doops_database_inventory` list. Filter discovered instances by engine, instance name, database name or namespace. Select a row to inspect its discovery metadata. **带入只读查询** fills the database hint with that asset and opens the query form. **运行 DoSql** submits the request.
+- The database operations form routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoSql skill. It reuses the selected target, session and
   Gateway audit; database connections and credentials are never stored in the
   browser. The page is read-only (query, discover, plan); changes go through
   `doops sql --mode apply --sql/--file`.
-- The website page routes through the same `doops_agent_prompt` Gateway RPC and
+- The **网站** tab loads DoWeb-published sites using `doops_web` with `operation=site-list`. Filter by site ID or domain. Select a site to prefill a read-only inspection with its ID and domain. The listing reads release records from the target and requires an Agent with `site-list` support.
+- The website operations form routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoWeb skill. It reuses the selected target and Gateway
   audit for SiteSpec, Nginx validation, reload, health and rollback evidence.
 - Administrator mutations are audited with actor/token IDs, resource metadata,

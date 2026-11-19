@@ -59,6 +59,7 @@ Supported commands:
 - `domain-set`: register a usable base domain such as `example.com` with its
   host IP and provider metadata.
 - `domain-list`: list registered base domains.
+- `site-list`: list published sites from DoWeb release records on the target.
 - `deploy`: copy a customer-built dist release, activate `current`, write Nginx
   config, run `nginx -t`, reload, and optionally run health checks.
 - `config-get`: read the current managed Nginx config.
