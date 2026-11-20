@@ -81,6 +81,8 @@ Unsupported fields fail explicitly. Example:
 }
 ```
 
+Set `listen-address` to a literal IPv4 or IPv6 address to bind generated server blocks to a specific interface. An isolated HTTP instance can use `"listen-address": "127.0.0.1"` with `"listen-port": 34229`.
+
 These settings belong in the target's versioned deployment configuration and
 are never accepted from model-generated MCP parameters. `DOWEB_SCRIPT` can name
 the script in a local source checkout; images use

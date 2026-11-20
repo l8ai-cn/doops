@@ -75,7 +75,11 @@ func TestDoSQLExecutionRequestUsesIntegratedGoRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter, ok := request["adapter"].(map[string]interface{})
-	if !ok || adapter["type"] != "doops-go" || adapter["runnerPath"] != "/app/doops-agent" {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || adapter["type"] != "doops-go" || adapter["runnerPath"] != executable {
 		t.Fatalf("unexpected integrated adapter: %#v", request["adapter"])
 	}
 	if len(env) != 0 {

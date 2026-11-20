@@ -5,7 +5,7 @@ import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 export async function proxyGatewayRequest(
   req: Request,
   path: string,
-  options: { errorLabel?: string } = {},
+  options: { errorLabel?: string; csvDownload?: boolean } = {},
 ): Promise<Response> {
   const rejected = rejectCrossOriginMutation(req)
   if (rejected) return rejected
@@ -33,6 +33,16 @@ export async function proxyGatewayRequest(
     const response = await fetch(`${gateway}${path}`, init)
     // 错误响应体可能带 Go/SQLite 错误、HTML 错误页或英文说明，只保留类别和中文说明。
     if (!response.ok) return await gatewayProxyErrorResponse(response, label)
+    if (options.csvDownload) {
+      if (response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "text/csv") {
+        return Response.json({ error: "Gateway 返回了无效的 CSV 回执" }, { status: 502 })
+      }
+      return new Response(response.body, { status: response.status, headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="asset-coverage.csv"',
+        "Cache-Control": "no-store",
+      } })
+    }
     const text = await response.text()
     return new Response(response.status === 204 ? null : text || "{}", {
       status: response.status,

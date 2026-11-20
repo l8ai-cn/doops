@@ -14,16 +14,17 @@ bash backend/scripts/install.sh \
   --project /absolute/path/to/business-project
 ```
 
-Then configure a Gateway target and log in once:
+Then log in once. Login belongs to the Gateway, not a target. The first
+login discovers the visible targets and writes the local routes. Add a route
+by hand only when that target cannot be discovered. The login command is
+documented in `backend/docs/DOOPS_USAGE_GUIDE.md`.
 
 ```bash
-doops add --name <target> --gateway <gateway-url> \
-  --cluster <cluster> --instance <instance> --use '<target purpose>'
-doops -session setup login --target <target>
+doops login --gateway <gateway-url>
 ```
 
-The target route and Gateway login are the only user-facing connection
-configuration. DoSql does not read `~/.config/dosql/connections.json`, a skill
+The discovered target routes and this Gateway login are the only user-facing
+connection configuration. DoSql does not read `~/.config/dosql/connections.json`, a skill
 local default target, or credentials passed through command-line arguments.
 
 ## Unified Entry Points

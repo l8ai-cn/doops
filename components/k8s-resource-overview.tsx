@@ -6,10 +6,11 @@ import { fetchK8sOverview, K8S_OVERVIEW_QUERIES, type K8sOverview, type K8sOverv
 import type { Session, Target } from "@/lib/client"
 import { Button, Input } from "./ui"
 
-export function K8sResourceOverview({ session, target, sessionId, running, onOpenDetails }: {
+export function K8sResourceOverview({ session, target, sessionId, initialNamespace = "", running, onOpenDetails }: {
   session: Session
   target: Target
   sessionId: string
+  initialNamespace?: string
   running: boolean
   onOpenDetails: (kind: K8sOverviewKey, resource: K8sResource) => void
 }) {
@@ -18,18 +19,29 @@ export function K8sResourceOverview({ session, target, sessionId, running, onOpe
   const [loading, setLoading] = useState(true)
   const [kind, setKind] = useState<K8sOverviewKey>("pods")
   const [filter, setFilter] = useState("")
+  const [namespace, setNamespace] = useState(initialNamespace)
+  const [namespaceInput, setNamespaceInput] = useState(initialNamespace)
   const { cluster, instance } = target
+  function changeScope(value: string) {
+    setNamespaceInput(value)
+    if (value === namespace) return
+    setOverview(null)
+    setLoading(true)
+    setFilter("")
+    setKind("pods")
+    setNamespace(value)
+  }
 
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    void fetchK8sOverview(session, { cluster, instance }, sessionId, controller.signal).then((result) => {
+    void fetchK8sOverview(session, { cluster, instance }, sessionId, controller.signal, namespace).then((result) => {
       if (controller.signal.aborted) return
       setOverview(result)
       setLoading(false)
     })
     return () => controller.abort()
-  }, [session, cluster, instance, sessionId, refreshKey])
+  }, [session, cluster, instance, sessionId, refreshKey, namespace])
 
   const group = overview?.[kind]
   const namespaced = kind === "deployments" || kind === "pods"
@@ -43,7 +55,7 @@ export function K8sResourceOverview({ session, target, sessionId, running, onOpe
           <Boxes aria-hidden="true" className="size-5 shrink-0 text-primary" />
           <div className="min-w-0">
             <h2 className="text-base font-semibold">Kubernetes 资源</h2>
-            <p className="break-all font-mono text-xs text-muted-foreground">{cluster}/{instance}</p>
+            <p className="break-all font-mono text-xs text-muted-foreground">{cluster}/{instance}{namespace && ` · ${namespace}`}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -53,9 +65,19 @@ export function K8sResourceOverview({ session, target, sessionId, running, onOpe
           </Button>
         </div>
       </header>
+      <form className="mb-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); changeScope(namespaceInput.trim()) }}>
+        <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          查询命名空间
+          <Input scale="sm" className="w-48" value={namespaceInput} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+            placeholder="留空查询整个集群" title="小写字母、数字和短横线，最多 63 个字符"
+            onChange={(event) => setNamespaceInput(event.target.value)} />
+        </label>
+        <Button type="submit" size="sm" disabled={running || namespaceInput === namespace}>应用范围</Button>
+        {namespace && <Button type="button" size="sm" variant="ghost" disabled={running} onClick={() => changeScope("")}>返回整个集群</Button>}
+      </form>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div role="group" aria-label="资源类别" className="flex flex-wrap gap-1">
-          {K8S_OVERVIEW_QUERIES.map(({ key, label }) => {
+          {K8S_OVERVIEW_QUERIES.filter((query) => !namespace || query.allNamespaces).map(({ key, label }) => {
             const result = overview?.[key]
             return (
               <Button key={key} size="sm" aria-pressed={kind === key} variant={kind === key ? "primary" : "ghost"}
@@ -70,12 +92,14 @@ export function K8sResourceOverview({ session, target, sessionId, running, onOpe
       {!group ? <p role="status" className="py-8 text-center text-sm text-muted-foreground">正在读取资源…</p> : group.error ? (
         <p role="alert" className="rounded-lg bg-warning/10 px-3 py-3 text-sm text-warning [overflow-wrap:anywhere]">{group.error}</p>
       ) : items.length === 0 ? (
-        <p role="status" className="py-8 text-center text-sm text-muted-foreground">{group.items.length ? "没有匹配的资源" : "当前目标没有此类资源"}</p>
+        <p role="status" className="py-8 text-center text-sm text-muted-foreground">{group.items.length ? "没有匹配的资源" : namespace ? `命名空间 ${namespace} 的查询返回 0 项` : "当前目标没有此类资源"}</p>
       ) : (
         <div className="max-h-[55dvh] overflow-auto rounded-lg border border-border/60">
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-card text-xs text-muted-foreground">
               <tr><th scope="col" className="px-3 py-2">名称</th>{namespaced && <th scope="col" className="px-3 py-2">命名空间</th>}<th scope="col" className="px-3 py-2">状态</th>{namespaced && <th scope="col" className="px-3 py-2">就绪</th>}
+                {kind === "nodes" && <><th scope="col" className="px-3 py-2">CPU 容量</th><th scope="col" className="px-3 py-2">内存容量</th></>}
+                {kind === "namespaces" && <th scope="col" className="px-3 py-2">工作负载</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -85,6 +109,8 @@ export function K8sResourceOverview({ session, target, sessionId, running, onOpe
                   {namespaced && <td className="break-all px-3 py-2 text-muted-foreground">{item.namespace}</td>}
                   <td className="px-3 py-2">{item.status}</td>
                   {namespaced && <td className="px-3 py-2 font-mono tabular-nums">{item.ready ?? "—"}</td>}
+                  {kind === "nodes" && <><td className="px-3 py-2">{item.cpu ?? "未上报"}</td><td className="px-3 py-2">{item.memory ?? "未上报"}</td></>}
+                  {kind === "namespaces" && <td className="px-3 py-2"><Button size="sm" variant="ghost" disabled={running} aria-label={`查看 ${item.name} 工作负载`} onClick={() => changeScope(item.name)}>查看工作负载</Button></td>}
                 </tr>
               ))}
             </tbody>

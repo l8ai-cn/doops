@@ -13,6 +13,7 @@
 
 | 要做的事 | 用这个 | 你会拿到什么 |
 |---|---|---|
+| 排查一个工作负载或回读 Helm 修订 | 有 Bash 的会话可运行 K8s Skill 中的 `workload-status` 或 `release-status` | 紧凑 JSON，可直接引用命名空间、对象名和状态；步骤出错时读取 stderr |
 | 读 K8s 状态（工作负载、网络、配置、RBAC、节点、事件、存储、CRD、日志） | `mcp_doops_k8s_read` 的 get/describe/logs/top/events/rollout-status | kubectl 原样输出；支持 `selector`、`all_namespaces`、`previous`、`since`、`output=jsonpath=...` |
 | 读 Helm release | `mcp_doops_k8s_read` 的 `helm-list`/`helm-history`/`helm-status`/`helm-values` | revision 历史与状态（status 不含 values、manifest 和 notes）；values 只给 key 路径 |
 | 看 ConfigMap 有哪些键 | `mcp_doops_k8s_read` 的 `configmap-keys` | 命名空间、名称、键名，不含值 |
@@ -63,6 +64,7 @@ Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已
 # 诊断
 
 - 只读任务（没有 `--apply`）拿不到变更工具，只做读取和结论。
+- 普通 `ask` 等待 Bash 执行终态，受管运行时也会等待带 `run_in_background=true` 的请求。遇到 `blocked_command(rule): next: ...` 时原样转告并停止。按工具结果中的退出码和错误类别报告失败。
 - “进入宿主机 / 进入节点”先调用 `Skill`（`action=load_prompt`、`name=shell`），
   沿用当前 target/session，按其中的完整脚本交出宿主身份探测命令。
   不用 `Read` 重读全局 Skill/文档；没有 Bash 工具不等于没有 Gateway exec 入口。

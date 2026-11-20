@@ -184,6 +184,13 @@ func executionResponseUnknown(response map[string]interface{}) bool {
 		strings.HasPrefix(message, errExecutionOutcomeUnknown.Error()+":")
 }
 
+type unknownMutationReceipt struct {
+	error
+	report map[string]interface{}
+}
+
+func (receipt *unknownMutationReceipt) Unwrap() error { return receipt.error }
+
 // executionUnknownFromResponse keeps the reason the Agent gave for an unknown
 // outcome, so the caller and the audit can tell which check could not be
 // proven. Without it every unknown outcome reads the same.
@@ -192,16 +199,22 @@ func executionUnknownFromResponse(response map[string]interface{}) error {
 	message, _ := rpcError["message"].(string)
 	message = strings.TrimSpace(message)
 	prefix := errExecutionOutcomeUnknown.Error()
+	cause := errExecutionOutcomeUnknown
 	switch {
 	case strings.HasPrefix(message, prefix+":"):
 		reason := strings.TrimSpace(strings.TrimPrefix(message, prefix+":"))
 		if reason != "" {
-			return fmt.Errorf("%w: %s", errExecutionOutcomeUnknown, sanitizeSecretText(reason))
+			cause = fmt.Errorf("%w: %s", errExecutionOutcomeUnknown, sanitizeSecretText(reason))
 		}
 	case message != "" && message != prefix:
-		return fmt.Errorf("%w: remote error: %s", errExecutionOutcomeUnknown, sanitizeSecretText(message))
+		cause = fmt.Errorf("%w: remote error: %s", errExecutionOutcomeUnknown, sanitizeSecretText(message))
 	}
-	return errExecutionOutcomeUnknown
+	data, _ := rpcError["data"].(map[string]interface{})
+	report, _ := data["structuredContent"].(map[string]interface{})
+	if report["kind"] == "doops.verified-mutation" {
+		return &unknownMutationReceipt{cause, report}
+	}
+	return cause
 }
 
 func (q *gatewayMessageQueue) observeTerminal(msg gatewayWSMessage) {

@@ -399,11 +399,17 @@ def test_installer_uses_release_commit_when_worktree_skill_and_docs_are_updated(
         assert installed_doc.read_text() == "release docs\n"
 
 
-def test_installer_updates_existing_agent_copies_without_touching_runtime_state(tmp_path):
+@pytest.mark.parametrize("has_migrations", [True, False], ids=["inventory-release", "historical-release"])
+def test_installer_updates_existing_agent_copies_without_touching_runtime_state(tmp_path, has_migrations):
+    sql_names = ("machine_inventory.sql", "cluster_inventory.sql", "inventory_node_links.sql")
+    docs = {"release.md": "release docs\n"}
+    if has_migrations:
+        docs.update({f"migrations/{name}": (ROOT / "docs/migrations" / name).read_text() for name in sql_names})
+        docs["migrations/unrelated.sql"] = "-- outside the operator inventory bundle\n"
     repo, commit = prepare_synthetic_repo(
         tmp_path / "source",
         skill="release skill\n",
-        docs={"release.md": "release docs\n"},
+        docs=docs,
     )
     home = tmp_path / "home"
     project = tmp_path / "project"
@@ -418,13 +424,18 @@ def test_installer_updates_existing_agent_copies_without_touching_runtime_state(
         project / ".agents/skills/doops",
     ]
     for destination in destinations:
-        (destination / "docs").mkdir(parents=True)
+        (destination / "docs/migrations").mkdir(parents=True)
+        (destination / "docs/migrations/retired.sql").write_text("-- stale copy\n")
         (destination / "SKILL.md").write_text("outdated skill\n")
         (destination / "docs/retired.md").write_text("outdated contract\n")
         (destination / "config.json").write_text('{"servers":[]}\n')
         (destination / "auth.json").write_text('{"tokens":{}}\n')
         (destination / "history.jsonl").write_text("synthetic history\n")
     (repo / "backend/skills/SKILL.md").write_text("unreleased working tree\n")
+    working_migrations = repo / "backend/docs/migrations"
+    working_migrations.mkdir(exist_ok=True)
+    for name in sql_names:
+        (working_migrations / name).write_text("-- unreleased migration\n")
     fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
 
     result = run_installer(repo, home, project, fake_bin, release_env)
@@ -432,7 +443,15 @@ def test_installer_updates_existing_agent_copies_without_touching_runtime_state(
     assert result.returncode == 0, result.stderr
     for destination in destinations:
         assert (destination / "SKILL.md").read_text() == "release skill\n"
-        assert sorted(path.name for path in (destination / "docs").iterdir()) == ["release.md"]
+        installed_migrations = destination / "docs/migrations"
+        if has_migrations:
+            assert {path.name for path in installed_migrations.iterdir()} == set(sql_names)
+            for name in sql_names:
+                assert (installed_migrations / name).read_bytes() == (ROOT / "docs/migrations" / name).read_bytes()
+        else:
+            assert not installed_migrations.exists()
+        expected_docs = {"migrations", "release.md"} if has_migrations else {"release.md"}
+        assert {path.name for path in (destination / "docs").iterdir()} == expected_docs
         assert (destination / "docs/release.md").read_text() == "release docs\n"
         assert (destination / "config.json").read_text() == '{"servers":[]}\n'
         assert (destination / "auth.json").read_text() == '{"tokens":{}}\n'
@@ -790,13 +809,16 @@ def test_installer_preserves_existing_installation_when_release_commit_is_missin
 
 
 def test_installer_preserves_existing_installation_when_release_skill_or_docs_are_missing():
-    for missing in ("skill", "docs"):
+    for missing in ("skill", "docs", "migration"):
         with tempfile.TemporaryDirectory() as raw_root:
             root = Path(raw_root)
+            docs = {} if missing == "docs" else {"release.md": "release docs\n"}
+            if missing == "migration":
+                docs["migrations/machine_inventory.sql"] = "-- incomplete inventory release\n"
             repo, release_commit = prepare_synthetic_repo(
                 root / "source",
                 skill=None if missing == "skill" else "release skill\n",
-                docs={} if missing == "docs" else {"release.md": "release docs\n"},
+                docs=docs,
             )
             home = root / "home"
             project = root / "project"
@@ -827,7 +849,7 @@ def test_installer_preserves_existing_installation_when_release_skill_or_docs_ar
             )
 
             assert result.returncode != 0
-            assert "missing" in result.stderr
+            assert ("cluster_inventory.sql" if missing == "migration" else "missing") in result.stderr
             assert old_cli.read_text() == "old cli\n"
             assert (skill_dest / "SKILL.md").read_text() == "old skill\n"
             assert (skill_dest / "docs" / "old.md").read_text() == "old docs\n"

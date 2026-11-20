@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -131,6 +132,35 @@ func TestBuildK8SRequestRejectsMissingTarget(t *testing.T) {
 	}
 }
 
+func TestK8SInvalidSyntaxPointsToHelp(t *testing.T) {
+	for _, tc := range []struct{ args, why string }{
+		{"", "subcommand"},
+		{"drain node-a", "drain"},
+		{"rollout undo deploy/api", "undo"},
+		{"logs pod/api --tail many", "integer"},
+	} {
+		t.Run(tc.args, func(t *testing.T) {
+			req, err := buildK8SRequest(append([]string{"--target", "test"}, strings.Fields(tc.args)...))
+			if err == nil || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "next: doops k8s -h") || req.Payload != nil {
+				t.Fatalf("expected local error with reason and next step; got req=%#v err=%v", req, err)
+			}
+		})
+	}
+}
+
+func TestK8SPolicyDenialStopsAtStructuredRoute(t *testing.T) {
+	req, err := buildK8SRequest([]string{"--target", "test", "get", "secrets"})
+	if err != nil {
+		t.Fatalf("CLI rejected valid syntax before Agent policy check: %v", err)
+	}
+	denied := errors.New("resource denied by policy")
+	caller := &fakeK8SCaller{err: denied}
+	msg, err := runK8SRequest(caller, req)
+	if err != denied || msg != "" || len(caller.calls) != 1 || caller.calls[0].tool != "doops_k8s" {
+		t.Fatalf("expected only the original denial; calls=%#v msg=%q err=%v", caller.calls, msg, err)
+	}
+}
+
 func TestRunK8SRequestDirectCallsDoopsK8S(t *testing.T) {
 	req, err := buildK8SRequest([]string{"get", "pods", "--target", "prod", "--namespace", "oilan-system"})
 	if err != nil {
@@ -151,6 +181,7 @@ func TestRunK8SRequestDirectCallsDoopsK8S(t *testing.T) {
 
 type fakeK8SCaller struct {
 	calls []fakeK8SCall
+	err   error
 }
 
 type fakeK8SCall struct {
@@ -164,7 +195,7 @@ func (f *fakeK8SCaller) Call(toolName string, arguments map[string]interface{}) 
 		copied[k] = v
 	}
 	f.calls = append(f.calls, fakeK8SCall{tool: toolName, args: copied})
-	return nil
+	return f.err
 }
 
 func (f *fakeK8SCaller) CallAndCapture(toolName string, arguments map[string]interface{}) (string, error) {

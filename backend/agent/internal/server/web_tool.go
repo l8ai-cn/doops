@@ -64,12 +64,17 @@ func handleWebTool(ctx context.Context, raw json.RawMessage, push notificationSe
 	if node == "" {
 		node = "node"
 	}
-	workspace, err := resolveWebSession(params.SessionID)
-	if err != nil {
-		return "", err
-	}
 	command := exec.Command(node, append([]string{script}, args...)...)
-	command.Dir = workspace
+	if params.Operation == "site-list" {
+		// Published-site records belong to the target, even before this session has a workspace.
+		command.Dir = filepath.Dir(script)
+	} else {
+		workspace, err := resolveWebSession(params.SessionID)
+		if err != nil {
+			return "", err
+		}
+		command.Dir = workspace
+	}
 	command, stdout, stderr, err := startRawCommand(ctx, command)
 	if err != nil {
 		return "", fmt.Errorf("start DoWeb executor: %w", err)

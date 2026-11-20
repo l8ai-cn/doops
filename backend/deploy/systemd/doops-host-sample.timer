@@ -1,0 +1,10 @@
+[Unit]
+Description=Record a DoOps machine snapshot every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Unit=doops-host-sample.service
+
+[Install]
+WantedBy=timers.target

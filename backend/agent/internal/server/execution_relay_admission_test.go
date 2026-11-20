@@ -225,6 +225,12 @@ func TestExecutionRelayPromptAdmissionInterruption(t *testing.T) {
 					wantStatus := "outcome_unknown"
 					if test.known {
 						wantStatus = "error"
+						switch test.name {
+						case "withdrawn_before_admission", "queue_timeout":
+							wantStatus = "timeout"
+						case "cancelled_before_admission":
+							wantStatus = "canceled"
+						}
 						wantJSON, _ := json.Marshal(test.reply["error"])
 						var wantError interface{}
 						if err := json.Unmarshal(wantJSON, &wantError); err != nil {

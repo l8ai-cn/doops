@@ -2,6 +2,50 @@
 
 本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
+## 资产台账
+
+资产保存在 Gateway SQLite。首次启用前备份数据库，用目标环境已授权的 DoOps 会话按顺序执行下列 SQL，保留执行回执。首次使用这些接口依赖迁移已完成，Gateway 启动不执行资产 DDL。
+
+1. [机器与导入批次](migrations/machine_inventory.sql)
+2. [集群来源与命名空间](migrations/cluster_inventory.sql)
+3. [Node 与机器关联](migrations/inventory_node_links.sql)
+
+已有机器台账升级时，需重新执行幂等的机器迁移以创建机器账号关联表。Gateway 需配置并持续保管原有 `DOOPS_GATEWAY_SECRET_KEY`，接入页面和 Gateway 间使用受保护的连接；本机测试可使用回环地址。
+4. [业务系统与部署关系](migrations/business_inventory.sql)
+5. [服务器服役状态与覆盖率基线](migrations/asset_coverage.sql)
+6. [监控样本与规则](migrations/asset_monitor.sql)
+7. [巡检计划、运行与取证记录](migrations/asset_inspection.sql)
+8. [集群盘点底册及冻结版本](migrations/asset_coverage_registers.sql)
+9. [工作负载运行快照及绑定](migrations/asset_runtime_topology.sql)
+10. [机器指纹绑定及诊断样本](migrations/machine_diagnostics.sql)
+
+升级已有 GPU 监控库时，按 [设备维度迁移说明](migrations/asset_monitor_devices.sql) 在专用数据库连接上执行迁移。新建库直接使用当前的 `asset_monitor.sql`。已有机器诊断库可重跑 `machine_diagnostics.sql` 增加隧道采样记录。所有迁移均按环境留存执行回执。
+
+逐项核对目标数据库的迁移记录。`asset_coverage.sql` 包含一次性列变更。回滚需要使用本次变更前的数据库备份，并评估备份时点之后的资产写入。
+
+`GET` 请求按登录身份返回可见记录。平台管理员维护资产。普通用户的机器、集群和 Node 关系按目标授权过滤，关系两端都可见才会展示。去掉目标授权后，后续查询立即采用新的可见范围。写入沿用 Gateway 身份和审计。
+
+| 接口 | 请求和回执 |
+| --- | --- |
+| `GET /v1/assets/machines` | `machines` 数组包含资产编号、规格、宿主、目标和版本。管理员用 `?batch_id=…` 查最近一次 CSV 确认的回执，以 `attempt_id` 指定历史回执。 |
+| `POST /v1/assets/machines` | `action=create/update` 提交 `machine`，编辑还需 `expected_revision`。版本冲突返回 409。`action=preview` 提交 `csv` 字符串并取得 `preview_token`。`action=import` 提交相同内容和该标识。若确认时行的导入结果已变化，返回 409，重新预览后再确认。两步的 `scope` 应反映转换前的导入要求；省略时沿用 `machine_metadata`。`machine_and_credentials` 接受 `username,password` 两列，并在确认事务中保存机器、加密的凭据及其关联。仅给已存在资产补录时，使用 `asset_id,username,password`。`credential_result.expected` 是本批待写凭据数，`saved` 是实际写入数，`existing` 是已保存且内容一致的凭据数。变更预览、数据冲突或凭据存储不可用时不会部分确认。台账模式和历史台账回执仍报告本批保存的机器凭据为 0。 |
+| `GET /v1/assets/clusters` | `clusters` 按可见来源返回集群编号、来源目标及 `namespaces`。同一资产编号可以有多个已验证来源，每个来源维护自己的观测范围。 |
+| `POST /v1/assets/clusters` | `action=discover/import`，指定 `cluster`、`instance`。保存时须提供 `asset_id`、`name`。提供 `namespace` 将在该空间验证 `list pods`，省略时读取 Namespace 列表。保存由管理员执行。 |
+| `GET/POST /v1/assets/node-links` | 读取可见 Node 与机器的手工映射；管理员提交 `action=bind/unbind` 和 `asset_id`、`cluster`、`instance`、`node_name`、`machine_id`。解绑只解除台账关系。 |
+| `GET /v1/assets/dashboard` | 一个读取快照返回 `machines`、`systems`、`clusters` 和 `unassigned`。每个集群按 `asset_id` 合并可见来源，分别去重命名空间、关联机器与在役系统。 |
+| `GET/POST /v1/assets/systems` | 获取 `systems` 及其可见 `deployments`。管理员以 `create/update` 提交 `system`，更新另传 `expected_revision`。部署关系标明来源目标、命名空间、应用和可选数据库。 |
+| `GET/POST /v1/assets/topology` | GET 返回可见节点、关系及来源证据，`cluster_id` 限定到台账中的稳定集群编号。POST `collect` 在已纳管命名空间读取工作负载及 Pod 的运行关系。管理员用 `bind/unbind` 维护已登记应用与工作负载 UID 的关联，写入时核对来源与快照版本。 |
+| `GET/POST /v1/assets/machine-diagnostics` | 按机器 `asset_id` 和绑定的 `cluster/instance` 读取主机采样，可用 `range` 和 `to_ms` 限定时窗。主机指纹、采样来源与时间共同标识证据；数据不足时界面显示具体缺口。POST `bind` 以管理员独立核对的指纹完成首次试采和绑定，`refresh` 沿被授权来源的 Agent 反向通道刷新。 |
+| `GET/POST /v1/assets/coverage` | `baseline_id=live` 预览当前台账，省略时读取最近冻结版本。`kind=machines/systems/all`、`status=covered/gap/all` 可筛选明细，`format=csv` 下载。`summary=1` 单独使用时仅返回看板摘要。管理员提交 `action=freeze` 与唯一 `baseline_id` 冻结，或以 `set_machine_active`、`machine_id`、`active`、`expected_revision` 调整机器服役状态。旧版本仍按读取者当前授权筛选。 |
+| `GET/POST /v1/assets/monitor` | 按来源 `cluster`、`instance` 读取对象或时间序列，支持 `cluster_id`、`namespace`、`type`、`asset_id`、`metric`、`origin`、`range` 等筛选，网卡、挂载点和 GPU 可用 `metric` 与 `device_id` 精确查询。普通账号可对授权目标执行 `collect` 采集 Pod CPU、内存；外部指标 `ingest` 和阈值 `rule` 需要平台管理员。见 [宿主采样、中心提交与页面验收](ASSET_MONITOR_DEVICES.md)。 |
+| `GET/POST /v1/assets/inspections` | 读取计划与运行概览，`view=report/download` 加 `run_id` 读取本次可见报告。可预览、保存及暂停计划，启动运行、发起补检、提交证据或登记整改。`tick` 供独立执行账号处理自身到期计划。执行账号停用、到期超过取证窗口时，管理员可提交 `reconcile` 为漏期生成审计记录及报告。 |
+
+无 Agent 的机器可作为未接入资产登记。新集群通过已有授权 Agent 接入，配置见 [安装指南](CLUSTER_INSTALL_GUIDE.md)。控制台的操作步骤见 [资产台账](DOOPS_WEBUI.md#资产台账)。
+
+集群看板使用 `cluster_id` 请求覆盖率，分母来自该集群的盘点底册。平台与集群概览通过 `monitor?view=alerts` 读取未恢复异常及采集中断，通过 `inspections?view=weekly` 读取本周计划和执行状态；两个接口都按当前授权筛选后汇总。
+
+监控采集器的可用输入见 [采集脚本](../scripts/asset_monitor_collector.py)，自动周检执行账号、数据源、调度周期及故障处理见 [巡检执行器](../inspection/README.md)。
+
 ## 受管凭据配置
 
 运行时引用凭据只要求该 target 的 grant，不要求额外凭据权限或逐用户绑定。
@@ -78,7 +122,7 @@ Gateway 凭证校验失败返回 HTTP `401`，响应体包含稳定错误分类�
   "code": "gateway_auth_expired",
   "auth_domain": "gateway",
   "message": "Gateway user token has expired",
-  "next_action": "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key"
+  "next_action": "Run doops login --gateway <gateway-url> for this Gateway; do not replace the Gateway token with a managed credential or business API key"
 }
 ```
 

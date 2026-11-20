@@ -227,8 +227,12 @@ configure_mutation_authority() {
 start_doagent() {
     mkdir -p /root/ws
     echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
-    start_background env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws
+    if [ ! -f /app/doops-shell ] || [ ! -x /app/doops-shell ]; then
+        echo "required /app/doops-shell is not executable" >&2
+        return 1
+    fi
+    DO_AGENT_BASH_WAIT_FOR_EXIT=1 DO_AGENT_SHELL=/app/doops-shell DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        start_background /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws
     local doagent_pid="${PIDS_TO_CLEANUP[-1]}"
     for _ in $(seq 1 30); do
         if ! kill -0 "${doagent_pid}" 2>/dev/null; then

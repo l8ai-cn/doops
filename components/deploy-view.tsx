@@ -1,22 +1,25 @@
 "use client"
 
-import { useState } from "react"
-import { ArrowUpCircle, PackagePlus, Rocket } from "lucide-react"
+import { ArrowUpCircle, GitBranch, PackagePlus, Rocket } from "lucide-react"
 import type { Session, Target } from "@/lib/client"
 import { AgentUpgradePanel } from "./agent-upgrade-panel"
 import { DeployGuideBody } from "./deploy-guide"
+import { CicdGuide } from "./cicd-guide"
 import { WorkloadDeployPanel } from "./workload-deploy-panel"
 import { PageTabs } from "./ui"
 
-type Section = "workload" | "upgrade" | "onboard"
+export type DeploySection = "workload" | "upgrade" | "onboard" | "cicd"
 
-const SECTIONS: { id: Section; label: string; icon: typeof Rocket; needsTarget: boolean }[] = [
+const SECTIONS: { id: DeploySection; label: string; icon: typeof Rocket; needsTarget: boolean }[] = [
   { id: "workload", label: "发布工作负载", icon: Rocket, needsTarget: true },
   { id: "upgrade", label: "升级 Agent", icon: ArrowUpCircle, needsTarget: true },
   { id: "onboard", label: "首次接入", icon: PackagePlus, needsTarget: false },
+  { id: "cicd", label: "CI/CD 接入", icon: GitBranch, needsTarget: false },
 ]
 
-export function DeployView({ session, target, sessionId, onEnterConsole, onOpenCredentials }: {
+export function DeployView({ section, onSection, session, target, sessionId, onEnterConsole, onOpenCredentials }: {
+  section: DeploySection
+  onSection: (section: DeploySection) => void
   session: Session
   target: Target | null
   sessionId: string
@@ -24,15 +27,14 @@ export function DeployView({ session, target, sessionId, onEnterConsole, onOpenC
   // Only passed for platform admins: where the target's modelProvider binding is configured.
   onOpenCredentials?: () => void
 }) {
-  const [section, setSection] = useState<Section>(target ? "workload" : "onboard")
   const active = !target && SECTIONS.find((item) => item.id === section)?.needsTarget ? "onboard" : section
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageTabs
-        ariaLabel="部署"
+        ariaLabel="发布部署"
         value={active}
-        onChange={setSection}
+        onChange={onSection}
         items={SECTIONS.map(({ id, label, icon: Icon, needsTarget }) => ({
           id,
           label,
@@ -43,11 +45,13 @@ export function DeployView({ session, target, sessionId, onEnterConsole, onOpenC
       />
       {active === "workload" && target ? (
         <WorkloadDeployPanel key={`workload-${target.key}`} session={session} target={target}
-          onOpenCredentials={onOpenCredentials} onOpenUpgrade={() => setSection("upgrade")} />
+          onOpenCredentials={onOpenCredentials} onOpenUpgrade={() => onSection("upgrade")} />
       ) : active === "upgrade" && target ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <AgentUpgradePanel key={target.key} session={session} target={target} sessionId={sessionId} />
         </div>
+      ) : active === "cicd" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto"><CicdGuide session={session} /></div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DeployGuideBody onEnterConsole={onEnterConsole} />

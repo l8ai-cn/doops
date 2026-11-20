@@ -15,8 +15,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 // Only the object-store HTTP service and CA trust are test fixtures. The built
@@ -103,7 +101,7 @@ func init(){ b,e:=os.ReadFile(os.Getenv("AWS_CA_BUNDLE"));if e!=nil{panic(e)};p:
 	}
 
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-	agent := &Gateway{Dispatcher: dispatcher.NewDispatcher(), tasks: make(map[string]*bgTask), sessionMap: make(map[string]*sessionEntry)}
+	agent := &Gateway{tasks: make(map[string]*bgTask), sessionMap: make(map[string]*sessionEntry)}
 	conn := dialFakeGatewayAgent(t, f.server.URL, "dev", "local")
 	done := make(chan struct{})
 	go func() { defer close(done); agent.ServeGatewayWebSocketConnWithReady(conn, "cos-cli-functional", nil) }()

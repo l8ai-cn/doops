@@ -109,6 +109,33 @@ func TestWebInputConfinedToSession(t *testing.T) {
 	}
 }
 
+func TestWebSiteListBeforeFirstSessionWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspaces")
+	t.Setenv("DOOPS_WORKSPACE_ROOT", workspace)
+	script, err := filepath.Abs("../../skills/doweb/scripts/doweb.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOWEB_SCRIPT", script)
+	layout := filepath.Join(root, "runtime.json")
+	config, err := json.Marshal(map[string]string{"base-dir": filepath.Join(root, "published-sites")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout, config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOWEB_RUNTIME_CONFIG", layout)
+	result, err := handleWebTool(t.Context(), json.RawMessage(`{"operation":"site-list","session_id":"first-visit"}`), func(notificationEvent) {})
+	if err != nil || result != `{"sites":[]}` {
+		t.Fatalf("first visit: %q, %v", result, err)
+	}
+	if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("unexpected workspace access: %v", err)
+	}
+}
+
 func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	nginx, err := exec.LookPath("nginx")
 	if err != nil {
@@ -169,6 +196,7 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		"base-dir": filepath.Join(root, "state"), "nginx-available-dir": available,
 		"nginx-enabled-dir": enabled, "nginx-snippet-dir": snippets,
 		"nginx-bin": wrapper, "reload-argv": []string{wrapper, "-s", "reload"}, "listen-port": port,
+		"listen-address": "127.0.0.1",
 	}
 	layoutPath := filepath.Join(root, "runtime.json")
 	encoded, _ := json.Marshal(layout)
@@ -236,6 +264,10 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	sites := listSites()
 	if len(sites) != 1 || sites[0]["site_id"] != "demo" || sites[0]["domain"] != "localhost" || sites[0]["previous_release"] != nil || sites[0]["current_release"] == nil {
 		t.Fatalf("first publication missing from inventory: %v", sites)
+	}
+	configText, err := call(api.WebParams{Operation: "config-get", SiteID: "demo"})
+	if err != nil || !strings.Contains(configText, fmt.Sprintf("listen 127.0.0.1:%d;", port)) {
+		t.Fatalf("loopback binding missing: %s: %v", configText, err)
 	}
 	firstRelease := sites[0]["current_release"]
 	assertBody("release-a")

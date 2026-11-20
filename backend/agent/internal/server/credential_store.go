@@ -285,8 +285,8 @@ func (s *GatewayStore) createCredential(req CredentialCreateRequest, auditID int
 }
 
 func (s *GatewayStore) ListCredentials(filter CredentialListFilter) ([]CredentialResource, error) {
-	args := make([]any, 0, 4)
-	where := []string{"1 = 1"}
+	args := []any{machineVaultScope}
+	where := []string{"scope <> ?"}
 	if actorID := strings.TrimSpace(filter.ActorID); actorID != "" {
 		where = append(where, "scope = ? AND owner_id = ?")
 		args = append(args, CredentialScopePersonal, actorID)
@@ -490,7 +490,7 @@ func (s *GatewayStore) ResolveCredentialPayload(credentialID, versionID string) 
 	err := s.db.QueryRow(`SELECT c.id, c.name, c.scope, c.owner_id, c.type, c.state, c.created_by, c.created_at, c.updated_at, c.revoked_at,
 			v.id, v.credential_id, v.payload_ciphertext, v.payload_digest, v.state, v.created_by, v.created_at, v.promoted_at, v.revoked_at
 		FROM credentials c JOIN credential_versions v ON v.credential_id = c.id
-		WHERE c.id = ? AND v.id = ?`, credentialID, versionID).Scan(
+		WHERE c.id = ? AND v.id = ? AND c.scope <> ?`, credentialID, versionID, machineVaultScope).Scan(
 		&resource.ID, &resource.Name, &resource.Scope, &resource.OwnerID, &resource.Type, &resource.State,
 		&resource.CreatedBy, new(string), new(string), new(string),
 		&version.ID, &version.CredentialID, &ciphertext, &version.PayloadDigest, &version.State,
@@ -1384,7 +1384,7 @@ func (s *GatewayStore) finalizeCredentialRevocation(credentialID string, auditID
 
 func (s *GatewayStore) credentialByID(id string) (CredentialResource, error) {
 	row := s.db.QueryRow(`SELECT id, name, scope, owner_id, type, state, created_by, created_at, updated_at, revoked_at
-		FROM credentials WHERE id = ?`, strings.TrimSpace(id))
+		FROM credentials WHERE id = ? AND scope <> ?`, strings.TrimSpace(id), machineVaultScope)
 	resource, err := scanCredentialResource(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CredentialResource{}, ErrCredentialNotFound

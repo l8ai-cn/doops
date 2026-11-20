@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 // fakeContainerRuntime writes an executable stand-in for a container runtime so
@@ -33,7 +31,6 @@ func fakeContainerRuntime(t *testing.T, script string) string {
 // pins the container runtime the command is prefixed with.
 func dockerTestGateway(containerRuntime string) *Gateway {
 	gw := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

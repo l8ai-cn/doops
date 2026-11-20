@@ -1,5 +1,41 @@
 # Doops WebUI
 
+登录后的主导航按工作范围组织。顶栏「目标运维」面向选中的 Agent，「当前目标」显示所选 Agent 的运行状态和操作入口，AI 助手可直接打开。「操作资源」包含数据库、网站、Kubernetes、镜像和文件；「运维工具」包含凭据、审计、知识库和高级终端。
+
+「资产」按平台、机器和集群范围展示。「发布部署」集中工作负载发布、Agent 升级、首次接入和 CI/CD 接入。「平台管理」仅对管理员显示，负责 Gateway 账号、实例、令牌和平台配置。
+
+## 资产台账
+
+登录 Gateway 后点顶栏的「资产」。即使机器尚未接入 Agent，管理员也可以先登记配置。普通用户看到自己获授权目标关联的资产。
+
+- **机器**支持手工新增、搜索和编辑。物理机登记物理核心数，虚拟机登记 vCPU 数，内存与磁盘容量单位为 GiB。虚拟机可引用已登记的宿主。详情页可反查虚拟机、宿主和手工关联的 K8s Node。修改规格会更新资产记录。
+- **CSV 导入**先选择导入内容。选「机器台账」后，使用 UTF-8 模板填写 `asset_id,name,kind,address,cpu_count,memory_gib,disk_gib,host_asset_id`，上传后点「预览 CSV」。必填列为编号、名称和类型。`physical` 表示物理机，`vm` 表示虚拟机。宿主可以出现在同一批次的任意位置。确认前核对可新增、重复和错误行数，只导入可新增记录。每批最多 2,000 行、1 MiB。按批次号回查能看到台账写入结果和本批保存的机器密码数。
+- **机器登录凭据**可从已有机器详情点击「添加登录凭据」，填写账号、密码，预览后确认。批量处理时选择「机器和登录凭据」：已有机器可用 `asset_id,username,password` 补录，新增机器在 CSV 中一并填写 `name,kind`。XLSX 可以按资产编号或台账中唯一匹配的管理 IP 关联，预览时请核对跳过的源行。每个账号单独计数。相同凭据再次上传会显示「已有」，密码冲突会阻止确认。管理员可以查看已保存的账号与本批回执。密码由 Gateway 加密保存。
+- **集群台账**中点「从 Agent 导入」，填写资产编号、名称和来源 Agent。指定命名空间时仅验证该空间的 Pod 列举权限；留空时读取 Namespace 对象。先预览再确认，Gateway 在确认时重新读取。集群列表保存来源、验证时间和命名空间，断线后仍可查询。展开命名空间可进入对应范围的实时工作负载。
+- **凭据**沿用 Gateway 受管凭据。在已关联在线目标的资产详情点凭据按钮，进入「当前目标可用」。具备管理权限的用户可从「我管理的」操作绑定、验证、轮换和吊销。适用类型、从已有 Secret 导入的操作见 [凭据说明](CREDENTIAL_RESOURCES.md)。资产文件只填写元数据。
+
+迁移顺序、接口和权限见 [API 指南](DOOPS_API_GUIDE.md#资产台账)。
+
+### 从平台看板进入集群
+
+顶栏「资产」默认打开平台看板。集群对比按稳定资产编号统计多个 Agent 来源，列出可见机器、在役系统、命名空间和最后核验时间。点集群名称进入该集群，点未关联机器可回到它的台账详情。集群拓扑支持按关系层或命名空间筛选，从数据库反查依赖应用，以及查看关系证据。
+
+平台巡检在「资产 → 平台看板 → 巡检」，集群巡检在对应集群详情的「巡检」。进入集群详情后，一级导航高亮「集群台账」；返回按钮回到打开该详情的平台看板或集群台账。 从机器详情点「进入目标运维」，或从集群命名空间点工作负载入口，页面会切换到该 Agent 的操作区。目标选择器旁的返回按钮回到原资产，恢复筛选和展开位置。主动切换 Agent 后，操作区采用新目标。
+
+在「业务系统」登记系统编号、负责人和服役状态，再添加来源目标、命名空间、应用与可选数据库。保存表示操作员已核对所填关系。管理员维护记录，其他用户仅能查询自己目标内的部署。
+
+在机器详情中可通过已领取的 Agent 核验主机指纹、获取宿主采样。主机侧按分钟生成带身份的 JSON；页面按采样时间展示系统、内核、进程和资源使用情况。[宿主采样与首次接入](MACHINE_SAMPLING.md)
+
+从集群概览进入「拓扑」，选择已纳管的命名空间获取运行快照。管理员将已登记的应用绑定到实际工作负载 UID；有对应的 Node 与机器台账关系后，就可以从宿主机反查受影响的业务系统。Agent 掉线时请核对最后一次成功观测时间。
+
+平台看板的「覆盖率」分别展示在役服务器、业务系统的分母、已覆盖数和距 80% 的差额。首次进入可选择「当前台账预览」核查范围，管理员可确认宿主关系并冻结基线。从已有基线导出的 CSV 使用当前用户可见的证据。分母为空时界面显示无适用资产。
+
+「监控」按目标、资产及时间范围读取已采集样本。原生 Pod 采集依赖目标的 Kubernetes 指标读取权限。主机、设备和业务计数器需要对应的采集源。可按序列查看单位、数据中断、告警及阈值规则。
+
+平台和集群概览均可直接查看未恢复的异常、采集中断和本周巡检。点异常明细可打开对应来源和时窗内的曲线；点周检记录可进入同一范围的报告与整改。本周无应检资产、证据不足、漏检和已检分别显示。
+
+「巡检」用于预览周检范围、指定时区与执行账号、运行计划、查看缺口、下载报告以及登记整改和复检。手动执行后可以立即查看运行记录，检查结果在收到相应证据后更新。自动执行需要为绑定账号配置独立时钟与证据来源。[周检执行器](../inspection/README.md)
+
 ## Current Gateway Console
 
 The production application is the Next.js console at `/console`. Users sign in
@@ -71,6 +107,7 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   target refreshes do not replace a running terminal's target. Disconnecting an
   idle session displays a pending screen so a new command cannot start mid-logout.
 - Open **Kubernetes** in the console to browse Pods, Deployments, nodes and namespaces on the selected target. The initial view lists Pods across namespaces. Select a kind or filter by name or namespace to find a resource. Click its name to run a read-only `describe` in the operations panel. Refresh reloads the lists through `doops_k8s` and shows read errors for the affected kind.
+- To query workloads in a single namespace, type its name in **查询命名空间** and select **应用范围**, or select **查看工作负载** on a namespace row. In this scope the console requests Pods and Deployments directly in that namespace. Use **返回整个集群** to restore the cluster view. The node list shows CPU and memory as reported by the Kubernetes Node capacity fields.
 - Kubernetes Execute stays in the same position and is disabled during a call.
   Stop is a separate control, so a double-click cannot cancel the submitted
   operation. Later clicks in the same double-click gesture cannot resubmit even
@@ -104,13 +141,15 @@ by the Gateway on authenticated use, and the console cookie is refreshed when
   Users can read their own history; global audit requires platform admin.
   Credential owners also see events that reference their credentials. Audit
   query indexes are created when the Gateway starts.
-- The **Database** tab opens the selected target’s `doops_database_inventory` list. Filter discovered instances by engine, instance name, database name or namespace. Select a row to inspect its discovery metadata. **带入只读查询** fills the database hint with that asset and opens the query form. **运行 DoSql** submits the request.
+- Open **数据库** and select an instance. Choose its managed connection to read the database directory. Open a database for its tables and schemas, then select a table to preview rows. The breadcrumb returns to the previous level. Access to each database uses the binding for the selected credential.
+- Inventory groups a StatefulSet with Pods whose controller reference matches its UID, kind, name and namespace. Its governing Service supplies the address only when the selector matches its Pods exclusively. Other candidates remain separate. A missing service endpoint is shown as **未确认服务地址**. Previously discovered member IDs can still be used with their existing credential bindings.
+- From a database or table choose **执行 SQL**. The editor uses the selected database and credential. From a table it prefills a quoted preview query. Enter a read-only statement and click **执行只读 SQL** for result columns, rows, and the DoSql operation ID. **停止 SQL** requests cancellation and shows the remote outcome.
 - The database operations form routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoSql skill. It reuses the selected target, session and
   Gateway audit; database connections and credentials are never stored in the
   browser. The page is read-only (query, discover, plan); changes go through
   `doops sql --mode apply --sql/--file`.
-- The **网站** tab loads DoWeb-published sites using `doops_web` with `operation=site-list`. Filter by site ID or domain. Select a site to prefill a read-only inspection with its ID and domain. The listing reads release records from the target and requires an Agent with `site-list` support.
+- The **网站** tab loads DoWeb-published sites using `doops_web` with `operation=site-list`. Filter by site ID or domain. Select a site to prefill a read-only inspection with its ID and domain. The listing reads release records from the target on the first visit, before any files have been uploaded to the session workspace. It requires an Agent with `site-list` support.
 - The website operations form routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoWeb skill. It reuses the selected target and Gateway
   audit for SiteSpec, Nginx validation, reload, health and rollback evidence.

@@ -1,0 +1,140 @@
+#!/usr/bin/python3 -B
+import argparse
+from datetime import datetime
+import re
+
+from _diagnostic import namespace, read_json, report, resource_name
+
+
+KINDS = {"deployment": "Deployment", "statefulset": "StatefulSet", "daemonset": "DaemonSet"}
+
+
+def controller(meta):
+    for owner in meta.get("ownerReferences", []):
+        if owner.get("controller") is True:
+            return owner["kind"], owner["uid"]
+    return None
+
+
+def reason_code(value):
+    return value if re.fullmatch(r"[A-Za-z][\w.-]{0,127}", value, re.ASCII) else "[REDACTED]"
+
+
+def pod_counts(pods):
+    counts = dict(total=0, ready=0, terminating=0, succeeded=0, abnormalCount=0, abnormal=[])
+    for pod in pods:
+        meta = pod["metadata"]
+        counts["total"] += 1
+        status = pod.get("status", {})
+        phase = status.get("phase", "Unknown")
+        if meta.get("deletionTimestamp"):
+            counts["terminating"] += 1
+        elif phase == "Succeeded":
+            counts["succeeded"] += 1
+        elif phase == "Running" and any(c["type"] == "Ready" and c["status"] == "True"
+                                        for c in status.get("conditions", [])):
+            counts["ready"] += 1
+        else:
+            counts["abnormalCount"] += 1
+            if len(counts["abnormal"]) < 20:
+                reasons = set()
+                if status.get("reason"):
+                    reasons.add(status["reason"])
+                for container in status.get("initContainerStatuses", []) + status.get("containerStatuses", []):
+                    for state, detail in container.get("state", {}).items():
+                        if state == "waiting" or (state == "terminated" and detail.get("exitCode")):
+                            if detail.get("reason"):
+                                reasons.add(detail["reason"])
+                counts["abnormal"].append(dict(name=meta["name"], phase=phase, reasons=sorted(map(reason_code, reasons))))
+    return counts
+
+
+def warnings(events, ns, objects):
+    recent = []
+    for event in events:
+        if event["type"] != "Warning" or event["metadata"]["namespace"] != ns:
+            continue
+        ref = event["involvedObject"]
+        kind = ref["kind"]
+        name = objects.get((kind, ref.get("uid")))
+        if not name or ref.get("namespace", ns) != ns:
+            continue
+        series = event.get("series") or {}
+        when = (series.get("lastObservedTime") or event.get("lastTimestamp") or event.get("eventTime")
+                or event.get("firstTimestamp") or event["metadata"]["creationTimestamp"])
+        count = series.get("count") or event.get("count") or 1
+        if type(count) is not int:
+            raise ValueError("invalid event count")
+        item = dict(object=f"{kind}/{name}", reason=reason_code(event["reason"]), count=count, time=when)
+        recent.append((datetime.fromisoformat(when.replace("Z", "+00:00")), item))
+    recent.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in recent[:10]]
+
+
+def collect():
+    parser = argparse.ArgumentParser(description="Read one workload and its controller-owned Pods.")
+    parser.add_argument("-n", "--namespace", required=True, type=namespace)
+    parser.add_argument("workload", metavar="KIND/NAME", help="deployment, statefulset or daemonset")
+    args = parser.parse_args()
+    kind, _, name = args.workload.partition("/")
+    if kind not in KINDS or not name:
+        parser.error("expected deployment/NAME, statefulset/NAME or daemonset/NAME")
+    try:
+        resource_name(name)
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
+
+    def get(*resource):
+        return read_json("kubectl", "get", *resource, "--namespace", args.namespace, "--output", "json")
+
+    def listed(resource, *flags):
+        response = get(resource, *flags)
+        if not isinstance(response, dict) or not isinstance(response.get("items"), list):
+            raise SystemExit(f"kubectl get {resource} returned an invalid list")
+        return response["items"]
+
+    workload = get(kind, name)
+    meta = workload["metadata"]
+    if (workload["kind"], meta["name"], meta["namespace"]) != (KINDS[kind], name, args.namespace) or not meta["uid"]:
+        raise ValueError("workload identity mismatch")
+    target = (KINDS[kind], meta["uid"])
+    objects = {target: name}
+    owners = {target}
+    if kind == "deployment":
+        rs_meta = (rs["metadata"] for rs in listed("replicasets"))
+        owned_sets = {("ReplicaSet", rs["uid"]): rs["name"] for rs in rs_meta
+                      if rs["namespace"] == args.namespace and controller(rs) == target}
+        owners = set(owned_sets)
+        objects.update(owned_sets)
+    pods = [p for p in listed("pods") if p["metadata"]["namespace"] == args.namespace
+            and controller(p["metadata"]) in owners]
+    objects.update({("Pod", p["metadata"]["uid"]): p["metadata"]["name"] for p in pods})
+    pod_images = set()
+    for pod in pods:
+        status = pod.get("status", {})
+        for c in status.get("initContainerStatuses", []) + status.get("containerStatuses", []):
+            if c.get("image"):
+                pod_images.add((c["name"], c["image"], c.get("imageID", "")))
+    template = workload["spec"]["template"]["spec"]
+    images = [{k: c[k] for k in ("name", "image")} for c in template.get("initContainers", []) + template["containers"]]
+    status = workload.get("status", {})
+    if kind == "daemonset":
+        ready, updated = "numberReady", "updatedNumberScheduled"
+        desired_count = status.get("desiredNumberScheduled", 0)
+    else:
+        ready, updated = "readyReplicas", "updatedReplicas"
+        desired_count = workload["spec"]["replicas"]
+    events = listed("events", "--field-selector", "type=Warning")
+    try:
+        recent_warnings = warnings(events, args.namespace, objects)
+    except (KeyError, TypeError, AttributeError, ValueError):
+        raise SystemExit("kubectl get events returned invalid Warning metadata")
+    return dict(namespace=args.namespace, workload=args.workload, generation=meta["generation"],
+                observedGeneration=status.get("observedGeneration"), desired=desired_count,
+                ready=status.get(ready, 0), updated=status.get(updated, 0),
+                images=images, podImageCount=len(pod_images),
+                podImages=[dict(name=n, image=i, imageID=d) for n, i, d in sorted(pod_images)[:20]],
+                pods=pod_counts(pods), warningEvents=recent_warnings)
+
+
+report(collect)

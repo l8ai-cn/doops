@@ -26,6 +26,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
+	"github.com/user/doops/agent/internal/dispatcher"
 	"github.com/user/doops/agent/pkg/release"
 )
 
@@ -702,26 +703,39 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			"params":  params,
 		})
 	}
+	writePolicyDenial := func(err error) bool {
+		var denied *dispatcher.BlockedError
+		if !errors.As(err, &denied) {
+			return false
+		}
+		log.Printf("command denied: tool=%s session=%s rule=%s", toolName, sessionID, denied.Rule)
+		writeJSON(buildErrorResponse(reqID, -32602, denied.Error()))
+		return true
+	}
 
 	// 工具分发
 	switch toolName {
+	case diagnosticReadTool:
+		sample, err := agentDiagnosticSample(argBytes)
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
+		writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: reqID, Result: sample})
 	case "doops_shell":
 		var args api.ShellParams
 		json.Unmarshal(argBytes, &args)
-		if gw.Dispatcher != nil {
-			if err := gw.Dispatcher.Check(args.Command); err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
-			}
-		}
 
-		log.Printf("🖥️  WS Exec: [%s] %s", sessionID, args.Command)
+		log.Printf("🖥️  WS Exec: [%s]", sessionID)
 
 		// 放弃过度设计的 PTY Sentinel 模式，换用标准 os/exec Streaming
 		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
 		defer cancelExec()
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, args.Command)
 		if err != nil {
+			if writePolicyDenial(err) {
+				return
+			}
 			resultText := "Error starting command: " + err.Error()
 			writeJSON(buildToolErrorResponse(reqID, resultText))
 			return
@@ -876,8 +890,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		defer cancelExec()
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, cmdStr)
 		if err != nil {
-			resultText := "Error starting command: " + err.Error()
-			writeJSON(buildSuccessResponse(reqID, resultText))
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 			return
 		}
 
@@ -940,20 +953,16 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_bg":
 		var args api.BgExecParams
 		json.Unmarshal(argBytes, &args)
-		// 与 doops_shell 一致: 后台任务同样要经过危险命令过滤。
-		if gw.Dispatcher != nil {
-			if err := gw.Dispatcher.Check(args.Command); err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
-			}
-		}
-		log.Printf("🚀 WS doops_bg: %s", args.Command)
+		log.Printf("🚀 WS doops_bg: [%s]", sessionID)
 		if ctx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
 		task, err := gw.submitBgTask(sessionID, args.Command, args.LogPath)
 		if err != nil {
+			if writePolicyDenial(err) {
+				return
+			}
 			writeJSON(buildErrorResponse(reqID, -32603, "Task failed: "+err.Error()))
 			return
 		}
@@ -1116,6 +1125,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			result, err := handle(ctx, sessionID, args)
 			if err != nil {
+				if errors.Is(err, errDoSQLReadCanceled) {
+					reply := buildErrorResponse(reqID, -32007, errDoSQLReadCanceled.Error())
+					reply.Error.Data = map[string]string{"sqlstate": "57014", "category": doSQLReadCanceledCategory}
+					writeJSON(reply)
+					return
+				}
 				if ctx.Err() != nil {
 					writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
 					return
@@ -1553,6 +1568,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
 	toolTraces := newDoagentToolTraceCollector(false)
+	toolTraces.ordinaryAsk = !execution.RequireToolEvidence
 	toolTraces.bindSession(doopsSessionID)
 	go func() {
 		defer close(sseDone)
@@ -1591,7 +1607,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 	case <-ctx.Done():
-		writeJSON(buildErrorResponse(reqID, -32007, doagentPromptCancelledBeforeAdmission))
+		writeJSON(promptContextResponse(reqID, ctx.Err(), true))
 		return
 	}
 
@@ -1637,7 +1653,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	promptParams["responseMode"] = "stream"
 	if ctx.Err() != nil {
-		writeJSON(buildErrorResponse(reqID, -32007, doagentPromptCancelledBeforeAdmission))
+		writeJSON(promptContextResponse(reqID, ctx.Err(), true))
 		return
 	}
 	promptResponse, promptErr := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
@@ -1706,7 +1722,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 		if !execution.RequireToolEvidence {
-			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			writeJSON(promptContextResponse(reqID, ctx.Err(), false))
 			return
 		}
 	case <-sseDone:
@@ -1726,7 +1742,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	if ctx.Err() != nil && !execution.RequireToolEvidence {
 		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout)
-		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		writeJSON(promptContextResponse(reqID, ctx.Err(), false))
 		return
 	}
 	if execution.RequireToolEvidence {
@@ -1750,15 +1766,15 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildDoagentApplyResponse(reqID, toolTraces, 0, ""))
 		return
 	}
+	if failure := toolTraces.askFailureResponse(reqID); failure != nil {
+		writeJSON(*failure)
+		return
+	}
 	if sseErr != nil && !errors.Is(sseErr, context.Canceled) {
 		log.Printf("doagent execution failed: session=%s category=doagent_execution_failed detail=%s",
 			targetSessionID, sanitizeSecretText(sseErr.Error()))
 		pushProgress(errorNotification("[error] " + sanitizeSecretText(sseErr.Error())))
 		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
-		return
-	}
-	if execution.Skill == "dosql" && toolTraces.hasFailedSQLRead() {
-		writeJSON(buildToolErrorResponse(reqID, "dosql_query_failed"))
 		return
 	}
 	if responseFormat == "json" {
@@ -2241,32 +2257,35 @@ func ensureDoagentAvailable(baseURL string) error {
 	if port == "" {
 		port = "9000"
 	}
-	bin, err := exec.LookPath("do-agent")
+	shell, err := exec.LookPath("/app/doops-shell")
 	if err != nil {
-		bin = "/usr/local/bin/do-agent"
-		if _, statErr := os.Stat(bin); statErr != nil {
-			return fmt.Errorf("do-agent binary not found")
-		}
+		return fmt.Errorf("required doagent shell: %w", err)
 	}
 	if err := os.MkdirAll("/root/ws", 0755); err != nil {
 		return fmt.Errorf("create /root/ws: %w", err)
 	}
-	cmd := exec.Command(bin, "acp-http", "--port", port, "--cwd", "/root/ws")
+	cmd := exec.Command("/usr/local/bin/do-agent", "acp-http", "--port", port, "--cwd", "/root/ws")
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), "DO_AGENT_BASH_WAIT_FOR_EXIT=1", "DO_AGENT_SHELL="+shell, "DO_AGENT_MUTATION_AUTHORITY_SECRET="+processMutationAuthoritySecret)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start do-agent acp-http: %w", err)
 	}
 	log.Printf("🤖 started doagent ACP HTTP on demand: pid=%d port=%s", cmd.Process.Pid, port)
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
 	for i := 0; i < 20; i++ {
 		if doagentTCPReady(baseURL, 500*time.Millisecond) {
 			return nil
 		}
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		select {
+		case err := <-exited:
+			if err != nil {
+				return fmt.Errorf("do-agent exited before listening: %w", err)
+			}
 			return errors.New("do-agent exited before listening")
+		case <-time.After(250 * time.Millisecond):
 		}
-		time.Sleep(250 * time.Millisecond)
 	}
 	return errors.New("do-agent did not listen after startup")
 }
@@ -2590,6 +2609,9 @@ func subscribeDoagentSSEWithCollectorReady(
 				sessionUpdate, _ := params["update"].(map[string]interface{})
 				updateType, _ := sessionUpdate["sessionUpdate"].(string)
 				if targetTurnIDReady != nil {
+					if updateType == "turn_finished" && sessionUpdate["replay"] == true {
+						continue
+					}
 					if targetTurnID == "" {
 						select {
 						case turnID, ok := <-targetTurnIDReady:
@@ -2908,8 +2930,12 @@ func executeRawCommand(ctx context.Context, command string) (*exec.Cmd, io.ReadC
 const inlineCommandLimit = 64 << 10
 
 func bashCommand(command string) (*exec.Cmd, *os.File, error) {
+	cmd, err := dispatcher.ShellCommand(command, false)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(command) <= inlineCommandLimit {
-		return exec.Command("bash", "-c", command), nil, nil
+		return cmd, nil, nil
 	}
 	file, err := os.CreateTemp("", "doops-cmd-*.sh")
 	if err != nil {
@@ -2924,7 +2950,7 @@ func bashCommand(command string) (*exec.Cmd, *os.File, error) {
 		_ = file.Close()
 		return nil, nil, fmt.Errorf("prepare long command: %w", err)
 	}
-	cmd := exec.Command("bash", "/dev/fd/3")
+	cmd.Args = []string{cmd.Args[0], "/dev/fd/3"}
 	cmd.ExtraFiles = []*os.File{file}
 	return cmd, file, nil
 }
@@ -3051,8 +3077,12 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 // waitCommandStreams owns the read ends independently of Cmd.Wait. Bound the
 // final drain because writers can escape the process-group watchdog.
 func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push notificationSender, heartbeat bool) error {
+	return waitCommandOutput(ctx, cmd, stdout, stderr, push, push, heartbeat)
+}
+
+func waitCommandOutput(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push, pushError notificationSender, heartbeat bool) error {
 	streamDone := make(chan error, 2)
-	readStream := func(pipe io.ReadCloser) {
+	readStream := func(pipe io.ReadCloser, send notificationSender) {
 		scanner := bufio.NewScanner(pipe)
 		defer func() {
 			_ = pipe.Close()
@@ -3060,11 +3090,11 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 		}()
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
-			push(rawNotification(scanner.Text() + "\n"))
+			send(rawNotification(scanner.Text() + "\n"))
 		}
 	}
-	go readStream(stdout)
-	go readStream(stderr)
+	go readStream(stdout, push)
+	go readStream(stderr, pushError)
 
 	var done, heartbeatDone chan struct{}
 	if heartbeat {
@@ -3134,16 +3164,6 @@ func writeSessionCommandAudit(sessionID, summary string, cmdErr error) {
 		log.Printf("✅ Audit Log saved to %s", logFile)
 	} else {
 		log.Printf("❌ Failed to save Audit Log for session %s: %v", sessionID, err)
-	}
-}
-
-// streamReader 逐行读取 pipe 内容并推送到 WS 客户端
-func streamReader(pipe io.ReadCloser, pushProgress notificationSender) {
-	scanner := bufio.NewScanner(pipe)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 允许长行
-	for scanner.Scan() {
-		line := scanner.Text() + "\n"
-		pushProgress(rawNotification(line))
 	}
 }
 

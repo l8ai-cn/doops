@@ -104,6 +104,8 @@ journal（begin/end + statement 指纹 + committed/verified），用于审计和
 
 ### DoSql 直接执行 SQL
 
+自然语言只读查询使用当前 Agent 可执行文件启动集群查询 Job。宿主机部署可通过 `DOSQL_SCRIPT` 指定同版本 `dosql-agent.mjs`，并通过 `DOSQL_NODE` 指定本机 Node 路径。Job 使用集群内可达的连接地址，原样 SQL 使用 Agent 所在网络可达的连接地址。
+
 已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
 二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、sqlserver、mongodb；MariaDB、TiDB 走 mysql 路径，CockroachDB 走 postgres 路径，由凭据 `connection_uri` 的 scheme 决定。
 
@@ -470,7 +472,9 @@ Use `ask` for diagnostics that require exploration. The target must have doagent
 
 ## Kubernetes Operations
 
-`doops k8s` 调用 Agent 的 `doops_k8s` 工具，不走 shell `kubectl`：
+目标已授权、命令已确定时，可通过 `doops -session <s> exec --target <t> --cmd '<命令>'` 执行原生 `kubectl` 或 `helm`。探索性诊断可用 `ask`。`doops k8s` 是可选的结构化入口，已有脚本可沿用原调用。它通过 Agent 的 `doops_k8s` 直接传递命令参数。
+
+Gateway 校验目标授权，Agent 在执行前过滤命令。遇到拒绝时停止执行，按返回原因处理。`blocked_command(rule)` 的 `next:` 给出对应提示。参见[命令过滤的范围和配置](design/COMMAND_FILTER.md)。
 
 ```bash
 doops -session ops k8s --target <t> get pods --namespace apps
@@ -480,6 +484,8 @@ doops -session ops k8s --target <t> top pods --namespace apps
 doops -session ops k8s --target <t> events --namespace apps --for deployment/api
 doops -session ops k8s --target <t> rollout status deployment/api --namespace apps
 doops -session ops k8s --target <t> get pods -A -l app=api
+doops -session ops k8s --target <t> get pdb api -n apps -o yaml
+doops -session ops k8s --target <t> get pdb -n apps -l app=api
 doops -session ops k8s --target <t> get networkpolicy worker -n apps -o yaml
 doops -session ops k8s --target <t> get deploy -n apps -o 'jsonpath={.items[*].spec.template.spec.containers[0].image}'
 doops -session ops k8s --target <t> logs pod/api-0 -n apps --previous --since 10m
@@ -501,8 +507,7 @@ ConfigMap、NetworkPolicy、HPA、PDB、RBAC、StorageClass、CRD、事件和存
 ServiceAccount 不开放。`helm values` 只返回 key 路径，`helm status` 只返回发布名、命名空间、修订和
 `info` 里的状态与时间，不返回 values、manifest、hooks 和 notes，因为它们里可能有明文。
 `get/describe/logs/top/events/rollout status/helm` 是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
-使用 target mutation lease。两类都只要求该 target 的 grant。版本发布不走这里，用
-`ask --apply`。
+使用 target mutation lease。两类都只要求该 target 的 grant。业务发布可用 `ask --apply` 或经 `exec` 执行已获授权的原生 Helm 命令。
 
 Web 控制台的「Kubernetes」标签用同一个 `doops_k8s` 工具和同一组参数完成上述操作：选择操作、
 填写 kind/名称/资源/命名空间等字段后执行，输出与 CLI 相同。写操作（滚动重启、扩缩容、

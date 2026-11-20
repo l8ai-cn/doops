@@ -25,6 +25,7 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
   CLI:   ~/.local/bin/doops
   Skill: <project>/.agent/skills/doops/SKILL.md
   Skill docs: <project>/.agent/skills/doops/docs/
+  包含资产台账迁移的版本会将 SQL 安装到 docs/migrations/，由操作员按 API 指南显式执行。
   Global Skill: ~/.agent/skills/doops/，以及已有的 ~/.codex/skills/doops/、~/.agents/skills/doops/
   Config: ~/.agent/skills/doops/config.json
 
@@ -176,6 +177,11 @@ stage_skill_destinations() {
     cp "${RELEASE_SOURCE_DIR}/backend/skills/SKILL.md" "${stage}/SKILL.md"
     mkdir "${stage}/docs"
     cp "${RELEASE_SOURCE_DIR}"/backend/docs/*.md "${stage}/docs/"
+    # Releases predating inventory have no migrations directory in their commit.
+    if [[ -d "${RELEASE_SOURCE_DIR}/backend/docs/migrations" ]]; then
+      mkdir "${stage}/docs/migrations"
+      cp "${RELEASE_SOURCE_DIR}/backend/docs/migrations/"{machine_inventory,cluster_inventory,inventory_node_links}.sql "${stage}/docs/migrations/"
+    fi
     for item in SKILL.md docs; do
       if [[ -e "${destination}/${item}" || -L "${destination}/${item}" ]]; then
         cp -a "${destination}/${item}" "${stage}/previous-${item}"

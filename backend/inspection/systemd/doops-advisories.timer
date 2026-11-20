@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the DoOps inspection advisory feed hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=doops-advisories.service
+
+[Install]
+WantedBy=timers.target

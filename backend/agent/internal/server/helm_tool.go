@@ -70,6 +70,10 @@ func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationS
 	}
 	verification, err := runHelmCommand(ctx, command, push)
 	if err != nil {
+		var failure *helmToolFailure
+		if errors.As(err, &failure) {
+			return "", err
+		}
 		return "", &helmToolFailure{cause: err, phase: "execution", executionStarted: true,
 			outcomeUnknown: ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown)}
 	}

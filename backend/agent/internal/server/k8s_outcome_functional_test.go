@@ -15,7 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 type k8sFunctionalAgent struct {
@@ -48,7 +47,7 @@ success)
   exit 0
   ;;
 failure)
-  printf '%s\n' 'synthetic kubectl failure' >&2
+  printf '%s\n' 'synthetic kubectl failure password=kubectl-diagnostic-canary' >&2
   exit 7
   ;;
 cancel)
@@ -69,7 +68,6 @@ esac
 
 	fixture := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agentGateway := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}
@@ -119,6 +117,10 @@ func TestK8SMutationOutcomeThroughRealAgentGateway(t *testing.T) {
 		waitForK8SFunctionalFile(t, f.started)
 		response := readK8SFunctionalResponse(t, client, 2)
 		assertK8SUnknownResponse(t, response)
+		message := fmt.Sprint(response["error"])
+		if !strings.Contains(message, "exit status 7") || !strings.Contains(message, "synthetic kubectl failure") || strings.Contains(message, "kubectl-diagnostic-canary") {
+			t.Fatalf("terminal response lost the native exit status or diagnostic: %s", message)
+		}
 	})
 
 	t.Run("cancel after start is unknown", func(t *testing.T) {
@@ -213,6 +215,9 @@ func TestK8SCLIWithoutConfirmThroughRealAgentGateway(t *testing.T) {
 			}
 			if tc.name == "unknown" && !strings.Contains(string(output), "synthetic kubectl failure") {
 				t.Fatalf("unknown outcome lost stderr: %s", output)
+			}
+			if strings.Contains(string(output), "kubectl-diagnostic-canary") {
+				t.Fatal("kubectl diagnostic leaked into CLI output")
 			}
 			t.Logf("CLI %s: %s", tc.name, strings.TrimSpace(string(output)))
 		})

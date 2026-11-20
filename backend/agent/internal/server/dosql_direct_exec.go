@@ -9,16 +9,38 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/sijms/go-ora/v2"
 )
 
 const (
-	doSQLDirectRowLimit   = 200
-	doSQLDirectLockWait   = 5 * time.Second
-	doSQLDirectStatementT = 60 * time.Second
+	doSQLReadCanceledCategory = "dosql_read_canceled"
+	doSQLDirectRowLimit       = 200
+	doSQLDirectLockWait       = 5 * time.Second
+	doSQLDirectStatementT     = 60 * time.Second
 )
+
+var errDoSQLReadCanceled = errors.New(doSQLReadCanceledCategory + ": PostgreSQL confirmed query cancellation (SQLSTATE 57014)")
+
+func openDoSQLDirectDB(request doSQLDirectRequest) (*sql.DB, error) {
+	if !request.ReadOnly || request.Target.Driver != "pgx" {
+		return sql.Open(request.Target.Driver, request.Target.DSN)
+	}
+	config, err := pgx.ParseConfig(request.Target.DSN)
+	if err != nil {
+		return nil, err
+	}
+	// Let the original connection receive the server error after CancelRequest.
+	// Bound the wait even if that connection or the cancel channel is lost.
+	config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+		return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: 5 * time.Second}
+	}
+	return stdlib.OpenDB(*config), nil
+}
 
 type doSQLDirectRequest struct {
 	Target       doSQLTarget
@@ -116,7 +138,7 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 			return result, fmt.Errorf("dosql_mixed_ddl_dml_unsupported: statement %d is DDL and statement %d is DML; %s commits DDL implicitly so the batch cannot be atomic, apply them as separate operations", firstDDL, firstDML, request.Target.Engine)
 		}
 	}
-	db, err := sql.Open(request.Target.Driver, request.Target.DSN)
+	db, err := openDoSQLDirectDB(request)
 	if err != nil {
 		return result, doSQLFailure("dosql_connect_failed", err.Error())
 	}
@@ -143,6 +165,13 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 	for index, statement := range request.Statements {
 		executed, err := runDoSQLStatement(ctx, tx, statement)
 		if err != nil {
+			var pgErr *pgconn.PgError
+			if request.ReadOnly && request.Target.Driver == "pgx" && ctx.Err() == context.Canceled &&
+				errors.As(err, &pgErr) && pgErr.Code == "57014" && pgErr.Routine == "ProcessInterrupts" &&
+				pgErr.Message == "canceling statement due to user request" {
+				result.Status = "canceled"
+				return result, errDoSQLReadCanceled
+			}
 			// A DDL that failed may still have committed what ran before it.
 			return result, doSQLFailure("dosql_statement_failed", fmt.Sprintf("statement %d: %v%s", index+1, err, partialCommitNote(&result)))
 		}

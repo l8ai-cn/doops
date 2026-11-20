@@ -2,7 +2,7 @@
 // width: inline beside the target switcher from 640px up, and as a row of its
 // own below the header on narrower screens, so none of them needs scrolling.
 
-export type ConsoleView = "console" | "deploy" | "cicd" | "admin"
+export type ConsoleView = "console" | "assets" | "deploy" | "admin"
 
 export interface ConsoleViewEntry {
   id: ConsoleView
@@ -10,10 +10,10 @@ export interface ConsoleViewEntry {
 }
 
 const ENTRIES: ConsoleViewEntry[] = [
-  { id: "console", label: "控制台" },
-  { id: "deploy", label: "部署" },
-  { id: "cicd", label: "CI/CD" },
-  { id: "admin", label: "管理" },
+  { id: "console", label: "目标运维" },
+  { id: "assets", label: "资产" },
+  { id: "deploy", label: "发布部署" },
+  { id: "admin", label: "平台管理" },
 ]
 
 // The admin entry only decides what is shown; the Gateway still checks every

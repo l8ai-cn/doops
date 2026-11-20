@@ -99,19 +99,29 @@ CLI 之外，DoOps Console 提供一屏总览：连接、会话、集群、任�
 安装脚本会把对应平台的预构建 CLI 放到`~/.local/bin/doops`，并把官方 Skill 装进你的项目：
 
 ```bash
-# 克隆仓库并安装（--project 指向你的业务项目）
+# 克隆仓库并安装。--version 必须是已发布的 tag，--project 指向业务项目
 git clone https://github.com/symansun/doops.git
 cd doops
-bash scripts/install.sh --project /absolute/path/to/your/project
+bash scripts/install.sh \
+  --version <tag> \
+  --project /absolute/path/to/your/project
 # 如果 ~/.local/bin 不在 PATH 里
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
 **2**
 
-**配置一个 gateway target**
+**登录 Gateway**
 
-向管理员要到 gateway 地址和 user token（或者用`doops login`以用户名密码换取），然后添加目标：
+登录属于 Gateway，不属于某一个 target。向管理员要 Gateway 地址，用用户名密码登录，或从标准输入导入已有 user token。首次登录会发现该账号可见的在线 target，并写回本机路由。token 不要放进命令参数，也不要写进 `doops add`。
+
+```bash
+doops login --gateway https://gateway.example.com
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+doops list
+```
+
+只有 Gateway 发现不到的 Agent（例如还离线）才手工添加路由。这条命令只保存路由：
 
 ```bash
 doops add \
@@ -120,11 +130,10 @@ doops add \
   --cluster prod \
   --instance master-1 \
   --aliases prod,master \
-  --token '<USER_TOKEN>' \
   --use 'prod cluster via gateway'
 ```
 
-`cluster/instance`是路由键，名字由你的部署自定义；别名`prod`、`master`之后可以直接当`--target`用。
+`cluster/instance`是路由键，名字由部署决定；别名`prod`、`master`之后可以直接当操作命令的`--target`用。
 
 **3**
 

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/user/doops/agent/api"
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 type bgTask struct {
@@ -41,8 +40,7 @@ type sessionEntry struct {
 }
 
 type Gateway struct {
-	Dispatcher *dispatcher.Dispatcher
-	mu         sync.RWMutex
+	mu sync.RWMutex
 
 	// 异步任务注册表
 	tasks   map[string]*bgTask
@@ -63,7 +61,6 @@ type Gateway struct {
 
 func NewGateway() *Gateway {
 	gw := &Gateway{
-		Dispatcher:      dispatcher.NewDispatcher(),
 		tasks:           make(map[string]*bgTask),
 		sessionMap:      make(map[string]*sessionEntry),
 		proxyAllowHosts: proxyAllowlistFromEnv(),
@@ -206,6 +203,13 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 	if err := validateSession(sessionID); err != nil {
 		return nil, err
 	}
+	cmd, script, err := bashCommand(command)
+	if err != nil {
+		return nil, err
+	}
+	if script != nil {
+		defer script.Close()
+	}
 	taskID := generateID()
 	sessionRoot, err := workspacePath(sessionID)
 	if err != nil {
@@ -225,13 +229,6 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 	}
 
 	// 构造独立进程: setsid bash -c 'command' > logPath 2>&1
-	cmd, script, err := bashCommand(command)
-	if err != nil {
-		return nil, err
-	}
-	if script != nil {
-		defer script.Close()
-	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // 独立会话组
 
 	logFile, err := os.Create(logPath)

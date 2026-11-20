@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 func TestExecutionShellStartResult(t *testing.T) {
@@ -26,7 +24,7 @@ func TestExecutionShellStartResult(t *testing.T) {
 					t.Setenv("PATH", t.TempDir())
 				}
 				f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-				agent := &Gateway{Dispatcher: dispatcher.NewDispatcher()}
+				agent := &Gateway{}
 				conn := dialFakeGatewayAgent(t, f.server.URL, "dev", "local")
 				stopped := make(chan struct{})
 				go func() {

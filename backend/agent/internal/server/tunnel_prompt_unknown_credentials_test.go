@@ -46,8 +46,9 @@ func TestGatewayPromptUnknownKeepsCredentialPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const helmUnknown = "execution_outcome_unknown: doops_helm=execution_outcome_unknown"
 	for _, category := range []string{
-		doagentPromptCleanupUnknown, "execution_outcome_unknown: prompt_transport_failed", doagentPromptQueued,
+		doagentPromptCleanupUnknown, "execution_outcome_unknown: prompt_transport_failed", helmUnknown, doagentPromptQueued,
 	} {
 		for _, operation := range []string{"ask", "apply"} {
 			t.Run(category+"/"+operation, func(t *testing.T) {
@@ -67,9 +68,19 @@ func TestGatewayPromptUnknownKeepsCredentialPreparation(t *testing.T) {
 				}
 				call := remote.call(t, "doops_agent_prompt", session)
 				op := f.operation(t, session, "running")
+				const denial = "blocked_command(maintenance): next: contact the release owner"
+				rpcError := map[string]interface{}{"code": -32603, "message": category}
+				withReceipt := category == helmUnknown && operation == "apply"
+				if withReceipt {
+					mutation := map[string]any{"tool": "doops_helm", "result": map[string]any{"content": []map[string]string{{"type": "text", "text": denial}}}}
+					rpcError["data"] = map[string]interface{}{
+						"structuredContent": map[string]any{"kind": "doops.verified-mutation", "outcome": "unknown", "mutations": []map[string]any{mutation}},
+						"rawOutput":         "synthetic-prompt-unknown-payload-canary",
+					}
+				}
 				if err := remote.write(map[string]interface{}{
 					"jsonrpc": "2.0", "id": call.id,
-					"error": map[string]interface{}{"code": -32603, "message": category},
+					"error": rpcError,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -116,11 +127,22 @@ func TestGatewayPromptUnknownKeepsCredentialPreparation(t *testing.T) {
 					}
 				}
 				rpcErr, _ := response["error"].(map[string]interface{})
+				if withReceipt {
+					data, _ := rpcErr["data"].(map[string]interface{})
+					report, _ := json.Marshal(data["structuredContent"])
+					if len(data) != 1 || !strings.Contains(string(report), denial) {
+						t.Fatalf("expected only the public receipt with the original policy hint: %s", report)
+					}
+				}
 				if response["id"] != float64(2) || rpcErr["code"] != wantCode || rpcErr["message"] != wantMessage {
 					t.Errorf("terminal category or reason changed: %#v, want %q", response, wantMessage)
 				}
 				event := executionAuditTestEvent(t, f.store, op.AuditID)
-				if event.Status != wantStatus || event.Error != wantMessage {
+				wantAuditMessage := wantMessage
+				if category == helmUnknown {
+					wantAuditMessage = "execution_outcome_unknown"
+				}
+				if event.Status != wantStatus || event.Error != wantAuditMessage {
 					t.Errorf("audit lost unknown evidence: status=%q reason=%q", event.Status, event.Error)
 				}
 				wantRollbacks := 0

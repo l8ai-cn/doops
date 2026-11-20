@@ -253,60 +253,35 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage) (string, error) {
 }
 
 type doSQLDatabaseCandidate struct {
-	DatabaseAssetID string `json:"database_asset_id"`
-	Cluster         string `json:"cluster,omitempty"`
-	Instance        string `json:"instance,omitempty"`
-	Namespace       string `json:"namespace"`
-	Service         string `json:"service"`
-	Engine          string `json:"engine"`
-	Host            string `json:"host"`
-	Port            int    `json:"port,omitempty"`
-	DatabaseName    string `json:"database_name,omitempty"`
-	Status          string `json:"status"`
-	Source          string `json:"source"`
+	DatabaseAssetID string   `json:"database_asset_id"`
+	RelatedAssetIDs []string `json:"related_asset_ids,omitempty"`
+	Cluster         string   `json:"cluster,omitempty"`
+	Instance        string   `json:"instance,omitempty"`
+	Namespace       string   `json:"namespace"`
+	Service         string   `json:"service"`
+	Engine          string   `json:"engine"`
+	Host            string   `json:"host"`
+	Port            int      `json:"port,omitempty"`
+	DatabaseName    string   `json:"database_name,omitempty"`
+	Status          string   `json:"status"`
+	Source          string   `json:"source"`
 }
 
 // discoverDatabaseCandidateList inspects only non-secret Kubernetes metadata.
 // It never reads Secret values; credentials are required for an actual
 // database connection after the user selects a candidate.
 func discoverDatabaseCandidateList(ctx context.Context) (string, string, []doSQLDatabaseCandidate, error) {
-	command := exec.CommandContext(ctx, "kubectl", "get", "pods,services,deployments,statefulsets", "--all-namespaces", "--output", "json")
-	output, err := command.Output()
+	objects, err := databaseDiscoveryObjects(ctx)
 	if err != nil {
-		return "", "", nil, errors.New("dosql_discovery_unavailable")
-	}
-	var list struct {
-		Items []map[string]interface{} `json:"items"`
-	}
-	if err := json.Unmarshal(output, &list); err != nil {
-		return "", "", nil, errors.New("dosql_discovery_invalid")
+		return "", "", nil, err
 	}
 	cluster := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_CLUSTER"))
 	instance := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_INSTANCE"))
 	seen := map[string]doSQLDatabaseCandidate{}
-	for _, item := range list.Items {
-		metadata, _ := item["metadata"].(map[string]interface{})
-		namespace, _ := metadata["namespace"].(string)
-		name, _ := metadata["name"].(string)
-		if namespace == "" || name == "" {
-			continue
-		}
-		engine := detectDatabaseEngine(item)
-		if engine == "" {
-			continue
-		}
-		databaseName := detectDatabaseName(item, engine)
-		port := detectDatabasePort(item, engine)
-		key := strings.Join([]string{namespace, name, engine}, "/")
-		status := "candidate"
-		if databaseName == "" {
-			status = "needs_database_name_or_credential"
-		}
-		seen[key] = doSQLDatabaseCandidate{
-			DatabaseAssetID: databaseAssetID(cluster, instance, namespace, name, engine),
-			Cluster:         cluster, Instance: instance, Namespace: namespace, Service: name,
-			Engine: engine, Host: name + "." + namespace + ".svc", Port: port,
-			DatabaseName: databaseName, Status: status, Source: stringValue(item["kind"]),
+	for _, item := range objects {
+		candidate, ok := databaseDiscoveryCandidate(item, cluster, instance)
+		if ok {
+			seen[strings.Join([]string{candidate.Namespace, candidate.Service, candidate.Engine}, "/")] = candidate
 		}
 	}
 	items := make([]doSQLDatabaseCandidate, 0, len(seen))
@@ -319,11 +294,54 @@ func discoverDatabaseCandidateList(ctx context.Context) (string, string, []doSQL
 	return cluster, instance, items, nil
 }
 
+func databaseDiscoveryObjects(ctx context.Context) ([]map[string]interface{}, error) {
+	command := exec.CommandContext(ctx, "kubectl", "get", "pods,services,deployments,statefulsets", "--all-namespaces", "--output", "json")
+	output, err := command.Output()
+	if err != nil {
+		return nil, errors.New("dosql_discovery_unavailable")
+	}
+	var list struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.Unmarshal(output, &list); err != nil {
+		return nil, errors.New("dosql_discovery_invalid")
+	}
+	return list.Items, nil
+}
+
+func databaseDiscoveryCandidate(item map[string]interface{}, cluster, instance string) (doSQLDatabaseCandidate, bool) {
+	metadata, _ := item["metadata"].(map[string]interface{})
+	namespace, _ := metadata["namespace"].(string)
+	name, _ := metadata["name"].(string)
+	if namespace == "" || name == "" {
+		return doSQLDatabaseCandidate{}, false
+	}
+	engine := detectDatabaseEngine(item)
+	if engine == "" {
+		return doSQLDatabaseCandidate{}, false
+	}
+	databaseName := detectDatabaseName(item, engine)
+	port := detectDatabasePort(item, engine)
+	status := "candidate"
+	if databaseName == "" {
+		status = "needs_database_name_or_credential"
+	}
+	return doSQLDatabaseCandidate{
+		DatabaseAssetID: databaseAssetID(cluster, instance, namespace, name, engine),
+		Cluster:         cluster, Instance: instance, Namespace: namespace, Service: name,
+		Engine: engine, Port: port,
+		DatabaseName: databaseName, Status: status, Source: stringValue(item["kind"]),
+	}, true
+}
+
 func discoverDatabaseCandidates(ctx context.Context) (string, error) {
-	cluster, instance, items, err := discoverDatabaseCandidateList(ctx)
+	objects, err := databaseDiscoveryObjects(ctx)
 	if err != nil {
 		return "", err
 	}
+	cluster := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_CLUSTER"))
+	instance := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_INSTANCE"))
+	items := databaseInventoryRows(objects, cluster, instance)
 	result := map[string]interface{}{
 		"status": "discovered", "cluster": cluster, "instance": instance,
 		"candidates": items,
@@ -565,23 +583,27 @@ func buildDoSQLExecutionRequest(params doSQLParams, binding api.AgentCredentialB
 			return nil, nil, errors.New("statement_required")
 		}
 	}
+	runnerPath, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve DoSql runner executable: %w", err)
+	}
 	env := []string{}
 	if params.Engine == "mysql" {
 		request["adapter"] = map[string]interface{}{
-			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"type": "doops-go", "engine": params.Engine, "runnerPath": runnerPath,
 			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
 			"clientImage": doSQLClientImage(params.Engine), "urlKey": "SPRING_DATASOURCE_URL",
 			"userKey": "SPRING_DATASOURCE_USERNAME", "passwordKey": "SPRING_DATASOURCE_PASSWORD",
 		}
 	} else if params.Engine == "postgres" {
 		request["adapter"] = map[string]interface{}{
-			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"type": "doops-go", "engine": params.Engine, "runnerPath": runnerPath,
 			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
 			"clientImage": doSQLClientImage(params.Engine), "uriKey": "connection_uri",
 		}
 	} else {
 		request["adapter"] = map[string]interface{}{
-			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"type": "doops-go", "engine": params.Engine, "runnerPath": runnerPath,
 			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
 			"clientImage": doSQLClientImage(params.Engine), "uriKey": "connection_uri",
 		}

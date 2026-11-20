@@ -7,20 +7,18 @@ import { ServerIcon, SparkIcon, TerminalIcon } from "./icons"
 const STEPS = [
   {
     icon: ServerIcon,
-    title: "欢迎使用 DoOps 控制台",
-    body: "这是一个让运维像聊天一样简单的平台。下面用三步带你快速上手，全程不到一分钟。",
-    tip: "如果你只是想先看看效果，可以直接关闭本引导，使用演示数据探索。",
+    title: "从资产看板了解平台状态",
+    body: "打开「资产」查看可见集群、异常和本周巡检。在「机器台账」或「集群台账」可以找到指定资产。",
   },
   {
     icon: TerminalIcon,
-    title: "第一步：选择一台已接入的机器",
-    body: "在左侧选择 target 后再开始运维。列表为空时，说明这个账号还没有可见的 target 授权，或对应 Agent 不在线；Agent 接入与授权由管理员在 Gateway 侧完成。",
+    title: "选择目标 Agent",
+    body: "在「目标运维」顶部选择已授权的在线 Agent。新 Agent 的安装步骤在「发布部署 → 首次接入」。",
   },
   {
     icon: SparkIcon,
-    title: "第二步：开始运维",
-    body: "在左侧选中机器后，打开「AI 对话」用中文描述需求，或在「终端」直接执行命令。「概览」页随时查看机器健康状态。",
-    tip: "试试在 AI 对话里输入：帮我看看磁盘空间还剩多少。",
+    title: "查看资源或执行操作",
+    body: "在「操作资源」中查数据库、网站或 Kubernetes，在「运维工具」中打开凭据、审计或终端。也可以进入「AI 助手」描述需求。",
   },
 ]
 
@@ -38,10 +36,6 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
         </div>
         <h2 className="text-xl font-semibold tracking-tight text-card-foreground">{cur.title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{cur.body}</p>
-
-        {cur.tip && (
-          <p className="mt-4 rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">{cur.tip}</p>
-        )}
 
         <div className="mt-6 flex items-center justify-between">
           <div className="flex items-center gap-1.5">

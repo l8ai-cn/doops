@@ -140,7 +140,11 @@ echo "✅ doagent mutation authority: initialized"
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
 export DO_AGENT_URL="${DO_AGENT_URL:-http://127.0.0.1:${DO_AGENT_PORT}}"
 echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
-env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+if [ ! -f /app/doops-shell ] || [ ! -x /app/doops-shell ]; then
+    echo "required /app/doops-shell is not executable" >&2
+    exit 1
+fi
+DO_AGENT_BASH_WAIT_FOR_EXIT=1 DO_AGENT_SHELL=/app/doops-shell DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
     /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws &
 DOAGENT_PID=$!
 PIDS_TO_CLEANUP+=("$DOAGENT_PID")
@@ -148,7 +152,8 @@ sleep 2
 if kill -0 $DOAGENT_PID 2>/dev/null; then
     echo "✅ doagent started (PID=$DOAGENT_PID, port=${DO_AGENT_PORT})"
 else
-    echo "⚠️  doagent failed to start, doops_agent_prompt will not work"
+    echo "doagent failed to start" >&2
+    exit 1
 fi
 
 # ========== BuildKit 守护进程 (开箱即用镜像构建) ==========

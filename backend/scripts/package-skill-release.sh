@@ -3,10 +3,8 @@ set -euo pipefail
 
 # Package the operator Skill/docs for a GitHub Release.
 #
-# The GitHub Release installer downloads doops-skill.tar.gz and expects the
-# archive to contain skills/SKILL.md and docs/*.md at those paths. This script
-# converts the repository layout into that release layout, appends the tarball
-# to checksums.txt, and is safe to run once per release build.
+# Keep the operator's inventory migrations next to the guides that link to
+# them. Packaging and installing these documents never applies the SQL.
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 RELEASE_DIR="${1:?usage: package-skill-release.sh <release-dir>}"
 
@@ -22,12 +20,14 @@ fi
 mkdir -p "${RELEASE_DIR}"
 staging="$(mktemp -d "${TMPDIR:-/tmp}/doops-skill.XXXXXX")"
 trap 'rm -rf "${staging}"' EXIT
-mkdir -p "${staging}/skills" "${staging}/docs" "${staging}/scripts"
+mkdir -p "${staging}/skills" "${staging}/docs/migrations" "${staging}/scripts"
 cp "${ROOT_DIR}/backend/skills/SKILL.md" "${staging}/skills/SKILL.md"
 cp "${ROOT_DIR}"/backend/docs/*.md "${staging}/docs/"
+cp "${ROOT_DIR}/backend/docs/migrations/"{machine_inventory,cluster_inventory,inventory_node_links}.sql "${staging}/docs/migrations/"
 cp "${ROOT_DIR}/scripts/install.sh" "${staging}/scripts/install.sh"
 
-tar -C "${staging}" -czf "${RELEASE_DIR}/doops-skill.tar.gz" skills docs scripts/install.sh
+# Do not add macOS AppleDouble (._*) metadata entries to the portable bundle.
+COPYFILE_DISABLE=1 tar -C "${staging}" -czf "${RELEASE_DIR}/doops-skill.tar.gz" skills docs scripts/install.sh
 
 hash_file() {
   local file="$1"
@@ -45,4 +45,4 @@ if [[ -f "${checksums}" ]]; then
   mv "${checksums}.tmp" "${checksums}"
 fi
 printf '%s  doops-skill.tar.gz\n' "$(hash_file "${RELEASE_DIR}/doops-skill.tar.gz")" >> "${checksums}"
-echo "packaged doops-skill.tar.gz with skills/SKILL.md and docs/*.md"
+echo "packaged doops-skill.tar.gz with operator guides and inventory migrations"

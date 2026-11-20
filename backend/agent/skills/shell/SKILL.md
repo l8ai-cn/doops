@@ -1,6 +1,6 @@
 ---
 name: shell
-description: 进入当前 target 的宿主机，或把结构化工具未覆盖的操作交给受审计的 exec
+description: 进入当前 target 的宿主机，或通过受审计的 exec 执行目标授权范围内的确定命令
 triggers:
   keywords: [宿主机, 进入节点, nsenter]
 phase: [analyze]
@@ -80,11 +80,11 @@ nsenter -t 1 -m -u -i -n -- sh -c '
 - 需要临时文件时用 `mktemp -d /tmp/doops-XXXXXX`；只清理本轮独占目录，不清理前缀通配符。
   依赖它的任务结束后才清理；失败保留必要诊断并报告位置。
 - 使用受管凭据引用；不打印、展开或把秘密内联进命令、prompt、日志、工作区，禁用敏感链路的 xtrace。
-- Helm 发布可用 `mcp_doops_helm`，用户明确授权的原生 Helm 命令也可交上层经
-  `doops -session <s> exec --target <t> --cmd '<helm 命令>'` 执行；沿用已有授权，
+- 已确定的原生 `kubectl` 或 `helm` 命令可由上层在目标授权范围内经 `doops -session <s> exec --target <t> --cmd '<命令>'` 执行。
+  `doops k8s` 是可选的结构化入口，已有脚本可沿用原调用。授权或策略拒绝时停止执行，按返回原因处理。
+- Helm 发布也可用 `mcp_doops_helm`。沿用已有授权，
   不新增 CI、镜像、资源种类或重复确认门禁。保留原生命令退出码与 release 终态，
   不以 exec 结果替代 MCP attestation，不把 Helm 成功说成全业务健康。
   exec 不解析受管凭据引用，不能读取或内联凭据 payload 来补齐认证。
-- 运维变更交上层
-  `doops -session <s> k8s --target <t> ...`，直接执行已明确的操作；数据库变更交上层
+- 数据库变更交上层
   `doops -session <s> sql --target <t> --mode apply --sql/--file`，不改用 shell。

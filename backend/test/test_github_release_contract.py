@@ -210,6 +210,17 @@ def test_package_skill_release_script_builds_installer_layout(tmp_path):
     assert any(name.startswith("docs/") and name.endswith(".md") for name in names)
     assert "scripts/install.sh" in names
 
+    migrations = {
+        f"docs/migrations/{name}.sql"
+        for name in ("machine_inventory", "cluster_inventory", "inventory_node_links")
+    }
+    assert {name for name in names if name.endswith(".sql")} == migrations
+    unpacked = tmp_path / "unpacked"
+    unpacked.mkdir()
+    subprocess.run(["tar", "-xzf", dist / "doops-skill.tar.gz", "-C", unpacked], check=True)
+    for path in migrations:
+        assert (unpacked / path).read_bytes() == (ROOT / "backend" / path).read_bytes()
+
     lines = (dist / "checksums.txt").read_text(encoding="utf-8").splitlines()
     assert lines[0] == "a  doops-linux-amd64"
     skill_lines = [line for line in lines if line.endswith("  doops-skill.tar.gz")]

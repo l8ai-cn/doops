@@ -240,9 +240,14 @@ func callK8SMCPToolDomain(
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) && readOnlyMCPTool(call.Name) {
-			// A read that runs out of time changed nothing; say so plainly.
-			return buildToolErrorResponse(request.ID, fmt.Sprintf("tool_timeout: %s did not finish within %s; nothing was changed", call.Name, mcpToolCallDeadline))
+		if readOnlyMCPTool(call.Name) {
+			switch {
+			case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+				return buildStructuredToolErrorResponse(request.ID, fmt.Sprintf("tool_timeout: %s did not finish within %s; nothing was changed", call.Name, mcpToolCallDeadline),
+					map[string]interface{}{"errorCode": "tool_timeout"})
+			case errors.Is(ctx.Err(), context.Canceled), errors.Is(err, context.Canceled):
+				return buildStructuredToolErrorResponse(request.ID, "tool_cancelled: "+call.Name, map[string]interface{}{"errorCode": "tool_cancelled"})
+			}
 		}
 		if ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown) ||
 			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

@@ -1,6 +1,6 @@
 ---
 name: k8s
-description: 用 doops 结构化工具读 Kubernetes/Helm 状态并管理 Helm release
+description: 用只读原生诊断脚本和 doops 结构化工具读 Kubernetes/Helm 状态并管理 Helm release
 triggers:
   keywords: [k8s, kubernetes, kubectl, pod, deployment, namespace, daemonset, ingress, helm, rollout]
   regex: "kubectl\\s+|k8s|kubernetes|helm\\s+|rollout"
@@ -14,6 +14,18 @@ conflicts: []
 只在上下文已明确 Kubernetes 时使用；“重启服务”不自动指向集群。
 沿用本次 Gateway target 对应的集群和运行时配置，资源名、namespace、release 从任务
 或指定资产核对，不从示例补默认值。只读/方案任务到证据或方案结束，不进入发布。
+
+## 前台 Bash 只读诊断
+
+```bash
+/app/skills/k8s/scripts/workload-status --namespace <ns> deployment/<name>
+/app/skills/k8s/scripts/release-status --namespace <ns> <release>
+```
+
+- `workload-status` 支持 `deployment`、`statefulset`、`daemonset`。返回期望、就绪和已更新副本数、模板镜像、所属 Pod 已报告的镜像及 imageID（去重后最多 20 项）。Deployment 按控制器 UID 经 ReplicaSet 找 Pod，其余两类按直接控制器 UID 归属。`pods` 单列终止中和已完成的 Pod，列出异常总数及最多 20 个样本。
+- `warningEvents` 是同 namespace 当前工作负载、所属 ReplicaSet 和 Pod 的最近 10 条 Warning，按最近发生时间倒序，仅含对象名及类型、reason、次数和时间。需要读取工作负载并列出该 namespace 的 Pod、Event，Deployment 还需要列出 ReplicaSet。多次读取之间集群可能变化。
+- `release-status` 调用 `helm history --max 5`，返回最新修订 `current` 与最多四条 `previous`，字段为 revision、status、chart、updated。输出省略 values、manifest、notes 和可能回显模板内容的 description。
+- 每步通过固定的 `/app/doops-shell --argv` 执行。退出 0 表示读取完成，结合 JSON 判断运行状态。任一步读取失败即停止，stdout 无部分结果，stderr 保留脱敏原因并返回非零状态。遇到 `blocked_command` 时向上层报告规则和提示，结束本次诊断。
 
 ## 读状态：`mcp_doops_k8s_read`
 

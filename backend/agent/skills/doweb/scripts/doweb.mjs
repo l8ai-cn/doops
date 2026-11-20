@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs"
+import { isIP } from "node:net"
 import { dirname, join, resolve } from "node:path"
 
 const DEFAULTS = {
@@ -34,12 +35,14 @@ const runtimeLayout = loadRuntimeLayout()
 function loadRuntimeLayout() {
   if (!process.env.DOWEB_RUNTIME_CONFIG) return {}
   const config = JSON.parse(readFileSync(process.env.DOWEB_RUNTIME_CONFIG, "utf8"))
-  const fields = new Set(["base-dir", "nginx-available-dir", "nginx-enabled-dir", "nginx-snippet-dir", "nginx-bin", "reload-argv", "listen-port"])
+  const fields = new Set(["base-dir", "nginx-available-dir", "nginx-enabled-dir", "nginx-snippet-dir", "nginx-bin", "reload-argv", "listen-port", "listen-address"])
   if (!config || Array.isArray(config) || typeof config !== "object") throw new Error("DoWeb runtime config must be an object")
   for (const [key, value] of Object.entries(config)) {
     if (!fields.has(key)) throw new Error(`unsupported DoWeb runtime config field: ${key}`)
     if (key === "reload-argv") {
       if (!Array.isArray(value) || !value.length || value.some((part) => typeof part !== "string" || !part)) throw new Error("reload-argv must be a nonempty argument array")
+    } else if (key === "listen-address") {
+      if (typeof value !== "string" || !isIP(value)) throw new Error("listen-address must be an IP address")
     } else if (key === "listen-port") validatePort(value, key)
     else if (typeof value !== "string" || !value.trim()) throw new Error(`${key} must be text`)
   }
@@ -268,6 +271,7 @@ function paths(options, siteID = "") {
     reloadCmd: opt(settings, "reload-cmd", DEFAULTS.reloadCmd),
     reloadArgv: runtimeLayout["reload-argv"],
     listenPort: runtimeLayout["listen-port"],
+    listenAddress: runtimeLayout["listen-address"],
     siteDir,
     releasesDir: siteID ? join(siteDir, "releases") : "",
     currentLink: siteID ? join(siteDir, "current") : "",
@@ -379,8 +383,10 @@ function renderConfig(spec, sitePaths) {
     lines.push("}", "")
   }
   const listen = spec.tls_cert && spec.tls_key ? "443 ssl http2" : String(sitePaths.listenPort || 80)
+  const address = sitePaths.listenAddress
+  const binding = address && isIP(address) === 6 ? `[${address}]` : address
   lines.push("server {")
-  lines.push(`  listen ${listen};`)
+  lines.push(`  listen ${binding ? `${binding}:` : ""}${listen};`)
   lines.push(`  server_name ${spec.domain};`)
   if (spec.tls_cert && spec.tls_key) {
     lines.push(`  ssl_certificate ${spec.tls_cert};`)

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 // freeTextAuditTarget is a cluster value that is not a plain identifier: the
@@ -21,7 +19,6 @@ const freeTextAuditTarget = "dev-probe=request text"
 func startClusterAgent(t *testing.T, f *executionLifecycleFixture, cluster string) {
 	t.Helper()
 	gatewayAgent := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

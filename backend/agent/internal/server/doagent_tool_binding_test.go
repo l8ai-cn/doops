@@ -842,7 +842,7 @@ func TestSQLReadToolFailureCannotBecomeSuccessfulPrompt(t *testing.T) {
 			collector.calls["sql"] = doagentToolTrace{
 				ToolName: "mcp_dosql_read", Status: test.status, resultJSON: json.RawMessage(test.result),
 			}
-			if collector.hasFailedSQLRead() != test.failed {
+			if (collector.askFailureResponse(1) != nil) != test.failed {
 				t.Fatalf("SQL tool failure state was lost: status=%s result=%s", test.status, test.result)
 			}
 		})

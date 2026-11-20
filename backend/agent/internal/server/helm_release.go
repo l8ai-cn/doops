@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 const (
@@ -90,7 +92,14 @@ func redactHelmDiagnostic(text string) string {
 }
 
 func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSender) (string, error) {
-	output, err := mutateHelmRelease(ctx, command)
+	output, started, err := mutateHelmRelease(ctx, command)
+	if !started {
+		var denied *dispatcher.BlockedError
+		if errors.As(err, &denied) {
+			return "", &helmToolFailure{cause: err, phase: "policy"}
+		}
+		return "", &helmToolFailure{cause: err, phase: "preparation"}
+	}
 	if err != nil {
 		if command.mutationID == "" {
 			return "", err
@@ -102,7 +111,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 		if settleErr != nil {
 			if ctx.Err() != nil {
 				return "", helmStepUnknown("helm_interrupted", fmt.Sprintf(
-					"the call ran out of time and the release history could not be read; check helm status before any retry; helm reported: %s", err.Error()))
+					"the call ran out of time; %s; check helm status before any retry; helm reported: %s", settleErr, err))
 			}
 			return "", helmStepUnknown("helm_mutation_failed", fmt.Sprintf(
 				"%s; check helm status before any retry; helm reported: %s", settleErr.Error(), err.Error()))
@@ -129,42 +138,51 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", helmStepUnknown("helm_interrupted", fmt.Sprintf(
-				"the call ran out of time after revision %d was reported; release status was not confirmed", revision))
+				"the call ran out of time after revision %d was reported; release status was not confirmed: %s", revision, err))
 		}
 		return "", err
 	}
 	return verified, nil
 }
 
-func mutateHelmRelease(ctx context.Context, command helmCommand) ([]byte, error) {
+func mutateHelmRelease(ctx context.Context, command helmCommand) ([]byte, bool, error) {
 	args := append([]string(nil), command.args...)
 	if command.operation() == "upgrade" {
 		args = append(args, "--output=json")
 	}
-	cmd := helmProcess(ctx, command.cwd, args...)
+	cmd, err := helmProcess(ctx, command.cwd, args...)
+	if err != nil {
+		return nil, false, err
+	}
 	// stdout may contain chart-controlled notes and is only parsed for the
 	// release revision; it is never returned to the caller.
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return nil, false, helmStepFailure("helm_mutation_failed", err.Error())
+	}
+	if err := cmd.Wait(); err != nil {
 		var exit *exec.ExitError
 		if ctx.Err() != nil || (errors.As(err, &exit) && exit.ExitCode() < 0) {
-			return nil, helmStepUnknown("helm_interrupted", helmStderrReason(stderr.Bytes()))
+			return nil, true, helmStepUnknown("helm_interrupted", helmStderrReason(stderr.Bytes()))
 		}
-		return nil, helmStepFailure("helm_mutation_failed", helmStderrReason(stderr.Bytes()))
+		return nil, true, helmStepFailure("helm_mutation_failed", helmStderrReason(stderr.Bytes()))
 	}
-	return stdout.Bytes(), nil
+	return stdout.Bytes(), true, nil
 }
 
 // helmProcess stops Helm with SIGTERM when the context ends, so Helm can record
 // the revision and release its lock before the grace period expires.
-func helmProcess(ctx context.Context, cwd string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "helm", args...)
+func helmProcess(ctx context.Context, cwd string, args ...string) (*exec.Cmd, error) {
+	cmd, err := dispatcher.CommandContext(ctx, "helm", args...)
+	if err != nil {
+		return nil, err
+	}
 	cmd.Dir = cwd
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = helmTerminationGrace
-	return cmd
+	return cmd, nil
 }
 
 type helmHistoryEntry struct {
@@ -178,8 +196,11 @@ type helmHistoryEntry struct {
 func settleHelmRevision(ctx context.Context, command helmCommand) (string, error) {
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), helmSettleTimeout)
 	defer cancel()
-	historyCmd := exec.CommandContext(settleCtx, "helm", "history", command.release,
+	historyCmd, err := dispatcher.CommandContext(settleCtx, "helm", "history", command.release,
 		"--namespace", command.namespace, "--max", "20", "--output", "json")
+	if err != nil {
+		return "", helmStepUnknown("helm_interrupted", fmt.Sprintf("read release history: %v", err))
+	}
 	historyCmd.Dir = command.cwd
 	raw, err := historyCmd.Output()
 	var exit *exec.ExitError
@@ -222,8 +243,11 @@ func settleHelmRevision(ctx context.Context, command helmCommand) (string, error
 		return "", helmStepUnknown("helm_interrupted", fmt.Sprintf(
 			"revision %d is %s and there is no deployed revision to roll back to; inspect the release before retrying", mine.Revision, mine.Status))
 	}
-	rollbackCmd := exec.CommandContext(settleCtx, "helm", "rollback", command.release, fmt.Sprintf("%d", deployed),
+	rollbackCmd, err := dispatcher.CommandContext(settleCtx, "helm", "rollback", command.release, fmt.Sprintf("%d", deployed),
 		"--namespace", command.namespace)
+	if err != nil {
+		return "", helmStepUnknown("helm_interrupted", fmt.Sprintf("revision %d stayed %s; rollback to revision %d did not start: %v", mine.Revision, mine.Status, deployed, err))
+	}
 	rollbackCmd.Dir = command.cwd
 	var stderr bytes.Buffer
 	rollbackCmd.Stderr = &stderr
@@ -266,8 +290,11 @@ func parseHelmReleaseOutput(output []byte, expectedDescription string) (int, err
 }
 
 func verifyHelmReleaseState(ctx context.Context, command helmCommand) (string, error) {
-	statusCmd := exec.CommandContext(ctx, "helm", "status", command.release,
+	statusCmd, err := dispatcher.CommandContext(ctx, "helm", "status", command.release,
 		"--namespace", command.namespace, "--output", "json")
+	if err != nil {
+		return "", helmStepUnknown("helm_verification_failed", fmt.Sprintf("read current release status: %v", err))
+	}
 	statusCmd.Dir = command.cwd
 	statusBytes, err := statusCmd.Output()
 	if err != nil {

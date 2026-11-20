@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/internal/dispatcher"
 	"github.com/user/doops/agent/internal/server"
 	"github.com/user/doops/agent/pkg/release"
 )
@@ -32,6 +33,9 @@ var (
 )
 
 func main() {
+	if err := dispatcher.ValidateConfig(); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "database-runner" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

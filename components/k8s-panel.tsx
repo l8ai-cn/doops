@@ -65,11 +65,13 @@ export function K8sPanel({
   session,
   target,
   sessionId,
+  initialNamespace,
   onRunningChange,
 }: {
   session: Session
   target: Target
   sessionId: string
+  initialNamespace?: string
   onRunningChange: (running: boolean) => void
 }) {
   const targetKey = target.key
@@ -203,6 +205,7 @@ export function K8sPanel({
   return (
     <div className="h-full overflow-y-auto p-4">
       <K8sResourceOverview
+        initialNamespace={initialNamespace}
         session={session}
         target={target}
         sessionId={sessionId}

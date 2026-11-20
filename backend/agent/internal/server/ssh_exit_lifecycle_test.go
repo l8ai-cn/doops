@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/doops/agent/internal/dispatcher"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -120,7 +119,7 @@ func startSSHExitTestServer(t *testing.T, run func(*ssh.ServerConn, ssh.Channel,
 
 func startSSHExitTestAgent(t *testing.T, f *executionLifecycleFixture) {
 	t.Helper()
-	agent := &Gateway{Dispatcher: dispatcher.NewDispatcher()}
+	agent := &Gateway{}
 	conn := dialFakeGatewayAgent(t, f.server.URL, "dev", "local")
 	done := make(chan struct{})
 	go func() {

@@ -1,0 +1,1620 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>平台看板 · DoOps 资产评审原型</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: oklch(.16 .012 250); --card: oklch(.2 .014 250); --muted: oklch(.25 .012 250);
+      --fg: oklch(.92 .006 250); --sub: oklch(.65 .01 250); --line: oklch(.3 .014 250);
+      --primary: oklch(.72 .13 175); --warning: oklch(.78 .13 75);
+      --tint: color-mix(in oklch, var(--primary) 10%, var(--card));
+      --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.5 "Geist", system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+    h1,h2,h3,p,dl,dd { margin: 0; }
+    h1 { font-size: 24px; line-height: 1.3; }
+    h2 { font-size: 16px; } h3 { font-size: 14px; }
+    a { color: var(--primary); text-decoration-thickness: 1px; text-underline-offset: 4px; }
+    a:hover { text-decoration: underline; }
+    :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+    [tabindex="-1"]:focus { outline: none; }
+    small,.note,time { font-size: 12px; color: var(--sub); }
+    code,.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    code { font-size: .94em; overflow-wrap: anywhere; }
+    header,.bar,.heading,.group-title,.tabs,.graph-head,.crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    header { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+    header img { width: 72px; height: auto; }
+    .product { border-left: 1px solid var(--line); padding-left: 12px; margin-left: 4px; font-weight: 600; }
+    .review { margin-left: auto; font-size: 12px; color: var(--sub); }
+    main { padding: 16px; display: grid; gap: 16px; }
+    .crumbs { color: var(--sub); font-size: 12px; }
+    .crumbs a { color: inherit; } .crumbs b { color: var(--fg); font-weight: 500; }
+    .heading,.group-title,.graph-head { justify-content: space-between; }
+    .heading { gap: 12px; align-items: end; }
+    .heading p { margin-top: 4px; }
+    .panel { min-width: 0; padding: 16px; border: 1px solid var(--line); background: var(--card); border-radius: 14px; }
+    .group-title { margin-bottom: 16px; }
+    .count { margin-left: 5px; font: 12px var(--mono); color: var(--sub); }
+    .pair,.tables,.graph-layout { display: grid; gap: 16px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .tables { grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); align-items: start; }
+    .coverage { padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+    .coverage .bar { justify-content: space-between; align-items: baseline; }
+    .coverage strong { font: 600 32px/1.25 var(--mono); letter-spacing: -.04em; }
+    .coverage strong small { font-size: 16px; color: inherit; }
+    .rail { position: relative; height: 6px; background: var(--muted); border-radius: 4px; margin: 16px 0 12px; }
+    .rail i { display: block; background: var(--primary); height: 100%; border-radius: inherit; }
+    .below .rail i { background: var(--warning); }
+    .rail::after { content: ''; position: absolute; left: 80%; top: -3px; height: 12px; border-left: 2px solid var(--fg); }
+    .ok { color: var(--primary); } .warn { color: var(--warning); }
+    .foot { margin-top: 12px; }
+    table { border-collapse: collapse; width: 100%; text-align: left; font-variant-numeric: tabular-nums; }
+    th,td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th:first-child,td:first-child { padding-left: 0; }
+    th:last-child,td:last-child { padding-right: 0; }
+    th { color: var(--sub); font-size: 12px; font-weight: 500; } tbody tr:last-child td { border-bottom: 0; }
+    td small { display: block; }
+    .go { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; font-weight: 600; }
+    .tabs { border-bottom: 1px solid var(--line); gap: 16px; }
+    .tabs a,.tabs span { display: inline-flex; min-height: 44px; padding: 8px 4px; align-items: center; border-bottom: 2px solid transparent; }
+    .tabs a { text-decoration: none; color: var(--sub); }
+    .tabs [aria-current] { color: var(--primary); border-color: var(--primary); }
+    .scope { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--sub); }
+    select,.node { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+    select { min-height: 36px; padding: 4px 8px; }
+    .metrics { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 12px 0; }
+    .reading { border-left: 1px solid var(--line); padding: 0 12px; }
+    .reading:first-child { border: none; padding-left: 0; }
+    .reading strong { display: block; font: 600 21px/1.6 var(--mono); }
+    .reading .missing { color: var(--warning); font: 600 16px/2.1 system-ui,sans-serif; }
+    .sources { margin-bottom: 8px; } .sources strong { color: var(--primary); }
+    .graph-layout { grid-template-columns: minmax(0,1.55fr) minmax(270px,1fr); align-items: start; }
+    .graph-head { margin-bottom: 12px; }
+    .plot { display: grid; grid-template-columns: minmax(0,1fr) 48px minmax(0,1fr); align-items: center; padding: 32px 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+    .apps { display: grid; gap: 16px; }
+    .node { display: grid; position: relative; align-content: center; gap: 2px; min-height: 72px; padding: 8px 12px; background: var(--card); text-decoration: none; }
+    .node small { font-size: 12px; overflow-wrap: anywhere; }
+    .node:hover,.node[aria-current] { border-color: var(--primary); background: var(--tint); text-decoration: none; }
+    .node[aria-current] b { color: var(--primary); }
+    .apps .node::after,.wire::after,.wire::before { content: ''; position: absolute; border-color: var(--sub); }
+    .apps .node::after { width: 24px; left: calc(100% + 1px); top: 50%; border-top: 1px solid var(--sub); }
+    .wire { position: relative; align-self: stretch; }
+    .wire::after { left: 50%; right: 0; top: 50%; border-top: 1px solid var(--sub); }
+    .fork::before { left: 50%; height: calc(50% + 8px); top: 50%; transform: translateY(-50%); border-left: 1px solid var(--sub); }
+    .db.connected::before { content: ''; position: absolute; left: -7px; top: calc(50% - 3px); width: 5px; height: 5px; transform: rotate(45deg); border-top: 1px solid var(--sub); border-right: 1px solid var(--sub); }
+    .solo { grid-template-columns: 1fr; }
+    .facts { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px 16px; margin: 16px 0; }
+    dt { color: var(--sub); }
+    .action { display: inline-flex; align-items: center; justify-content: center; padding: 6px 12px; min-height: 36px; color: var(--bg); background: var(--primary); border-radius: 8px; font-weight: 600; text-decoration: none; }
+    .back { display: inline-flex; align-items: center; margin-left: 8px; min-height: 36px; }
+    .impact-list { list-style: none; padding: 0; margin: 12px 0; }
+    .impact-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+    @media(max-width:900px) { .tables,.graph-layout { grid-template-columns: 1fr; } .metrics { grid-template-columns: repeat(3,minmax(0,1fr)); } .reading:nth-child(4) { border: none; padding-left: 0; } }
+    @media(max-width:640px) {
+      main { padding: 12px; gap: 12px; } .panel,.coverage { padding: 12px; } .pair { grid-template-columns: 1fr; gap: 8px; }
+      .group-title { margin-bottom: 12px; } .scope,select,.go,.action,.back,.crumbs a { min-height: 44px; } .crumbs a { display: inline-flex; align-items: center; }
+      .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .reading:nth-child(odd) { border: none; padding-left: 0; } .reading:nth-child(even) { border-left: 1px solid var(--line); padding-left: 12px; }
+      .plot { padding: 20px 8px; } .node { padding: 8px; } .heading { align-items: flex-start; }
+      td,th { padding: 8px 4px; } th { white-space: nowrap; } td { font-size: 13px; }
+    }
+    @media(pointer:coarse) { a.go,a.action,a.back,select,.crumbs a { min-height: 44px; } .crumbs a { display: inline-flex; align-items: center; } }
+  #main-nav {display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+#main-nav a {padding:6px 10px;border:1px solid transparent;border-radius:7px;color:var(--sub);text-decoration:none;min-height:34px;display:inline-flex;align-items:center}
+#main-nav a[aria-current="page"]{background:var(--tint);border-color:var(--line);color:var(--primary)}
+header .role-switch {font-size:12px;color:var(--sub);display:flex;gap:6px;align-items:center}
+main > *,fieldset,article,section,aside,form,div {min-width:0} main:focus{outline:none}
+main button,main input,main textarea,main select {max-width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+main button{cursor:pointer} main button:hover,#main-nav a:hover{background:var(--muted)}main button:disabled{opacity:.55;cursor:not-allowed} input[type=checkbox],input[type=radio]{accent-color:var(--primary);width:auto}main textarea{width:100%;min-height:100px}main .action{color:var(--bg);background:var(--primary)}
+fieldset{border:1px solid var(--line);padding:12px;border-radius:8px}details summary{cursor:pointer;color:var(--primary)} form label{line-height:1.8}
+.overview-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.overview-row a{display:grid;gap:5px;padding:13px 16px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--fg);text-decoration:none}.overview-row strong{font:600 23px var(--mono);color:var(--primary)} .overview-row a:hover{border-color:var(--primary)}
+.coverage .go{font-size:13px} .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.review-alert{padding:12px;border:1px solid var(--warning);color:var(--warning);border-radius:8px} pre{white-space:pre-wrap;overflow-wrap:anywhere}.panel{overflow-wrap:break-word}.table-scroll{overflow-x:auto}
+@media(max-width:640px){.overview-row{grid-template-columns:1fr}#main-nav{padding:4px 8px;gap:0}#main-nav a,main button{min-height:42px}.panel{overflow-x:auto} .panel th{white-space:normal} pre{max-width:100%} .review{margin-left:0} }
+</style>
+</head><body><header><img src="data:image/png;base64,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" alt="DoOps"><span class="product">资产</span><small class="review">功能评审 · 示例数据</small><label class="role-switch">评审身份 <select id="review-role"><option value="admin">平台管理员</option><option value="operator">目标操作员</option></select></label></header>
+<nav id="main-nav" aria-label="资产主导航"></nav><div style="padding:4px 16px"><button id="prev-view" hidden type="button" style="background:none;color:var(--primary);border:0;cursor:pointer;padding:6px">← 返回上一视图</button></div>
+<main id="work" tabindex="-1"><noscript>启用 JavaScript 以查看交互原型。</noscript></main>
+
+<script>
+'use strict';
+window.Review = (() => {
+  const prefix = 'doops.asset-review.v2.';
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  function read(key, initial) {
+    const raw = localStorage.getItem(prefix + key);
+    return raw === null ? initial : JSON.parse(raw);
+  }
+  function save(key,value) {localStorage.setItem(prefix + key,JSON.stringify(value));}
+  function admin() {return read('review-role','admin') === 'admin';}
+  function download(name,content,type) {
+    const blob = content instanceof Blob ? content : new Blob([content],{type:type || 'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url),1500);
+  }
+  function audit(action,object) {
+    const entries=read('audit-events',[]);
+    entries.unshift({action:String(action),object:String(object),at:new Date().toISOString(),actor:admin()?'平台管理员':'目标操作员'});
+    save('audit-events',entries);
+  }
+  function diagnostic(tool,source,namespace,object) {return '#diagnose/'+[tool,source,namespace,object].map(value=>encodeURIComponent(value||'')).join('/');}
+  return {esc,read,save,admin,download,audit,diagnostic,refresh:()=>renderReview()};
+})();
+
+</script>
+
+<script>
+;window.Inventory = (() => {
+  'use strict';
+  const R = () => window.Review;
+  const e = value => R().esc(String(value ?? ''));
+  const A = 'prod-east/agent-a', B = 'prod-east/agent-b', C = 'stage-west/agent-c';
+  const targets = [A, B, C];
+  const latest = '2026-11-19', prior = '2026-11-18';
+  const labels = {machines: '机器', systems: '业务系统'};
+  const columns = ['asset_id','name','kind','address','cpu_count','memory_gib','disk_gib','host_asset_id'];
+  const kindName = {physical: '物理机', vm: '虚拟机'};
+  const key = 'inventory-ledgers';
+  const read = () => R().read(key, {machines: [], systems: [], batches: []});
+  const assetId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  const ids = (prefix, n) => `${prefix}-${String(n).padStart(3, '0')}`;
+  const unique = items => [...new Set(items.filter(Boolean))];
+  const stamp = () => new Date().toISOString();
+  const clock = value => value ? new Date(value).toLocaleString('sv-SE', {timeZone:'Asia/Shanghai'}).slice(0,16) : '待核验';
+  const seedTime = (n, source) => `${n<=2 || n % 7 === 0 ? latest : prior}T${source === B ? '09:38' : '09:40'}:00+08:00`;
+  const blankMachine = () => ({asset_id:'',name:'',kind:'physical',address:'',cpu_count:'',memory_gib:'',disk_gib:'',host_asset_id:'',source:'',node:'',verified:'',hostVerified:'',service:'在役'});
+  const machines = Array.from({length:100}, (_,i) => {
+    const n=i+1, id=ids('SRV',n), source=n===19 || n===20 ? '' : [A,B,A,C][i%4];
+    const names={1:'订单工作节点',19:'worker-spare',20:'backup-vm'};
+    return {...blankMachine(),asset_id:id,name:names[n] || `工作节点 ${String(n).padStart(3,'0')}`,kind:n===20?'vm':'physical',
+      cpu_count:n===20?'4':n===1?'8':'16',memory_gib:n===20?'8':n===1?'32':'64',disk_gib:n===20?'120':n===1?'256':'512',source,
+      node:n===20 || n>95?'':n===19?'预发工作节点':`node-${String(n).padStart(3,'0')}`,verified:source && n<=86 ? seedTime(n,source):'',
+      host_asset_id:n===20?'SRV-004':'',hostVerified:n===20?seedTime(n,''):''};
+  });
+  const systems = Array.from({length:50}, (_,i) => {
+    const n=i+1, source=[A,B,A,C][i%4], app=n===1?'order-api':n===2?'billing-api':`service-${n}`;
+    const rel={source,app,ns:source===A?'orders':source===B?'billing':'staging',db:n<=2?'shared-pg':'',verified:n<=38?seedTime(n,source):''};
+    const relations=n===50?[]:[rel];
+    if(n===1) relations.push({...rel,app:'stage-api',ns:'staging',source:C,db:'',verified:seedTime(4,C)});
+    return {asset_id:ids('SYS',n),name:n===1?'订单系统':n===2?'计费系统':`业务系统 ${String(n).padStart(3,'0')}`,
+      owner:n===1?'订单团队':n===2?'计费团队':`应用运维 ${1+i%4} 组`,service:'在役',relations};
+  });
+  const seed={machines,systems};
+  function current(kind, state) {
+    const byId=new Map(seed[kind].map(row=>[row.asset_id,row]));
+    state[kind].forEach(row=>byId.set(row.asset_id,row));
+    return [...byId.values()];
+  }
+  // Scope before searching, counting, traversing a host or expanding a shared database.
+  function visible(kind, rows) {
+    if(R().admin()) return rows;
+    if(kind==='systems') return rows.map(s=>({...s,relations:s.relations.filter(r=>r.source===A)})).filter(s=>s.relations.length);
+    const allowed=rows.filter(m=>m.source===A), ids=new Set(allowed.map(m=>m.asset_id));
+    return allowed.map(m=>ids.has(m.host_asset_id)?m:{...m,host_asset_id:'',hostVerified:''});
+  }
+  const scoped = (kind,state=read()) => visible(kind,current(kind,state));
+  function clusterCounts(id) {
+    const state=read();
+    const inCluster=source=>source && source.split('/')[0]===id;
+    return {
+      machines:scoped('machines',state).filter(machine=>inCluster(machine.source)).length,
+      systems:scoped('systems',state).filter(system=>system.relations.some(rel=>inCluster(rel.source))).length
+    };
+  }
+  function unclustered() {
+    return scoped('machines').filter(machine=>!machine.source).map(machine=>({
+      id:machine.asset_id, name:machine.name,
+      reason:machine.node?'待核验 Node':machine.kind==='vm'?'独立运行':'未关联集群'
+    }));
+  }
+  function reconciliation(kind, date) {
+    const now=scoped(kind), currentById=new Map(now.map(r=>[r.asset_id,r]));
+    let rows=date==='live'?now:visible(kind,seed[kind]);
+    if(!R().admin()) rows=rows.filter(r=>currentById.has(r.asset_id));
+    const cutoff=date==='live'?Infinity:Date.parse(`${date}T10:00:00+08:00`);
+    const valid=v=>v && Date.parse(v)<=cutoff;
+    return rows.filter(r=>r.service==='在役').map(row=>{
+      let edges=[];
+      if(kind==='machines') {
+        if(row.node) edges.push({label:`Node ${row.node}`,source:row.source,verified:row.verified});
+        if(row.host_asset_id && (R().admin() || currentById.has(row.host_asset_id))) edges.push({label:`宿主 ${row.host_asset_id}`,source:row.source || '台账确认',verified:row.hostVerified});
+      } else edges=row.relations.map(r=>({label:`${r.ns}/${r.app}`,source:r.source,verified:r.verified}));
+      const edge=edges.find(r=>valid(r.verified));
+      const evidence=edge || edges[0];
+      return {id:row.asset_id,name:row.name,covered:!!edge,reason:edge?'已核验':edges.length?'关系待核验':'缺少关系',
+        source:evidence?.source || '未关联',detail:evidence?.label || '尚无部署或承载关系',time:edge?clock(edge.verified):'—'};
+    });
+  }
+  const count = rows => ({covered:rows.filter(r=>r.covered).length,total:rows.length});
+  function coverage(kind) { return count(reconciliation(kind,latest)); }
+  const scopeName=()=>R().admin()?'平台范围':'我的可见范围';
+  const missing='<section class="panel" role="alert"><h1 tabindex="-1">无法查看此记录</h1><p class="note foot">请从当前账号可见的台账中选择资产。</p><a class="go" href="#platform">返回平台看板</a></section>';
+  let role, route='', mode='', message='', nextMessage=null, preview=null, batchId='', date=latest;
+  let filters={};
+  function resetView(){mode='';message='';preview=null;batchId='';}
+  function syncRole(){if(role!==R().admin()){role=R().admin();resetView();filters={};date=latest;nextMessage=null;}}
+  const path = () => route.split('/');
+  const query = () => filters[route] || {search:'',status:path()[0]==='coverage'?'gap':'all'};
+  const admin=()=>R().admin();
+  const notice=()=>message?`<p class="panel" role="status">${e(message)}</p>`:'';
+  const panel=(title,content,actions='')=>`<section class="panel"><div class="group-title"><h2>${e(title)}</h2><div class="toolbar">${actions}</div></div>${content}</section>`;
+  const btn=(label,method,primary=false,attr='')=>`<button type="button" class="${primary?'action':''}" onclick="Inventory.${method}" ${attr}>${e(label)}</button>`;
+  const modeBtn=(label,value,primary=false)=>btn(label,`open('${value}')`,primary);
+  const go=(hash,text,cls='go')=>`<a class="${cls}" href="#${e(hash)}">${e(text)}</a>`;
+  const link=(kind,id,text)=>go(`${kind}/${encodeURIComponent(id)}`,text || id);
+  const recordLink=(kind,row)=>`${link(kind,row.asset_id,row.name)}<small><code>${e(row.asset_id)}</code></small>`;
+  const opt=(list,selected)=>list.map(([v,t])=>`<option value="${e(v)}"${v===selected?' selected':''}>${e(t)}</option>`).join('');
+  const tbl=(headers,rows,empty='当前条件下没有记录。')=>rows.length?`<div class="table-scroll"><table><thead><tr>${headers.map(h=>`<th scope="col">${e(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(c=>`<tr>${c.map(v=>`<td style="overflow-wrap:anywhere">${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:`<p class="note" role="status">${e(empty)}</p>`;
+  const facts=pairs=>`<dl class="facts">${pairs.map(([k,v])=>`<dt>${e(k)}</dt><dd style="overflow-wrap:anywhere">${v}</dd>`).join('')}</dl>`;
+  const heading=(title,subtitle,actions='')=>`<div class="heading"><div><h1 tabindex="-1" style="overflow-wrap:anywhere">${e(title)}</h1><p class="note">${e(subtitle)}</p></div><div class="toolbar">${actions}</div></div>`;
+  const crumb=(base,kind,text)=>`<nav class="crumbs" aria-label="当前位置">${go('platform','平台看板','')} › ${text?`${go(base,kind,'')} › <b>${e(text)}</b>`:`<b>${e(kind)}</b>`}</nav>`;
+  const searchMatch=(q,values)=>values.some(v=>String(v ?? '').toLowerCase().includes(q.toLowerCase()));
+  function filterForm(options,hint){
+    const q=query();
+    return `<form class="toolbar" onsubmit="event.preventDefault();Inventory.filter(this)"><label>筛选 <select name="status" onchange="Inventory.filter(this.form)">${opt(options,q.status)}</select></label><label>搜索 <input type="search" name="search" maxlength="128" placeholder="${e(hint)}" value="${e(q.search)}"></label><button type="submit">查询</button>${q.search?btn('清除搜索','clearSearch(this.form)'):''}</form>`;
+  }
+  function filter(form){syncRole();const data=new FormData(form);filters[route]={search:String(data.get('search')||'').trim(),status:String(data.get('status'))};message='';R().refresh();}
+  const clearSearch=form=>{form.elements.search.value='';filter(form);};
+  function open(value){syncRole();if(!admin() && value) return;resetView();mode=value;R().refresh();}
+  function machineState(m){return m.source?(m.source===C?'Agent 离线':'已在线'):m.node?'待核验':'未接入';}
+  const sourcesOf=s=>unique(s.relations.map(r=>r.source));
+  function ledger(kind){
+    const isMachine=kind==='machines', q=query(), rows=scoped(kind);
+    const options=[['all','全部记录'],...(isMachine?[['physical','物理机'],['vm','虚拟机'],['unbound','未关联集群']]:[['在役','在役'],['退役','退役']])];
+    if(!admin() && isMachine) options.pop();
+    const filtered=rows.filter(r=>{
+      const group=isMachine?r.kind:r.service;
+      const fields=isMachine?[r.source,r.address,r.node]:[r.owner,...r.relations.flatMap(rel=>[rel.app,rel.db,rel.source,rel.ns])];
+      return (q.status==='all' || q.status===group || (q.status==='unbound' && !r.source)) && searchMatch(q.search,[r.asset_id,r.name,...fields]);
+    });
+    const actions=admin()?modeBtn(isMachine?'手工新增':'登记系统','create',true)+(isMachine?modeBtn('CSV 导入','import')+modeBtn('导入批次','batches'):''):'';
+    const cells=filtered.map(r=>isMachine?[recordLink(kind,r),e(kindName[r.kind]),e(r.source || '未关联集群'),e(machineState(r)),e(r.service)]:[recordLink(kind,r),e(r.owner),e(sourcesOf(r).join('、') || '未关联'),e(r.service)]);
+    return crumb(kind,labels[kind]+'台账')+heading(labels[kind]+'台账',`${scopeName()} · ${rows.length} 条登记记录`,actions)+notice()+panel('登记记录',filterForm(options,isMachine?'编号、名称或目标':'编号、负责人、应用或数据库')+`<p class="note foot">匹配 ${filtered.length} 条</p>`+tbl(isMachine?['机器 / 编号','类型','关联目标','接入状态','服役状态']:['业务系统 / 编号','负责人','部署目标','服役状态'],cells),go('coverage/'+kind,'查看覆盖率对账'));
+  }
+  function machineDetail(m){
+    const all=scoped('machines'), host=all.find(h=>h.asset_id===m.host_asset_id), children=all.filter(x=>x.host_asset_id===m.asset_id);
+    const actions=admin()?modeBtn('编辑机器','edit',true):'';
+    const cap=(v,u)=>v?e(v)+' '+u:'未登记';
+    const monitor=m.asset_id==='SRV-001' && m.source===A ? [go('monitor/machine/orders','机器监控'),go('monitor/os/orders','操作系统'),go('monitor/kernel/orders','内核'),go('monitor/process/orders','进程'),go('inspection/reports/SRV-001','巡检记录')].join(' · ') : '此机器暂无监控样本';
+    return crumb('machines','机器台账',m.asset_id)+heading(m.name,m.asset_id+' · '+kindName[m.kind]+' · '+m.service,actions)+notice()+
+      `<div class="pair">${panel('登记规格',facts([['管理地址',e(m.address || '未登记')],['CPU',cap(m.cpu_count,m.kind==='vm'?'vCPU':'核')],['内存',cap(m.memory_gib,'GiB')],['磁盘',cap(m.disk_gib,'GiB')]]))}${panel('接入与运行关系',facts([['接入状态',e(machineState(m))],['目标来源',e(m.source || '未关联集群')],['关联 Node',e(m.node || '未关联')],['最近核验',m.verified?e(clock(m.verified)):m.node?'待核验':'—'],['运行指标',monitor]]))}</div>`+
+      panel(m.kind==='vm'?'宿主物理机':'名下虚拟机',m.kind==='vm'?(host?link('machines',host.asset_id,host.name)+`<small> ${e(host.asset_id)} · 承载关系 ${e(clock(m.hostVerified))}</small>`:'暂无可见宿主关系'):
+        tbl(['虚拟机 / 编号','承载关系'],children.map(vm=>[recordLink('machines',vm),e(clock(vm.hostVerified))]),'暂无可见虚拟机。'));
+  }
+  function systemDetail(s){
+    const all=scoped('systems'), shared=unique(s.relations.map(r=>r.db));
+    const related=shared.map(db=>{
+      const users=all.filter(other=>other.relations.some(r=>r.db===db));
+      return [db==='shared-pg'?go('monitor/database/shared-data',db):e(db),users.map(other=>link('systems',other.asset_id,other.name)).join('、'),e(unique(users.flatMap(other=>other.relations.filter(r=>r.db===db).map(r=>r.app))).join('、'))];
+    });
+    const cells=s.relations.map((r,i)=>[((r.app==='order-api' && r.source===A && r.ns==='orders') || (r.app==='billing-api' && r.source===B && r.ns==='billing'))?go('monitor/app/'+r.ns,r.app):e(r.app),`<code>${e(r.source)}</code><small>${e(r.ns)}</small>`,e(r.db || '未登记'),r.verified?`<span class="ok">已核验</span><small>${e(clock(r.verified))}</small>`:`<span class="warn">待核验</span>${admin()?btn('核验来源','verify(this)',false,`data-index="${i}" data-relation="${e(JSON.stringify(r))}"`):''}`]);
+    return crumb('systems','业务系统台账',s.asset_id)+heading(s.name,`${s.asset_id} · ${s.service} · 负责人 ${s.owner}`,admin()?modeBtn('编辑系统','edit',true):'')+notice()+
+      panel('应用与部署实例',`<p class="note">${scopeName()} · ${unique(s.relations.map(r=>r.source.split('/')[0])).length} 个集群 · ${s.relations.length} 条部署关系</p>`+tbl(['所属应用','来源目标 / 命名空间','依赖数据库','关系核验（UTC+8）'],cells,'暂无部署关系，可在编辑系统中登记应用及来源。'))+
+      panel('数据库归属与共享关系',tbl(['数据库','使用该库的可见系统','依赖应用'],related,'暂无可见的数据库依赖。'));
+  }
+  const text=(label,name,value,attrs='')=>`<label>${e(label)} <input name="${e(name)}" value="${e(value)}" ${attrs}></label>`;
+  const select=(label,name,values,value,attrs='')=>`<label>${e(label)} <select name="${e(name)}" ${attrs}>${opt(values,value)}</select></label>`;
+  const targetOptions=targets.map(t=>[t,t]);
+  const serviceOptions=[['在役','在役'],['退役','退役']];
+  const formError='<p class="warn foot" role="alert" data-inv-error></p>';
+  function error(form,msg){const el=form.querySelector('[data-inv-error]');el.textContent=msg;el.scrollIntoView({block:'nearest'});}
+  function relationFields(r={}){
+    return `<fieldset class="foot" data-inv-rel><legend>部署实例</legend><div class="toolbar">${text('应用标识','app',r.app,'required maxlength="64"')}${select('来源目标','relSource',targetOptions,r.source || A)}${text('命名空间','ns',r.ns,'required maxlength="63"')}${text('依赖数据库','db',r.db,'maxlength="64"')}${btn('移除此部署',"removeRelation(this)")}</div></fieldset>`;
+  }
+  function addRelation(form){if(admin()) form.querySelector('[data-inv-rels]').insertAdjacentHTML('beforeend',relationFields());}
+  function removeRelation(button){if(admin()) button.closest('fieldset').remove();}
+  function formPage(kind,original){
+    const isMachine=kind==='machines', r=original || (isMachine?blankMachine():{service:'在役',relations:[]});
+    const title=original?'编辑'+labels[kind]:isMachine?'手工新增机器':'登记业务系统';
+    let fields=text('资产编号','asset_id',r.asset_id,`required maxlength="64" ${original?'readonly':''}`)+text('显示名称','name',r.name,'required maxlength="100"')+select('服役状态','service',serviceOptions,r.service);
+    let extra='';
+    if(isMachine){
+      fields+=select('机器类型','kind',Object.entries(kindName),r.kind,'onchange="Inventory.hostFields(this.form)"')+text('管理地址','address',r.address,'maxlength="253"')+
+        text('CPU 数','cpu_count',r.cpu_count,'type="number" min="1" step="1"')+text('内存（GiB）','memory_gib',r.memory_gib,'type="number" min="0" step="any"')+text('磁盘（GiB）','disk_gib',r.disk_gib,'type="number" min="0" step="any"');
+      const hostOpts=scoped(kind).filter(h=>h.kind==='physical' && h.asset_id!==r.asset_id).map(h=>[h.asset_id,`${h.asset_id} · ${h.name}`]);
+      extra=`<fieldset class="foot"><legend>运行与承载关系</legend><div class="toolbar">${select('关联目标','source',[['','未关联'],...targetOptions],r.source)}${text('关联 Node','node',r.node,'maxlength="64"')}<label><input type="checkbox" name="confirmNode"> 已核对目标与 Node</label></div><div class="toolbar foot" data-host-fields ${r.kind==='vm'?'':'style="display:none"'}>${select('宿主物理机','host_asset_id',[['','未登记宿主'],...hostOpts],r.host_asset_id)}<label><input type="checkbox" name="confirmHost"> 已核对宿主关系</label></div></fieldset>`;
+    }else{
+      fields+=text('负责人','owner',r.owner,'required maxlength="80"');
+      extra=`<div class="foot"><h3>部署与依赖</h3><p class="note">按应用、目标和命名空间分别登记。新增或变更的关系保存后可在详情核验。</p><div data-inv-rels>${r.relations.map(relationFields).join('')}</div><div class="foot">${btn('添加部署实例','addRelation(this.form)')}</div></div>`;
+    }
+    return crumb(kind,labels[kind]+'台账',title)+heading(title,original?original.asset_id:'编号用于台账去重，保存后固定。')+panel('登记信息',`<form data-original="${e(JSON.stringify(original || null))}" onsubmit="event.preventDefault();Inventory.saveRecord(this)"><div class="toolbar">${fields}</div>${extra}${formError}<div class="toolbar foot"><button type="submit" class="action">保存${labels[kind]}</button>${modeBtn('取消','')}</div></form>`);
+  }
+  function hostFields(form){form.querySelector('[data-host-fields]').style.display=form.elements.kind.value==='vm'?'flex':'none';if(form.elements.kind.value!=='vm'){form.elements.host_asset_id.value='';form.elements.confirmHost.checked=false;}}
+  function machineIssue(r){
+    if(!assetId.test(r.asset_id)) return 'asset_id 需为 1–64 位字母、数字、点、短横线或下划线，首位须为字母或数字';
+    if(!r.name || r.name.length>100) return 'name 需为 1–100 个字符';
+    if(!Object.hasOwn(kindName,r.kind)) return 'kind 请选择 physical 或 vm';
+    if(r.address.length>253 || /\s/.test(r.address)) return 'address 请填写有效的 IP 或主机名';
+    for(const k of ['cpu_count','memory_gib','disk_gib']){
+      if(r[k] && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(r[k]) || !Number.isFinite(Number(r[k])) || Number(r[k])<=0 || (k==='cpu_count' && !Number.isSafeInteger(Number(r[k]))))) return `${k} 需为正${k==='cpu_count'?'整数':'数'}`;
+    }
+    if(r.host_asset_id && (r.kind!=='vm' || r.host_asset_id===r.asset_id)) return 'host_asset_id 仅 VM 可引用另一台物理机';
+    return '';
+  }
+  function normalize(r){for(const k of ['cpu_count','memory_gib','disk_gib']) if(r[k]) r[k]=String(Number(r[k]));return r;}
+  function hostIssue(r,lookup){return r.host_asset_id && lookup.get(r.host_asset_id)?.kind!=='physical'?'host_asset_id 请引用已登记或本批次有效的物理机':'';}
+  function storeRecord(state,kind,row){state[kind]=[...state[kind].filter(x=>x.asset_id!==row.asset_id),row];R().save(key,state);}
+  function saveRecord(form){
+    if(!admin()) return R().refresh();
+    const [kind,editId]=path();if(!Object.hasOwn(labels,kind) || !['create','edit'].includes(mode)) return;
+    const data=new FormData(form), get=k=>String(data.get(k) || '').trim(), state=read(), rows=current(kind,state);
+    const id=get('asset_id'), old=rows.find(r=>r.asset_id===id);
+    if(!assetId.test(id) || !get('name')) return error(form,'请填写有效资产编号和显示名称。编号须以字母或数字开头。');
+    if(editId && (id!==editId || JSON.stringify(old)!==form.dataset.original)) return error(form,'记录已变化，请取消编辑并重新核对。');
+    if(!editId && old) return error(form,'该资产编号已登记，请更换编号或编辑原记录。');
+    let row={asset_id:id,name:get('name'),service:get('service')};
+    if(!serviceOptions.some(([v])=>v===row.service)) return error(form,'请选择有效的服役状态。');
+    if(kind==='machines'){
+      row={...blankMachine(),...row,...Object.fromEntries(columns.map(k=>[k,get(k)])),source:get('source'),node:get('node')};
+      const issue=machineIssue(row) || hostIssue(row,new Map(rows.map(m=>[m.asset_id,m])));
+      if(issue) return error(form,issue);
+      if(row.source && !targets.includes(row.source)) return error(form,'请选择列出的目标。');
+      if(row.kind==='vm' && rows.some(m=>m.host_asset_id===id)) return error(form,'该机器仍承载虚拟机，请先调整名下虚拟机的宿主。');
+      if(data.has('confirmNode') && (!row.node || !row.source)) return error(form,'核验 Node 前需填写 Node 和关联目标。');
+      row.verified=data.has('confirmNode')?stamp():(old && old.source===row.source && old.node===row.node?old.verified:'');
+      if(row.host_asset_id){
+        if(data.has('confirmHost')) row.hostVerified=stamp();
+        else if(old?.host_asset_id===row.host_asset_id && old.hostVerified) row.hostVerified=old.hostVerified;
+        else return error(form,'请核对并勾选宿主关系。');
+      }
+      normalize(row);
+    }else{
+      row.owner=get('owner');if(!row.owner) return error(form,'请填写系统负责人。');
+      const rels=[...form.querySelectorAll('[data-inv-rel]')].map(field=>{
+        const val=k=>field.querySelector(`[name="${k}"]`).value.trim();
+        return {app:val('app'),source:val('relSource'),ns:val('ns'),db:val('db')};
+      });
+      const used=new Set();
+      for(const r of rels){
+        if(!assetId.test(r.app) || !assetId.test(r.ns) || (r.db && !assetId.test(r.db)) || !targets.includes(r.source)) return error(form,'请核对每条部署的应用标识、目标、命名空间和数据库标识。');
+        const ident=[r.app,r.source,r.ns].join('/');
+        if(used.has(ident)) return error(form,'同一应用在相同目标和命名空间的部署已重复。');used.add(ident);
+        const same=old?.relations.find(x=>x.app===r.app && x.source===r.source && x.ns===r.ns && x.db===r.db);r.verified=same?.verified || '';
+      }
+      row.relations=rels;
+    }
+    storeRecord(state,kind,row);R().audit(old?'编辑'+labels[kind]:'登记'+labels[kind],id);
+    const target=`${kind}/${id}`;resetView();const note=`已保存${labels[kind]} ${id}。`;
+    if(route===target){message=note;R().refresh();}else{nextMessage={route:target,text:note};location.hash=target;}
+  }
+  function verify(button){
+    if(!admin()) return R().refresh();
+    const [kind,id]=path();if(kind!=='systems' || !id) return;
+    const state=read(),sys=current(kind,state).find(s=>s.asset_id===id),r=sys?.relations[Number(button.dataset.index)];
+    if(!r || r.verified || JSON.stringify(r)!==button.dataset.relation){message='部署关系已变化，请核对后重试。';return R().refresh();}
+    if(r.source===C){message='来源处于离线状态，待恢复后核验。';return R().refresh();}
+    const replacement={...sys,relations:sys.relations.map(rel=>rel===r?{...r,verified:stamp()}:rel)};
+    storeRecord(state,kind,replacement);R().audit('核验部署来源',`${id} · ${r.app} · ${r.source} · ${r.ns}`);message=`已核验 ${r.app} 在 ${r.source} 的部署关系。`;R().refresh();
+  }
+  const sampleCsv=[columns.join(','),'demo-vm,报表虚拟机,vm,,4,16,120,demo-host','demo-host,示例宿主,physical,,32,128,512,','demo-vm,报表虚拟机,vm,,4,16,120,demo-host','demo-fix,待修正机器,physical,,8,-1,200,'].join('\n');
+  function parseCsv(text){
+    const records=[];let cells=[],value='',quoted=false,closed=false,line=1,start=1;
+    function endField(){cells.push(value.trim());value='';closed=false;}
+    function endRecord(){endField();if(cells.length>1 || cells[0]) records.push({line:start,cells});cells=[];}
+    const input=text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
+    for(let i=0;i<input.length;i++){
+      const ch=input[i];
+      if(quoted){
+        if(ch==='"'){if(input[i+1]==='"'){value+='"';i++;}else{quoted=false;closed=true;}}
+        else{value+=ch;if(ch==='\n') line++;}
+      }else if(ch===',') endField();
+      else if(ch==='\n'){endRecord();start=++line;}
+      else if(closed) throw Error(`第 ${line} 行引号后含多余字符。`);
+      else if(ch==='"'){if(value) throw Error(`第 ${line} 行字段中的引号应成对转义。`);quoted=true;}
+      else value+=ch;
+    }
+    if(quoted) throw Error(`第 ${start} 行的引号未闭合。`);endRecord();
+    const header=records.shift()?.cells || [];
+    if(header.length!==new Set(header).size) throw Error('表头含重复列，请校正列名。');
+    for(const k of columns.slice(0,3)) if(!header.includes(k)) throw Error(`表头缺少必填列 ${k}。`);
+    for(const k of header) if(!columns.includes(k)) throw Error(`未知列 ${k}，请对照 CSV 列名修正。`);
+    if(!records.length) throw Error('只有表头，请至少填写一行机器记录。');
+    return records.map(({cells,line})=>{
+      const row={...blankMachine(),...Object.fromEntries(header.map((k,i)=>[k,cells[i] || '']))};
+      const issue=cells.length!==header.length?'列数与表头不一致，请核对逗号和引号':machineIssue(row);
+      return {line,row:issue?row:normalize(row),issue};
+    });
+  }
+  function assess(csv,state){
+    const rows=parseCsv(csv), existing=new Map(current('machines',state).map(m=>[m.asset_id,m]));
+    const grouped=new Map();
+    for(const entry of rows){const id=entry.row.asset_id;if(!grouped.has(id)) grouped.set(id,[]);grouped.get(id).push(entry);}
+    const hosts=new Map(existing);
+    for(const [id,entries] of grouped){
+      const first=entries[0].row, old=existing.get(id);
+      const different=columns.filter(k=>entries.some(({row})=>row[k]!==first[k]));
+      for(const [i,entry] of entries.entries()){
+        const diff=old?columns.filter(k=>old[k]!==entry.row[k]):[];
+        if(different.length) entry.issue=`批内同编号字段冲突（${different.join('、')}），请统一后重试`;
+        else if(diff.length) entry.issue=`与台账字段冲突（${diff.join('、')}），请核对原记录`;
+        entry.status=entry.issue?'error':old || i?'duplicate':'new';
+        entry.detail=entry.issue || (old?'台账已有相同记录':i?'同批已有相同记录':entry.row.host_asset_id?`宿主 ${entry.row.host_asset_id}`:'验证通过');
+      }
+      if(entries[0].status==='new' && first.kind==='physical') hosts.set(id,first);
+    }
+    for(const entry of rows){
+      const issue=hostIssue(entry.row,hosts);
+      if(issue && entry.status!=='error'){entry.status='error';entry.detail=issue;}
+    }
+    return rows;
+  }
+  const statusText={new:'可新增',duplicate:'重复跳过',error:'行错误',imported:'已新增'};
+  const receiptRows=entries=>entries.map(({line,row,status,detail})=>({line,id:row.asset_id,status,detail}));
+  function receiptTable(rows){
+    const counts=Object.keys(statusText).map(k=>[k,rows.filter(r=>r.status===k).length]).filter(([,n])=>n);
+    return `<p class="foot" role="status">共 ${rows.length} 行 · ${counts.map(([k,n])=>`${statusText[k]} ${n}`).join(' · ')}</p>`+tbl(['CSV 行号','资产编号','结果','说明'],rows.map(r=>[e(r.line),e(r.id || '—'),`<span class="${r.status==='error'?'warn':'ok'}">${statusText[r.status]}</span>`,e(r.detail)]));
+  }
+  function importPage(){
+    return crumb('machines','机器台账','CSV 导入')+heading('CSV 导入机器','先核对逐行预览，再确认写入本地台账。')+panel('选择文件或粘贴 CSV',`<form onsubmit="event.preventDefault();Inventory.previewCsv(this)"><div class="toolbar"><label>UTF-8 文件 <input type="file" accept=".csv,text/csv" name="file" onchange="Inventory.loadCsv(this)"></label>${btn('填入示例','sample(this.form)')}</div><label>CSV 内容<textarea name="csv" rows="6" spellcheck="false" placeholder="${e(columns.join(','))}" oninput="Inventory.invalidateCsv(this.form)"></textarea></label><p class="note">必填 asset_id、name、kind。类型填 physical 或 vm，host_asset_id 可指向本批次内的物理机。</p>${formError}<div class="toolbar foot"><button type="submit" class="action">预览 CSV</button>${modeBtn('取消','')}</div><div data-preview aria-live="polite"></div></form>`);
+  }
+  function invalidateCsv(form){preview=null;form.querySelector('[data-preview]').replaceChildren();form.querySelector('[data-inv-error]').textContent='';}
+  function sample(form){if(!admin()) return;invalidateCsv(form);form.elements.file.value='';form.elements.csv.disabled=false;form.elements.csv.value=sampleCsv;}
+  async function loadCsv(input){
+    if(!admin()) return;const form=input.form,file=input.files[0];invalidateCsv(form);form.elements.csv.value='';if(!file){form.elements.csv.disabled=false;return;}
+    const box=form.elements.csv;box.disabled=true;form.querySelector('[data-inv-error]').textContent='正在读取文件…';
+    try{const text=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());if(!admin() || !form.isConnected || input.files[0]!==file) return;box.value=text;form.querySelector('[data-inv-error]').textContent='文件已读取，请预览。';}
+    catch{if(form.isConnected && input.files[0]===file) error(form,'无法读取 UTF-8 文本，请检查文件编码后重新上传。');}
+    finally{if(input.files[0]===file) box.disabled=false;}
+  }
+  function previewCsv(form){
+    if(!admin() || mode!=='import') return R().refresh();invalidateCsv(form);
+    try{
+      const text=form.elements.csv.value, entries=assess(text,read()),rows=receiptRows(entries),add=entries.filter(r=>r.status==='new');
+      preview={text,rows};const hostCount=add.filter(x=>x.row.host_asset_id).length;
+      form.querySelector('[data-preview]').innerHTML=`<h3 class="foot">逐行预览</h3>${receiptTable(rows)}${hostCount?`<label><input name="approveHosts" type="checkbox"> 已核对 ${hostCount} 条 VM 与宿主关系</label>`:''}<div class="foot">${btn(`仅导入可新增的 ${add.length} 行`,'commitCsv(this.form)',true,add.length?'':'disabled')}</div>`;
+    }catch(err){error(form,err.message);}
+  }
+  function commitCsv(form){
+    if(!admin() || mode!=='import') return R().refresh();
+    if(!preview || form.elements.csv.value!==preview.text) return error(form,'内容已变化，请重新预览。');
+    const state=read(),entries=assess(preview.text,state),rows=receiptRows(entries);
+    if(JSON.stringify(rows)!==JSON.stringify(preview.rows)){invalidateCsv(form);return error(form,'台账自预览后已变化，请重新预览并核对本次新增。');}
+    const add=entries.filter(r=>r.status==='new');if(!add.length) return error(form,'没有可新增行。');
+    if(add.some(r=>r.row.host_asset_id) && !form.elements.approveHosts?.checked) return error(form,'请先勾选并确认 VM 与宿主的承载关系。');
+    const at=stamp(),id='IMP-'+crypto.randomUUID();
+    state.machines.push(...add.map(({row})=>({...row,hostVerified:row.host_asset_id?at:''})));
+    for(const row of rows) if(row.status==='new') row.status='imported';
+    state.batches.unshift({id,at,rows});
+    try{R().save(key,state);}catch{return error(form,'本地存储写入失败，请检查浏览器存储空间后重试。');}
+    R().audit('导入机器',`${id} · 新增 ${add.length} 台`);resetView();mode='batches';batchId=id;message=`导入完成，已新增 ${add.length} 台机器。`;R().refresh();
+  }
+  function lookupBatch(id){if(!admin()) return R().refresh();batchId=String(id).trim();message='';R().refresh();}
+  function batchesPage(){
+    const batches=read().batches, batch=batches.find(r=>r.id===batchId);
+    const choice=tbl(['批次号','确认时间（UTC+8）','处理行数'],batches.map(b=>[btn(b.id,'lookupBatch(this.dataset.id)',false,`data-id="${e(b.id)}" style="overflow-wrap:anywhere"`),e(clock(b.at)),e(b.rows.length)]),'还没有已确认的导入批次。');
+    return crumb('machines','机器台账','导入批次')+heading('机器导入批次','按批次号回查逐行处理结果。',modeBtn('返回机器台账',''))+notice()+panel('查询回执',`<form class="toolbar" onsubmit="event.preventDefault();Inventory.lookupBatch(this.elements.batch.value)"><label>批次号 <input required name="batch" value="${e(batchId)}"></label><button>查询批次</button></form>${batch?`<p class="foot"><code>${e(batch.id)}</code> · ${e(clock(batch.at))}</p>${receiptTable(batch.rows)}`:batchId?'<p class="warn foot" role="status">找不到此批次，请核对批次号。</p>':''}`)+panel('已确认批次',choice);
+  }
+  const statusOptions=[['gap','全部缺口'],['all','全部基线资产'],['covered','已覆盖'],['关系待核验','关系待核验'],['缺少关系','缺少关系']];
+  function reportRows(kind){
+    const q=query();return reconciliation(kind,date).filter(r=>(q.status==='all' || (q.status==='gap' && !r.covered) || (q.status==='covered' && r.covered) || q.status===r.reason) && searchMatch(q.search,[r.id,r.name,r.source,r.detail]));
+  }
+  function coverageCard(kind,rows){
+    const {covered,total}=count(rows), missing=Math.max(0,Math.ceil(total*0.8)-covered), percent=total?Math.round(1000*covered/total)/10:0,unit=kind==='machines'?'台':'个';
+    return `<article class="coverage ${missing?'below':''}"><div class="bar"><h3>${kind==='machines'?'在役服务器':'在役业务系统'}</h3><strong>${total?`${percent}<small>%</small>`:'—'}</strong></div><div class="rail" aria-hidden="true"><i style="width:${percent}%"></i></div><div class="bar"><span>已覆盖 <b>${covered} / ${total}</b> ${unit}</span><small class="${missing?'warn':'ok'}">${!total?'无适用资产':missing?`距 80% 差 ${missing} ${unit}`:'已达 80% 目标'}</small></div></article>`;
+  }
+  const baselineLabel=()=>date==='live'?'当前台账 · 工作预览':`BL-${date.replaceAll('-','')} · ${date} 10:00 UTC+8`;
+  function coveragePage(kind){
+    const sets=Object.fromEntries(Object.keys(labels).map(k=>[k,reconciliation(k,date)]));
+    const rows=reportRows(kind),all=sets[kind],c=count(all);
+    const tabs=Object.keys(labels).map(k=>`<a href="#coverage/${k}" ${k===kind?'aria-current="page"':''}>${labels[k]}明细</a>`).join('');
+    const pass=Object.values(sets).every(set=>set.length && count(set).covered>=0.8*set.length);
+    const decision=`${admin() && date!=='live'?'平台验收':'范围测算'} · ${pass?'两项均已达标':'两项尚未同时达标'}`;
+    const selectDate=select('基线 / 统计日','baseline',[[latest,`${latest} · 盘点快照`],[prior,`${prior} · 盘点快照`],['live','当前台账 · 工作预览']],date,'onchange="Inventory.changeDate(this.value)"');
+    const rule=kind==='machines'?'分母包含在役物理机和 VM，按机器编号去重。有已核验的 Node 运行关系或宿主承载关系计入分子。':'分母按在役业务系统编号去重。至少一条已核验的部署实例关系计入分子，跨集群部署仍只计一次。';
+    return crumb('coverage/'+kind,'覆盖率对账')+heading('拓扑覆盖率对账',`${scopeName()} · ${baselineLabel()}`,selectDate)+notice()+
+      panel('双 80% 目标',`<div class="pair">${coverageCard('machines',sets.machines)}${coverageCard('systems',sets.systems)}</div><p class="note foot">${e(decision)}。${R().admin()?'':'仅计算 prod-east/agent-a 可见的资产与证据。'}</p>`)+
+      `<nav class="tabs" aria-label="对账对象">${tabs}</nav>`+panel(`${labels[kind]}逐项对账`,`<p>${rule}</p><p class="note foot">分母 ${c.total} · 已覆盖 ${c.covered} · 缺口 ${c.total-c.covered}</p><div class="foot">${filterForm(statusOptions,'编号、名称、关系或目标')}</div><p class="note foot">匹配 ${rows.length} 条</p>`+tbl(['资产 / 编号','结论','关系与来源','核验时间（UTC+8）'],rows.map(r=>[link(kind,r.id,r.name)+`<small>${e(r.id)}</small>`,`<span class="${r.covered?'ok':'warn'}">${r.covered?'已覆盖':e(r.reason)}</span>`,e(r.detail)+`<small>${e(r.source)}</small>`,e(r.time)]),'当前筛选下没有对账条目。'),btn('导出当前明细 CSV','exportCsv()',false,rows.length?'':'disabled'));
+  }
+  function changeDate(value){if(![prior,latest,'live'].includes(value)) return;date=value;message='';R().refresh();}
+  function exportCsv(){
+    syncRole();const [base,kind]=path();if(base!=='coverage' || !Object.hasOwn(labels,kind)) return;
+    const rows=reportRows(kind);if(!rows.length) return;
+    const meta=[scopeName(),baselineLabel()];
+    const fields=[['范围','基线 / 统计日','编号','名称','结论','关系','来源','核验时间（UTC+8）'],...rows.map(r=>[...meta,r.id,r.name,r.covered?'已覆盖':r.reason,r.detail,r.source,r.time])];
+    const quote=v=>`"${String(v).replace(/^(?=[=+@\-\t\r])/,"'").replaceAll('"','""')}"`;
+    R().download(`coverage-${kind}-${date}-${admin()?'platform':'mine'}.csv`,'\uFEFF'+fields.map(row=>row.map(quote).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+    message=`已导出当前筛选的 ${rows.length} 条对账明细。`;R().refresh();
+  }
+  function render(parts){
+    syncRole();const next=parts.join('/');if(next!==route){route=next;resetView();if(nextMessage?.route===route) message=nextMessage.text;nextMessage=null;}
+    const [kind,id]=parts;if(parts.length===2 && kind==='coverage' && Object.hasOwn(labels,id)) return coveragePage(id);
+    if(!Object.hasOwn(labels,kind) || parts.length>2 || (parts.length===2 && !id)) return missing;
+    const row=id?scoped(kind).find(r=>r.asset_id===id):null;if(id && !row) return missing;
+    if(admin()){
+      if((mode==='create' && !id) || (mode==='edit' && row)) return formPage(kind,row);
+      if(kind==='machines' && !id && mode==='import') return importPage();
+      if(kind==='machines' && !id && mode==='batches') return batchesPage();
+    }
+    if(!id) return ledger(kind);
+    return kind==='machines'?machineDetail(row):systemDetail(row);
+  }
+  return {render,coverage,unclustered,clusterCounts,open,filter,clearSearch,addRelation,removeRelation,hostFields,saveRecord,verify,
+    sample,loadCsv,invalidateCsv,previewCsv,commitCsv,lookupBatch,changeDate,exportCsv};
+})();
+
+</script>
+
+<script>
+window.Cluster = (() => {
+  'use strict';
+  const east = 'prod-east', west = 'stage-west';
+  const a = 'prod-east/agent-a', b = 'prod-east/agent-b', w = 'stage-west/agent-c';
+  const store = 'cluster-inventory';
+  const seed = [
+    {id:east, asset:'CLS-001', sources:[
+      {target:a, ns:['orders','shared-data'], online:true, at:'2026-11-19 09:40'},
+      {target:b, ns:['billing','shared-data'], online:true, at:'2026-11-19 09:38'}]},
+    {id:west, asset:'CLS-002', sources:[{target:w, ns:['staging'], online:false, at:'2026-11-19 09:25'}]}
+  ];
+  const raw = () => Review.read(store, structuredClone(seed));
+  const unique = values => [...new Set(values)];
+  const esc = value => Review.esc(value);
+  const code = value => `<code>${esc(value)}</code>`;
+  const url = (id, view, scope, node) => '#' + [id,view,scope,node].filter(Boolean).map(encodeURIComponent).join('/');
+  const href = (dest, text, cls='go') => `<a class="${cls}" href="${esc(dest)}">${text}</a>`;
+  const btn = (action, value, text, attrs='') => `<button type="button" data-cl-action="${action}" value="${esc(value)}" ${attrs}>${text}</button>`;
+  const option = (value, label, current) => `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(label)}</option>`;
+  const panel = (title, note, body) => `<section class="panel"><div class="group-title"><h2>${title}</h2><small>${note}</small></div>${body}</section>`;
+  const empty = text => `<p class="note">${text}</p>`;
+  const status = online => online ? '<span class="ok">在线可用</span>' : '<span class="warn">来源离线</span>';
+  const table = (headers, rows) => `<div class="table-scroll"><table><thead><tr>${headers.map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  const unavailable = () => `<section class="panel" role="alert"><h1 tabindex="-1">当前范围不可访问</h1><p class="foot">此链接无效或超出当前账号的授权范围。</p>${href('#clusters','返回可见集群')}</section>`;
+  const namespaces = cluster => unique(cluster.sources.flatMap(s=>s.ns));
+  function inventory() {
+    if (Review.admin()) return raw();
+    return raw().filter(c=>c.id === east).map(c=>({...c, sources:c.sources.filter(s=>s.target === a)
+      .map(s=>({...s,ns:s.ns.filter(n=>['orders','shared-data'].includes(n))}))})).filter(c=>c.sources.length);
+  }
+  function list() {
+    return inventory().map(c=>({
+      id:c.id, name:c.id, asset:c.asset,
+      sourceCount:c.sources.length, namespaceCount:namespaces(c).length, online:c.sources.some(s=>s.online),
+      lastVerified:c.sources.map(s=>s.at).sort().at(-1) || '尚未核验'
+    }));
+  }
+
+  // Each edge names its own evidence providers. Visibility of its endpoints alone is insufficient.
+  const nodes = [
+    ['orders-system','订单系统','SYS-001',east,'orders',[a],'业务系统','#systems/SYS-001'],
+    ['order-api','订单服务','APP-001',east,'orders',[a],'应用'],
+    ['billing-system','计费系统','SYS-002',east,'billing',[b],'业务系统','#systems/SYS-002'],
+    ['billing-api','计费服务','APP-002',east,'billing',[b],'应用'],
+    ['shared-pg','共享数据库','DB-001',east,'shared-data',[a,b],'数据库'],
+    ['east-worker','node-001','NODE-001',east,'',[a,b],'K8s Node'],
+    ['east-host','订单工作节点','SRV-001',east,'',[a],'物理机','#machines/SRV-001'],
+    ['stage-api','预发服务','APP-003',west,'staging',[w],'应用'],
+    ['stage-worker','预发工作节点','NODE-002',west,'',[w],'K8s Node'],
+    ['stage-host','工作节点 004','SRV-004',west,'',[w],'物理机','#machines/SRV-004'],
+    ['worker-spare','备用物理机','SRV-019','standalone','',[],'物理机','#machines/SRV-019'],
+    ['backup-vm','备份虚拟机','SRV-020','standalone','',[],'虚拟机','#machines/SRV-020']
+  ].map(([id,name,asset,cluster,ns,sources,type,page])=>({id,name,asset,cluster,ns,sources,type,page}));
+  const layers = {all:'全部关系',business:'业务依赖',deploy:'运行部署',physical:'物理承载'};
+  const edges = [
+    ['orders-system','order-api','business','包含','业务系统台账',[a]],
+    ['billing-system','billing-api','business','包含','业务系统台账',[b]],
+    ['order-api','shared-pg','business','依赖','应用连接配置 · 人工核验',[a]],
+    ['billing-api','shared-pg','business','依赖','应用连接配置 · 人工核验',[b]],
+    ['order-api','east-worker','deploy','运行于','工作负载调度记录',[a]],
+    ['billing-api','east-worker','deploy','运行于','工作负载调度记录',[b]],
+    ['east-worker','east-host','physical','映射至','Node 与机器台账映射',[a]],
+    ['stage-api','stage-worker','deploy','运行于','工作负载调度记录',[w]],
+    ['backup-vm','stage-host','physical','由其承载','宿主资产编号 · 台账核验',[]],
+    ['worker-spare','stage-worker','physical','可能映射至','盘点备注 · 尚缺 Node 标识',[],true]
+  ].map(([from,to,layer,verb,evidence,sources,inferred])=>({from,to,layer,verb,evidence,sources,inferred}));
+  function graph(clusters) {
+    const targets = new Map(clusters.flatMap(c=>c.sources.map(s=>[s.target,s])));
+    const observed = (n,t) => targets.has(t) && (!n.ns || targets.get(t).ns.includes(n.ns));
+    const visible = new Map(nodes.filter(n=>n.cluster === 'standalone' ? Review.admin() : n.sources.some(t=>observed(n,t))).map(n=>[n.id,n]));
+    const relations = [];
+    for (const edge of edges) {
+      const from = visible.get(edge.from), to = visible.get(edge.to);
+      if (!from || !to) continue;
+      const providers = edge.sources.filter(t=>observed(from,t) && observed(to,t)).map(t=>targets.get(t));
+      if (edge.sources.length && !providers.length) continue;
+      relations.push({...edge,from,to,providers});
+    }
+    return {nodes:visible, edges:relations, targets};
+  }
+  const evidenceText = edge => `${edge.inferred ? '<span class="warn">推定 · 待核验</span>' : '<span class="ok">已核验</span>'} · ${esc(edge.evidence)}<small>${edge.providers.length ? edge.providers.map(s=>`${code(s.target)} · ${s.online ? '观测' : '离线快照'} ${esc(s.at)}`).join('、') : '台账记录 · 2026-11-19 09:25'}</small>`;
+  function diagnostics(n,g) {
+    if (!['应用','数据库','K8s Node'].includes(n.type)) return '';
+    const tool = n.type === '数据库' ? 'database' : 'k8s';
+    const links = n.sources.map(t=>g.targets.get(t)).filter(s=>s && (!n.ns || s.ns.includes(n.ns))).map(s=>s.online ?
+      href(Review.diagnostic(tool,s.target,n.ns,n.id), `从 ${code(s.target)} 诊断`) : `<span class="warn">${code(s.target)} 离线，实时诊断不可用</span>`);
+    return `<div class="foot"><h3>实时诊断</h3><div class="toolbar">${links.join('')}</div></div>`;
+  }
+
+  const template = {id:'lab-north',asset:'CLS-003',target:'lab-north/agent-d',ns:'sandbox'};
+  let discovery = null, notice = '', previousRole;
+  function sourceTable(cluster,scope='all') {
+    const rows = cluster.sources.filter(s=>scope==='all' || s.ns.includes(scope)).map(s=>`<tr><td>${code(s.target)}</td><td>${s.ns.map(code).join('、') || '无可读命名空间'}</td><td>${status(s.online)}<small>${esc(s.at)}</small></td>${Review.admin()?`<td>${btn('verify',s.target,'重新核验',s.online?'':'disabled title="来源离线，无法重新核验"')}</td>`:''}</tr>`);
+    return table(['来源目标','已核验命名空间','状态 / 最近核验',...(Review.admin()?['维护']:[])],rows);
+  }
+  function clusterIndex(clusters) {
+    const rows = clusters.map(c=>`<tr><td>${href(url(c.id,'overview','all'),code(c.id))}<small>${esc(c.asset)}</small></td><td>${c.sources.length} 个来源<small>${namespaces(c).length} 个唯一命名空间</small></td><td>${status(c.sources.some(s=>s.online))}</td><td>${href(url(c.id,'topology','all'),'查看拓扑')}</td></tr>`);
+    return `<div class="heading"><div><h1 tabindex="-1">K8s 集群</h1><p class="note">${Review.admin()?'管理员视图':'我的可见范围 · 只读'} · 按稳定资产编号去重</p></div>${Review.admin()?btn('discover','','从 Agent 发现集群','class="action"'):''}</div>${notice?`<p class="note" role="status">${esc(notice)}</p>`:''}${Review.admin() && discovery?discoveryForm():''}${panel('已登记集群',`${clusters.length} 个集群`,rows.length?table(['集群 / 稳定编号','授权范围','连接状态','操作'],rows):empty('暂无可见集群。'))}${panel('访问来源','按集群查看核验明细',clusters.map(c=>`<details><summary>${code(c.id)} · ${c.sources.length} 个来源</summary>${sourceTable(c)}</details>`).join(''))}`;
+  }
+  function assess(d,clusters) {
+    const slug = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+    const reserved = ['platform','clusters','topology','monitor','inspection','machines','systems','diagnose','coverage','all','standalone','audit','dashboard','import'];
+    if (!slug.test(d.id) || reserved.includes(d.id)) throw Error('集群路由标识需为可用的小写字母、数字或短横线组合。');
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/.test(d.asset)) throw Error('请填写稳定资产编号，如 CLS-003。');
+    const parts = d.target.split('/');
+    if (parts.length !== 2 || !parts.every(x=>slug.test(x))) throw Error('访问来源采用目标/实例格式，如 lab-north/agent-d。');
+    const ns = unique(d.ns.split(/[\s,，、]+/).filter(Boolean));
+    if (!ns.length || ns.some(n=>!slug.test(n) || n==='all')) throw Error('请填写可读命名空间，多个用逗号分隔。all 为范围选择保留字。');
+    const cluster = clusters.find(c=>c.asset===d.asset);
+    if (clusters.some(c=>c.id===d.id && c.asset!==d.asset)) throw Error('此路由标识已分配给其他稳定资产编号。请核对编号或更换标识。');
+    const owner = clusters.find(c=>c.sources.some(s=>s.target===d.target));
+    if (owner && owner!==cluster) throw Error('此来源已归属其他集群，请核对稳定资产编号。');
+    const source = owner?.sources.find(s=>s.target===d.target);
+    if (source && !source.online) throw Error('来源离线，无法生成发现预览。最近核验记录仍可查看。');
+    return {cluster,source,ns,summary:source?'更新已有来源':cluster?'合并到已有集群':'登记新集群'};
+  }
+  function discoveryForm() {
+    const {draft, preview, error} = discovery;
+    if (preview) return panel('发现预览','模拟发现 · 尚未保存',`<dl class="facts"><dt>处理方式</dt><dd>${esc(preview.summary)}</dd><dt>集群 / 稳定编号</dt><dd>${code(preview.cluster?.id || draft.id)} · ${code(draft.asset)}</dd><dt>来源</dt><dd>${code(draft.target)}</dd><dt>核验后可读范围</dt><dd>${preview.ns.map(code).join('、')}</dd>${preview.source?`<dt>原范围</dt><dd>${preview.source.ns.map(code).join('、')}</dd>`:''}</dl><div class="toolbar">${btn('commit','','确认登记','class="action"')}${btn('edit','','返回修改')}${btn('cancel','','取消')}</div>`);
+    const fields = [['id','集群路由标识'],['asset','稳定资产编号'],['target','访问来源（目标/实例）'],['ns','可读命名空间']];
+    return panel('从 Agent 发现','本地模拟',`<form data-cl-form="discover"><div class="pair">${fields.map(([k,label])=>`<label>${label}<br><input name="${k}" value="${esc(draft[k])}" required maxlength="${k==='ns'?400:128}"></label>`).join('')}</div>${error?`<p role="alert" class="warn foot">${esc(error)}</p>`:''}<p class="note foot">同一稳定资产编号可登记多个来源。重复来源再次确认会更新其核验范围。</p><div class="toolbar foot"><button class="action" type="submit">预览发现结果</button>${btn('cancel','','取消')}</div></form>`);
+  }
+  const timestamp = () => new Date().toLocaleString('sv-SE',{timeZone:'Asia/Shanghai'});
+  function commitDiscovery() {
+    const data = raw(), draft = discovery.draft;
+    try {
+      const {cluster,source,ns,summary} = assess(draft,data);
+      const oldPreview = discovery.preview;
+      if (summary !== oldPreview.summary || (source && JSON.stringify(source)!==JSON.stringify(oldPreview.source))) throw Error('来源状态已变化，请核对后重新预览。');
+      const entry = cluster || {id:draft.id,asset:draft.asset,sources:[]};
+      if (!cluster) data.push(entry);
+      if (source) Object.assign(source,{ns,at:timestamp()});
+      else entry.sources.push({target:draft.target,ns,online:true,at:timestamp()});
+      Review.save(store,data);
+      Review.audit(summary,`${entry.asset} · ${draft.target}`);
+      notice = `${summary}完成 · ${entry.id} / ${draft.target}。`;
+      discovery = null;
+    } catch (err) { discovery.preview=null; discovery.error=err.message; }
+  }
+
+  function head(c,view,scope) {
+    const tabs = [
+      ['概览',url(c.id,'overview',scope)], ['拓扑',url(c.id,'topology',scope)],
+      ['监控',c.id===east ? `#monitor/cluster/${encodeURIComponent(scope)}` : url(c.id,'monitor',scope)],
+      ['巡检',c.id===east ? '#inspection/plans/prod-east' : url(c.id,'inspection',scope)]
+    ];
+    const scopeOptions = [option('all','全部可见命名空间',scope),...namespaces(c).map(ns=>option(ns,ns,scope))];
+    return `<nav class="crumbs" aria-label="当前位置">${href('#clusters','K8s 集群')} › ${code(c.id)}</nav><div class="heading"><div><h1 tabindex="-1">${code(c.id)}</h1><p class="note">${code(c.asset)} · ${c.sources.length} 个可见来源 · ${namespaces(c).length} 个命名空间 · ${status(c.sources.some(s=>s.online))}</p></div><label class="scope">命名空间 <select id="scope" data-cl-scope="${esc(url(c.id,view))}">${scopeOptions.join('')}</select></label></div><nav class="tabs" aria-label="集群视图">${tabs.map(([name,link])=>`<a href="${esc(link)}" ${link===url(c.id,view,scope)?'aria-current="page"':''}>${name}</a>`).join('')}</nav>`;
+  }
+  const samples = {orders:[1.8,3.2,7.2,98,8],billing:[0.9,2.1,3.1,48,4],'shared-data':[0.7,3.3,2.1,0,80]};
+  const metrics = [['CPU 用量','核'],['内存用量','GiB'],['网络吞吐','MiB/s'],['业务请求','req/s'],['存储用量','GiB']];
+  function scopedActivity(c,view,scope,g) {
+    const range = `${code(c.id)} / ${scope==='all'?'全部可见命名空间':code(scope)}`;
+    if (view==='inspection') return panel('巡检计划',range,empty('当前范围尚无巡检计划，也没有应检周期或执行记录。'));
+    const sources = c.sources.filter(s=>scope==='all' || s.ns.includes(scope));
+    const offline = sources.length && sources.every(s=>!s.online);
+    const observations = [...g.nodes.values()].filter(n=>n.cluster===c.id && n.type==='应用' && (scope==='all' || n.ns===scope));
+    const rows = observations.flatMap(n=>sources.filter(s=>n.sources.includes(s.target) && s.ns.includes(n.ns)).map(s=>
+      `<tr><td>${href(url(c.id,'topology',scope,n.id),title(n))}</td><td>${code(n.ns)}</td><td>${code(s.target)}<small>${status(s.online)}</small></td><td>${esc(s.at)}</td></tr>`));
+    return panel('集群监控',range,`<p class="${offline?'warn':'note'}">${offline?'来源离线，实时指标不可用。':'当前范围暂无监控样本。'}</p>`) +
+      panel('最近资产观测','模拟快照 · UTC+8',rows.length?table(['对象','命名空间','观测来源','最近核验'],rows):empty('此范围尚无工作负载观测记录。'));
+  }
+  function overview(c,scope,g) {
+    const selected = scope==='all'?namespaces(c):[scope];
+    const sampled = selected.filter(ns=>c.id===east && Object.hasOwn(samples,ns) && [a,b].some(t=>g.targets.get(t)?.ns.includes(ns) && seed[0].sources.find(s=>s.target===t).ns.includes(ns)));
+    const missing = sampled.length!==selected.length || !sampled.length;
+    const readings = metrics.map(([label,unit],i)=>`<div class="reading"><p>${label}</p>${missing?'<strong class="missing">缺数据</strong>':`<strong>${Number(sampled.reduce((sum,n)=>sum+samples[n][i],0).toFixed(1))}</strong>`}<small>${unit}</small></div>`).join('');
+    const objects = [...g.nodes.values()].filter(n=>n.cluster===c.id && ['应用','数据库'].includes(n.type) && (scope==='all' || n.ns===scope));
+    const assets = objects.map(n=>href(url(c.id,'topology',scope,n.id),`${esc(n.name)} ${code(n.asset)}`)).join('');
+    return `${notice?`<p role="status" class="note">${esc(notice)}</p>`:''}${panel('资源指标',`${esc(scope==='all'?'可见命名空间合计':scope)} · 模拟快照`, `<div class="metrics">${readings}<div class="reading"><p>GPU 利用率</p><strong class="missing">未接入</strong><small>缺少采集源</small></div></div><p class="note foot">有样本 ${sampled.length} / ${selected.length} 个命名空间 · ${sampled.length?'2026-11-19 09:35–09:40（UTC+8）':'暂无资源采样'}。${missing?'采样不足，无法计算完整范围总量。':'各命名空间按唯一编号汇总。'}</p>`)}${panel('关键资产',`${objects.length} 项`,assets?`<div class="toolbar">${assets}</div>`:empty('此范围暂无已发现的应用或数据库。'))}${panel('集群访问来源','已核验范围 · UTC+8',sourceTable(c,scope))}`;
+  }
+  const badge = n => `${esc(n.type)} · ${code(n.asset)}`;
+  const title = n => `<b>${esc(n.name)}</b> ${code(n.id)}`;
+  function card(n,link,selected) {
+    const attrs = `class="node" style="text-align:left" ${selected?'aria-current="true"':''}`;
+    const body = `<b>${esc(n.name)}</b>${code(n.id)}<small>${badge(n)}</small>`;
+    return link?`<a href="${esc(link)}" ${attrs}>${body}</a>`:btn('node',n.id,body,attrs);
+  }
+  function relationGraph(relations,isolated,draw) {
+    const groups = new Map();
+    for (const e of relations) {
+      const key = `${e.to.id}/${e.verb}`;
+      if (!groups.has(key)) groups.set(key,[]);
+      groups.get(key).push(e);
+    }
+    const rows = [...groups.values()].map(group=>`<div><small>${esc(group[0].verb)} → ${esc(group[0].to.name)}${group[0].inferred?' · 推定，待核验':''}</small><div class="plot" style="padding-block:12px"><div class="apps">${group.map(e=>draw(e.from)).join('')}</div><span aria-hidden="true" class="wire ${group.length>1?'fork':''}"></span>${draw(group[0].to)}</div></div>`);
+    return rows.concat(isolated.map(n=>`<div class="plot solo" style="padding-block:12px">${draw(n)}</div>`)).join('');
+  }
+  function relationList(relations,isolated,pick) {
+    const rows = relations.map(e=>`<tr><td>${pick(e.from)}</td><td>${esc(e.verb)} →<small>${esc(layers[e.layer])}</small></td><td>${pick(e.to)}</td><td>${evidenceText(e)}</td></tr>`);
+    return (rows.length?table(['起点','有向关系','终点','关系证据'],rows):'') + isolated.map(n=>`<p class="foot">${pick(n)} <small>当前筛选无关联</small></p>`).join('');
+  }
+  function info(n,g) {
+    const sources = n.sources.map(t=>g.targets.get(t)).filter(s=>s && (!n.ns || s.ns.includes(n.ns)));
+    return `<small>节点详情 · ${esc(n.type)}</small><h2 id="detail" tabindex="-1">${title(n)}</h2><dl class="facts"><dt>稳定资产编号</dt><dd>${code(n.asset)}</dd><dt>所属范围</dt><dd>${n.cluster==='standalone'?'独立机器':code(n.cluster)}${n.ns?' / '+code(n.ns):''}</dd><dt>最近来源核验</dt><dd>${sources.length?sources.map(s=>`${code(s.target)} · ${status(s.online)}<br><small>${esc(s.at)}</small>`).join('<br>'):'机器台账 · 2026-11-19 09:25'}</dd></dl>${n.page?href(n.page,'打开资产台账 →'):''}`;
+  }
+  function clusterTopology(c,scope,selection,g) {
+    const local = [...g.nodes.values()].filter(n=>n.cluster===c.id);
+    const primary = local.filter(n=>['应用','数据库'].includes(n.type) && (scope==='all' || n.ns===scope));
+    const rel = g.edges.filter(e=>primary.includes(e.from) && (e.verb==='依赖' || c.id===west && e.layer==='deploy'));
+    const present = new Set(rel.flatMap(e=>[e.from,e.to]));
+    const isolated = primary.filter(n=>!present.has(n));
+    const back = url(c.id,'topology',scope);
+    const link = n => url(c.id,'topology',scope,n.id);
+    const pick = n => href(link(n),title(n));
+    const selected = g.nodes.get(selection==='impact'?'shared-pg':selection);
+    if (selection && (!selected || selected.cluster!==c.id || (!primary.includes(selected) && !present.has(selected)))) return unavailable();
+    const db = g.nodes.get('shared-pg');
+    const inbound = g.edges.filter(e=>e.to===db && e.verb==='依赖');
+    let detail = '<h2 id="detail" tabindex="-1">节点详情</h2>'+empty('选择应用或资源，查看关系证据、影响范围与诊断来源。');
+    if (selection==='impact') {
+      const items = inbound.map(e=>`<li><span>${title(e.from)}<small> · ${esc(e.from.ns)}</small></span>${code(e.from.asset)}</li>`).join('');
+      detail = `<h2 id="detail" tabindex="-1">反向影响 · ${inbound.length} 个应用</h2><p class="note foot">${code(db.id)} 的直接依赖方 · 此集群全部已授权来源</p>${items?`<ul class="impact-list">${items}</ul>`:empty('当前授权范围无已核验的直接依赖方。')}${href(link(db),'← 返回数据库详情')}`;
+    } else if (selected) {
+      const related = g.edges.filter(e=>e.from===selected && (e.verb==='依赖' || c.id===west && e.layer==='deploy'));
+      const proof = selected===db?inbound:related;
+      detail = info(selected,g) + (proof.length?`<h3>已核验关系</h3><ul class="impact-list">${proof.map(e=>`<li><span>${esc(e.from.id)} → ${esc(e.to.id)}<small style="display:block">${evidenceText(e)}</small></span></li>`).join('')}</ul>`:'');
+      if (selected===db) detail += href(`${back}/impact`,'查看反向影响 →','action');
+      else detail += related.map(e=>href(link(e.to),e.to===db?'查看共享数据库 →':`查看${esc(e.to.name)} →`,'action')).join('');
+      detail += href(back,'返回拓扑','back')+diagnostics(selected,g);
+    }
+    const draw = n=>card(n,link(n),selected===n);
+    const diagram = relationGraph(rel,isolated,draw);
+    return `<div class="graph-layout"><section class="panel"><div class="graph-head"><h2>${c.id===west?'运行部署拓扑':'应用依赖拓扑'}</h2><small>${esc(scope==='all'?'全部可见命名空间':scope)}</small></div>${diagram?`<div style="display:grid;gap:12px">${diagram}</div><details class="foot"><summary>查看关系列表</summary>${relationList(rel,isolated,pick)}</details>`:empty('此范围暂无已核验节点或关系。')}${!c.sources.some(s=>s.online)?'<p class="warn foot">来源离线，图中仅展示最后观测。</p>':''}${href('#topology','查看平台拓扑 →')}</section><aside class="panel" aria-label="节点详情">${detail}</aside></div>`;
+  }
+
+  const defaults = () => ({domain:'all',layer:'all',mode:'graph',query:'',node:'',direction:'out'});
+  let filters = defaults();
+  function platformTopology(clusters,g) {
+    const f = filters;
+    const domainName = id=>id==='standalone'?'独立机器':id;
+    const domains = ['all',...clusters.map(c=>c.id),...(Review.admin()?['standalone']:[])];
+    const inDomain = n=>f.domain==='all' || f.domain===n.cluster;
+    const matches = n=>[n.id,n.name,n.ns,n.asset,n.cluster,n.type].some(v=>v.toLowerCase().includes(f.query.toLowerCase()));
+    const candidates = g.edges.filter(e=>(f.layer==='all'||f.layer===e.layer) && (inDomain(e.from)||inDomain(e.to)));
+    const selected = g.nodes.get(f.node);
+    const links = selected ? candidates.filter(e=>(f.direction==='out'?e.from:e.to)===selected) : candidates.filter(e=>matches(e.from)||matches(e.to));
+    const connected = new Set(candidates.flatMap(e=>[e.from,e.to]));
+    const isolated = selected ? (links.length?[]:[selected]) : [...g.nodes.values()].filter(n=>inDomain(n) && matches(n) && !connected.has(n) && (f.layer==='all'||f.query));
+    const count = new Set([...links.flatMap(e=>[e.from.id,e.to.id]),...isolated.map(n=>n.id)]).size;
+    const pick = n=>btn('node',n.id,title(n));
+    const draw = n=>card(n,'',n===selected);
+    const rendered = f.mode==='graph'?relationGraph(links,isolated,draw):relationList(links,isolated,pick);
+    const choices = (key,label,pairs)=>`<label class="scope">${label} <select data-cl-filter="${key}">${pairs.map(([id,name])=>option(id,name,f[key])).join('')}</select></label>`;
+    const controls = `<div class="toolbar">${choices('domain','资产范围',domains.map(d=>[d,d==='all'?'全部可见资产':domainName(d)]))}${choices('layer','关系层',Object.entries(layers))}${choices('mode','展示方式',[['graph','拓扑图'],['list','关系列表']])}<form class="toolbar" data-cl-form="search"><input type="search" name="query" aria-label="搜索节点" placeholder="名称、编号或命名空间" maxlength="100" value="${esc(f.query)}"><button>搜索</button></form>${btn('reset','','重置')}</div>`;
+    const scopes = clusters.map(c=>href(url(c.id,'topology','all'),`${code(c.id)}${c.sources.some(s=>s.online)?'':' · 离线快照'} →`)).join('');
+    let detail = '<h2>一跳关系</h2><p class="note foot">选择节点，查看它依赖的资源或受它影响的对象。</p>';
+    if (selected) {
+      const outgoing = f.direction==='out';
+      const adjacent = links.map(e=>`<li><div>${pick(outgoing?e.to:e.from)}<small style="display:block">${esc(e.verb)} · ${evidenceText(e)}</small></div></li>`).join('');
+      detail = info(selected,g) + `<div class="toolbar">${btn('direction','out','依赖谁 · 一跳',`aria-pressed="${outgoing}"`)}${btn('direction','in','影响谁 · 反向',`aria-pressed="${!outgoing}"`)}</div><p class="note foot">${outgoing?'出向':'反向'}关系 · ${links.length} 条</p>${adjacent?`<ul class="impact-list">${adjacent}</ul>`:empty('当前关系层与方向没有可见的一跳关系。')}${diagnostics(selected,g)}<p class="foot">${btn('clear-node','','返回筛选结果')}</p>`;
+    }
+    return `<div class="heading"><div><h1 tabindex="-1">平台拓扑</h1><p class="note">${Review.admin()?'平台可见资产':'我的授权范围'} · 关系箭头由起点指向关联对象</p></div></div><section class="panel">${controls}<div class="toolbar foot"><small>进入集群拓扑</small>${scopes}</div></section><div class="graph-layout"><section class="panel"><div class="graph-head"><h2>${f.mode==='graph'?'资产关系图':'资产关系列表'}</h2><small>${count} 个节点 · ${links.length} 条关系</small></div>${rendered?`<div style="display:grid;gap:12px">${rendered}</div>`:empty('当前筛选没有匹配的资产或关系。可调整范围、关系层或搜索词。')}</section><aside class="panel" aria-label="一跳关系">${detail}</aside></div>`;
+  }
+
+  function render(parts) {
+    if (previousRole!==Review.admin()) {
+      filters=defaults(); discovery=null; notice=''; previousRole=Review.admin();
+    }
+    const [id,view,scope,selection] = parts, clusters = inventory();
+    if (id==='clusters' && parts.length===1) return clusterIndex(clusters);
+    if (id==='topology' && parts.length===1) return platformTopology(clusters,graph(clusters));
+    const c = clusters.find(entry=>entry.id===id);
+    if (!c || (scope!=='all' && !namespaces(c).includes(scope))) return unavailable();
+    const activity = c.id!==east && ['monitor','inspection'].includes(view);
+    if ((!activity && !['overview','topology'].includes(view)) || parts.length>(view==='topology'?4:3) || selection==='') return unavailable();
+    const g = graph(clusters);
+    if (activity) return head(c,view,scope)+scopedActivity(c,view,scope,g);
+    return head(c,view,scope) + (view==='overview'?overview(c,scope,g):clusterTopology(c,scope,selection,g));
+  }
+  document.addEventListener('submit',event=>{
+    const form=event.target, kind=form.dataset.clForm;
+    if (!kind) return;
+    event.preventDefault();
+    const data=Object.fromEntries(new FormData(form));
+    if (kind==='search') { filters.query=data.query.trim(); filters.node=''; }
+    if (kind==='discover') {
+      if (!Review.admin() || !discovery) return;
+      const draft=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,v.trim()]));
+      discovery={draft};
+      try {discovery.preview=assess(draft,raw());} catch(err){discovery.error=err.message;}
+    }
+    Review.refresh();
+  });
+  document.addEventListener('change',event=>{
+    const {clScope,clFilter}=event.target.dataset;
+    if (clScope) location.hash=clScope+'/'+encodeURIComponent(event.target.value);
+    if (clFilter) {
+      filters[clFilter]=event.target.value;
+      if (clFilter!=='mode') {filters.node=''; filters.direction='out';}
+      Review.refresh();
+    }
+  });
+  document.addEventListener('click',event=>{
+    const el=event.target.closest?.('[data-cl-action]');
+    if (!el || el.disabled) return;
+    const action=el.dataset.clAction, value=el.value;
+    if (action==='node') { filters.node=value; filters.direction='out'; }
+    else if (action==='clear-node') filters.node='';
+    else if (action==='reset') filters=defaults();
+    else if (action==='direction') filters.direction=value;
+    else {
+      if (!Review.admin()) return;
+      notice='';
+      if (action==='discover') discovery={draft:{...template}};
+      else if (action==='cancel') discovery=null;
+      else if (action==='edit' && discovery) discovery.preview=null;
+      else if (action==='commit' && discovery?.preview) commitDiscovery();
+      else if (action==='verify') {
+        const data=raw(), source=data.flatMap(c=>c.sources).find(s=>s.target===value);
+        if (!source || !source.online) return;
+        source.at=timestamp(); Review.save(store,data); Review.audit('重新核验集群来源',source.target);
+        notice=`${source.target} 已重新核验 · ${source.at}（UTC+8）。`;
+      }
+    }
+    const openSources = el.closest('details')?.querySelector('summary')?.textContent;
+    Review.refresh();
+    if (openSources) for (const d of document.querySelectorAll('details')) if (d.querySelector('summary')?.textContent===openSources) d.open=true;
+  });
+  return {render,list};
+})();
+
+</script>
+
+<script>
+'use strict';
+window.Monitor = (() => {
+  // All minute offsets refer to the same immutable example snapshot, in UTC+8.
+  const end = Date.UTC(2026, 10, 19, 9, 40);
+  const ranges = {'1h':60, '6h':360, '24h':1440, '7d':10080};
+  const types = {cluster:'集群', machine:'机器', os:'操作系统', kernel:'内核', process:'进程', app:'应用程序', database:'数据库', alerts:'告警'};
+  const metrics = {cpu:['CPU 用量','核'], memory:['内存用量','GiB'], gpu:['GPU 利用率','%'], network:['网络吞吐','MiB/s'], requests:['业务请求量','req/s'], storage:['存储已用','GiB']};
+  const statuses = {open:'异常', recovered:'恢复', missing:'采集中断'};
+  const nsLabels = {all:'全部可见命名空间', orders:'orders', 'shared-data':'shared-data', billing:'billing'};
+  const source = ns => 'prod-east/agent-' + (ns === 'billing' ? 'b' : 'a');
+  const visibleSpaces = () => Review.admin() ? ['orders','shared-data','billing'] : ['orders','shared-data'];
+  // Baselines use cores, GiB, MiB/s, requests/s and GiB respectively. Null means inapplicable.
+  const assets = [
+    {type:'machine', ns:'orders', id:'SRV-001', name:'订单工作节点', info:'节点在线 · 16 核 / 64 GiB · 最近启动 11-16 06:18', base:[3.1,18,7.2,null,92], disk:512, gpu:true},
+    {type:'os', ns:'orders', id:'OS-001', name:'Ubuntu 24.04 LTS', info:'安装于 SRV-001 · 启动周期 boot-a31 · 最近启动 11-16 06:18', base:[3.1,18,7.2,null,92], disk:512},
+    {type:'kernel', ns:'orders', id:'KRN-001', name:'Linux 6.8.0', info:'运行于 OS-001 · 最近 24 小时 OOM 0 次 · CPU 为内核态用量', base:[0.31,0.85,null,null,null]},
+    {type:'process', ns:'orders', id:'PID-4217', name:'order-api · PID 4217', info:'SRV-001 / boot-a31 / PID 4217 · 进程启动 11-16 06:23 · 内存为 RSS', base:[1.5,2.8,null,null,null]},
+    {type:'app', ns:'orders', id:'APP-001', name:'order-api', info:'订单服务 · v2.8.1 · 2 个就绪副本 · P95 86 ms · 错误率 0.2%', base:[1.8,3.2,7.2,98,8], disk:32, gpu:true},
+    {type:'database', ns:'shared-data', id:'DB-001', name:'shared-pg', info:'PostgreSQL 16 · 接受连接 · 34 个连接 · SQL 查询 162 次/秒', base:[0.7,3.3,2.1,null,80], disk:128},
+    {type:'app', ns:'billing', id:'APP-002', name:'billing-api', info:'计费服务 · v1.9.0 · 1 个就绪副本 · P95 112 ms · 错误率 0.3%', base:[0.9,2.1,3.1,48,4], disk:16}
+  ];
+  const dimensions = ['cpu','memory','network','requests','storage'];
+  const clock = (t, date = false) => new Date(end + t*60000).toISOString().slice(date ? 5 : 11,16).replace('T',' ');
+  const num = n => Number(n.toFixed(2)).toString();
+  const link = (type,ns='all',range='1h') => `#monitor/${type}/${ns}/${range}`;
+  const options = (map,current) => Object.entries(map).map(([id,name]) => `<option value="${Review.esc(id)}"${id===current?' selected':''}>${Review.esc(name)}</option>`).join('');
+  const jumpSelect = (label,map,current) => `<label class="scope">${label}<select onchange="location.hash=this.value">${options(map,current)}</select></label>`;
+  const allowedAssets = () => {const spaces=visibleSpaces(); return assets.filter(a => spaces.includes(a.ns));};
+  function sample(asset,key,t,channel=0) {
+    if (key==='gpu') {
+      if (channel===1 && t>=-12) return null;
+      if (t>=-42 && t<=-38) return null;
+      return Math.round(36 + 9*channel + 8*Math.sin(t/9) + 3*Math.cos(t/2));
+    }
+    if (key==='network' && ((t>=-41 && t<=-36) || (asset.ns==='billing' && t>=-8))) return null;
+    const base = asset.base[dimensions.indexOf(key)];
+    if (base===null) return null;
+    const wave = Math.sin(t/12) + 0.4*Math.sin(t/2.9);
+    let value = base*(1 + wave*(key==='requests' ? 0.012 : 0.065));
+    if (key==='network') value *= (channel===1 ? 0.35 : 0.65)*(1 + Math.max(0, t+24)/36);
+    if (key==='cpu' && asset.id==='APP-001' && ((t>=-32 && t<=-22) || (t>=-210 && t<=-196))) value=3.25+wave*0.1;
+    if (key==='memory' && t>=-18) {
+      const pressure = {'SRV-001':60, 'OS-001':60, 'PID-4217':10.8, 'APP-001':11.2, 'APP-002':3.7};
+      if (Object.hasOwn(pressure,asset.id)) value=pressure[asset.id]*(1+wave*0.012);
+    }
+    if (key==='storage') value=base*(1 + 0.025*Math.sin(t/190));
+    return Number(value.toFixed(2));
+  }
+  function contributors(obj,key) {
+    return (obj.members || [obj]).filter(a => key==='gpu' ? a.gpu : a.base[dimensions.indexOf(key)]!==null);
+  }
+  function reading(members,key,t,channel) {
+    let total=0;
+    for (const a of members) { const v=sample(a,key,t,channel); if(v===null) return null; total+=v; }
+    return total;
+  }
+  const ruleDefs = [
+    {id:'node-memory', asset:'SRV-001', metric:'memory', level:'严重', threshold:56, duration:5, max:64},
+    {id:'app-cpu', asset:'APP-001', metric:'cpu', level:'警告', threshold:3, duration:5, max:4},
+    {id:'billing-memory', asset:'APP-002', metric:'memory', level:'严重', threshold:3, duration:5, max:4}
+  ];
+  const rulesFor = visible => ruleDefs.filter(r=>visible.some(a=>a.id===r.asset));
+  function validRule(rule,threshold,duration) {
+    return Number.isFinite(threshold) && threshold>0 && threshold<=rule.max && Number.isInteger(duration) && duration>=1 && duration<=1440;
+  }
+  function config(rule) {
+    const saved=Review.read('monitor-rule-'+rule.id, {threshold:rule.threshold,duration:rule.duration});
+    if (!saved || !validRule(rule,saved.threshold,saved.duration)) throw new Error('监控规则数据无效：'+rule.id);
+    return saved;
+  }
+  function events(visible) {
+    const rows=[];
+    for (const rule of rulesFor(visible)) {
+      const asset=visible.find(a=>a.id===rule.asset), {threshold,duration}=config(rule);
+      let start=null, event=null;
+      for (let t=-ranges['7d']; t<=0; t++) {
+        const v=sample(asset,rule.metric,t);
+        if (v!==null && v>threshold) {
+          if (start===null) start=t;
+          if (!event && t-start+1>=duration) {
+            event={asset,metric:rule.metric, level:rule.level, state:'open', start, at:t, value:v, note:`高于 ${threshold} ${metrics[rule.metric][1]}，连续 ${duration} 个分钟样本`};
+            rows.push(event);
+          }
+        } else {
+          start=null;
+          if(event && v!==null) {event.state='recovered';event.until=t;event=null;}
+        }
+      }
+    }
+    // A collector outage is counted once, even when several measurements use that source.
+    for(const [id,metric,channel,note] of [['SRV-001','gpu',1,'GPU 1 · DCGM 停止上报'],['APP-002','network',0,'容器网络计数器停止上报']]) {
+      const asset=visible.find(a=>a.id===id);
+      if(!asset || sample(asset,metric,0,channel)!==null) continue;
+      let at=0;
+      while(at>-ranges['7d'] && sample(asset,metric,at-1,channel)===null) at--;
+      rows.push({asset,metric,channel,state:'missing',level:'警告',at,note});
+    }
+    return rows.sort((a,b)=>(b.until??b.at)-(a.until??a.at));
+  }
+  function counts(rows) {return {open:rows.filter(e=>e.state==='open').length,missing:rows.filter(e=>e.state==='missing').length};}
+  const summary=()=>counts(events(allowedAssets()));
+  function contextLinks(a) {
+    const node=a.ns==='shared-data'?'shared-pg':a.ns==='billing'?'billing-api':'order-api';
+    const tool=a.type==='database'?'database':'k8s';
+    const diag='#diagnose/'+[tool,source(a.ns),a.ns,a.id].map(encodeURIComponent).join('/');
+    const ledger=a.type==='app' ? `<a href="#systems/${a.ns==='orders'?'SYS-001':'SYS-002'}">业务系统台账</a>` : a.ns==='orders' ? '<a href="#machines/SRV-001">机器台账</a>' : '';
+    return `${ledger}<a href="#prod-east/topology/${a.ns}/${node}">查看影响拓扑</a><a href="${diag}">实时诊断</a>`;
+  }
+  function routeHead(type,ns,range,spaces,filterQuery='') {
+    const namespaces=Object.fromEntries(['all',...spaces].map(s=>[link(type,s,range),nsLabels[s]]));
+    const windows=Object.fromEntries(Object.keys(ranges).map(r=>[link(type,ns,r)+filterQuery,r.replace('h',' 小时').replace('d',' 天')]));
+    return `<nav class="crumbs"><a href="#platform">平台看板</a> › <a href="#prod-east/overview/${ns}">prod-east</a> › 监控</nav>
+      <div class="heading"><div><h1>${type==='alerts'?'告警中心':types[type]+'监控'}</h1><p class="note">CLS-001 · 示例快照 2026-11-19 09:40（UTC+8）</p></div>
+      <div class="toolbar">${jumpSelect('命名空间',namespaces,link(type,ns,range))}${jumpSelect('时间范围',windows,link(type,ns,range)+filterQuery)}</div></div>
+      <nav class="tabs" aria-label="监控对象">${Object.entries(types).map(([key,name])=>`<a href="${link(key,ns,range)}"${key===type?' aria-current="page"':''}>${name}</a>`).join('')}</nav>`;
+  }
+  function assetLinks(list,range) {
+    return list.map(a=>`<li><a class="go" href="${link(a.type,a.ns,range)}">${types[a.type]} · ${a.name}</a><small>${a.id}</small></li>`).join('');
+  }
+  function details(obj,visible,range) {
+    const cluster=!!obj.members;
+    const related=cluster ? visible.filter(a=>obj.ns==='all'||a.ns===obj.ns) : visible.filter(a=>{
+      if (a.id===obj.id) return false;
+      if (obj.type==='database') return a.type==='app';
+      if (a.type==='database') return obj.type==='app';
+      return a.ns===obj.ns;
+    });
+    const sources=[...new Set((obj.members||[obj]).map(a=>source(a.ns)))].join('、');
+    return `<section class="panel"><div class="group-title"><h2>${obj.name} <small>${obj.id}</small></h2><small>${nsLabels[obj.ns]}</small></div>
+      <p>${cluster?`按命名空间汇总 ${obj.members.length} 个工作负载或数据库实例。每个实例按资产编号计一次。`:obj.info}</p>
+      <p class="note">采集目标 ${sources}</p><div class="toolbar foot">${cluster?`<a href="#prod-east/topology/${obj.ns}">集群拓扑</a>`:contextLinks(obj)}<a href="${link('alerts',obj.ns,range)}">查看告警</a></div>
+      <details class="foot"${cluster?' open':''}><summary>关联对象（${related.length}）</summary><ul class="impact-list">${assetLinks(related,range)}</ul></details></section>`;
+  }
+  const collector = (key,members) => {
+    if(key==='gpu') return 'DCGM · 设备级';
+    if(key==='requests') return 'Ingress · 入口请求计数器';
+    const layer={machine:'节点', os:'系统', kernel:'内核', process:'进程', app:'容器', database:'数据库实例'};
+    const probe={cpu:'CPU 时间',memory:'内存统计',network:'接口字节计数器',storage:'卷容量'};
+    return [...new Set(members.map(a=>layer[a.type]))].join('、') + ' · ' + probe[key];
+  };
+  function timeline(members,key,minutes,channel) {
+    const segments=[], gaps=[]; let run=null, gap=null;
+    for (let t=-minutes;t<=0;t++) {
+      const value=reading(members,key,t,channel);
+      if(value===null) {
+        if(!gap) {gap=[t,t];gaps.push(gap);} else gap[1]=t;
+        run=null;
+      } else {
+        if(!run) {run=[];segments.push(run);} run.push([t,value]); gap=null;
+      }
+    }
+    return {segments,gaps};
+  }
+  // Keep each bucket's extrema and endpoints. Never connect across an absent sample.
+  function vertices(run,minutes) {
+    const stride=Math.ceil(minutes/105), points=[];
+    for(let i=0;i<run.length;i+=stride) {
+      const endIndex=Math.min(i+stride,run.length)-1;
+      let low=i,high=i;
+      for(let j=i+1;j<=endIndex;j++) {if(run[j][1]<run[low][1]) low=j; if(run[j][1]>run[high][1]) high=j;}
+      for(const index of [...new Set([i,low,high,endIndex])].sort((a,b)=>a-b)) points.push(run[index]);
+    }
+    return points;
+  }
+  function plot(key,series,minutes,marker) {
+    let peak=0;
+    for(const s of series) for(const run of s.segments) for(const p of run) peak=Math.max(peak,p[1]);
+    const max=key==='gpu'?100:Math.max(1,Math.ceil(peak*1.06));
+    const x=t=>38+(t+minutes)/minutes*306, y=v=>74-v/max*60;
+    const paths=series.map((s,i)=>s.segments.map(run=>{
+      const color=i?'var(--warning)':'var(--primary)';
+      if(run.length===1) return `<circle cx="${x(run[0][0])}" cy="${y(run[0][1])}" r="2" fill="${color}"/>`;
+      const d=vertices(run,minutes).map(([t,v],j)=>(j?'L':'M')+x(t).toFixed(2)+','+y(v).toFixed(2)).join(' ');
+      return `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"${i?' stroke-dasharray="5 2"':''}/>`;
+    }).join('')).join('');
+    const mark=marker==null?'':`<line x1="${x(marker)}" x2="${x(marker)}" y1="8" y2="75" stroke="var(--fg)" stroke-dasharray="2 3"/>`;
+    return `<svg viewBox="0 0 355 98" width="100%" role="img" aria-label="${metrics[key][0]}历史曲线，${clock(-minutes,true)} 至 ${clock(0,true)}，纵轴 0 至 ${max} ${metrics[key][1]}">
+      <path d="M38 14H344 M38 74H344" stroke="var(--line)"/>${paths}${mark}
+      <g font-size="10" fill="var(--sub)"><text x="32" y="17" text-anchor="end">${max}</text><text x="32" y="76" text-anchor="end">0</text><text x="38" y="91">${clock(-minutes,minutes>=1440)}</text><text x="344" y="91" text-anchor="end">${clock(0,minutes>=1440)}</text></g></svg>`;
+  }
+  function chart(obj,key,minutes,focus) {
+    const [label,unit]=metrics[key], members=contributors(obj,key);
+    const title=`<h3>${label} <small>${unit}</small></h3>`;
+    if(!members.length) {
+      const reason={gpu:'未分配可归属的 GPU 设备',requests:'业务请求按入口计数；此对象没有独立入口',network:'此对象没有独立网络接口计数器',storage:'此对象没有独立卷容量'}[key];
+      return `<article class="panel" data-metric="${key}">${title}<p class="foot">不适用</p><p class="note">${reason}</p></article>`;
+    }
+    const channels=key==='network'?['接收','发送']:key==='gpu'?['GPU 0','GPU 1']:[''];
+    const series=channels.map((_,i)=>timeline(members,key,minutes,i));
+    const current=series.map((s,i)=>{
+      const last=s.segments.at(-1)?.at(-1);
+      const label=channels[i]?`${channels[i]}${i?'（虚线）':'（实线）'} `:'';
+      if(!last || last[0]<0) return `${label}<b class="warn">缺数据</b>${last?` · 最近 ${clock(last[0])} 为 ${num(last[1])} ${unit}`:' · 窗口内无样本'}`;
+      return `${label}<b class="num">${num(last[1])}</b> ${unit}`;
+    });
+    const gaps=series.flatMap((s,i)=>s.gaps.map(([a,b])=>`${channels[i]} ${clock(a,minutes>=1440)}–${clock(b,minutes>=1440)}${b===0?'（持续）':''}`));
+    const marker=focus?.metric===key?focus.at:null;
+    const capacity=members.reduce((v,a)=>v+(a.disk||0),0);
+    let extra='';
+    if(key==='storage') extra=` · 总量 ${capacity} GiB，可用 ${num(capacity-reading(members,key,0,0))} GiB`;
+    if(key==='gpu') extra=' · 显存 GPU 0 已用 6 / 16 GiB，GPU 1 缺数据';
+    return `<article class="panel" data-metric="${key}">${title}<p class="foot">${current.join(' · ')}</p>${plot(key,series,minutes,marker)}
+      ${marker==null?'':`<p class="warn">告警定位 · ${clock(marker,true)} · ${focus.channel===1?'GPU 1 · ':''}${reading(members,key,marker,focus.channel??0)===null?'缺数据':num(reading(members,key,marker,focus.channel??0))+' '+unit}</p>`}
+      <p class="note">${collector(key,members)} · ${members.length} 个对象 · 采样窗口截至 ${clock(0)}${extra}</p>
+      ${gaps.length?`<p class="note warn">采样断点 · ${gaps.join('；')}</p>`:''}</article>`;
+  }
+  function thresholdRules(visible,ns) {
+    const rules=rulesFor(visible.filter(a=>ns==='all'||a.ns===ns));
+    const forms=rules.map(rule=>{
+      const {threshold,duration}=config(rule), [metric,unit]=metrics[rule.metric];
+      return `<form data-rule="${rule.id}" class="foot" onsubmit="event.preventDefault();Monitor.saveRule(this)" novalidate><fieldset><legend>${rule.asset} · ${metric}</legend>
+        <div class="toolbar"><label>高于（${unit}） <input type="number" name="threshold" step="any" max="${rule.max}" required value="${threshold}" style="width:7em"></label>
+        <label>持续（分钟） <input type="number" name="duration" min="1" max="1440" step="1" required value="${duration}" style="width:7em"></label>
+        <button type="submit">保存规则</button></div><p role="status" class="note foot">上限 ${rule.max} ${unit} · 持续时间 1–1440 分钟</p></fieldset></form>`;
+    });
+    if(!rules.length) return '<p class="note">此命名空间暂无阈值规则。</p>';
+    if(!Review.admin()) return '<p class="note">当前身份可查看规则，编辑需要平台管理员权限。</p><ul>'+rules.map(r=>{const c=config(r);return `<li>${r.asset} · ${metrics[r.metric][0]} 高于 ${c.threshold} ${metrics[r.metric][1]}，持续 ${c.duration} 分钟</li>`;}).join('')+'</ul>';
+    return `<p class="note">每分钟判定一次。保存后使用新规则回放此快照内的样本，并更新告警和首页计数。</p>${forms.join('')}`;
+  }
+  function saveRule(form) {
+    const msg=form.querySelector('[role="status"]');
+    if(!Review.admin()) {msg.textContent='需要平台管理员权限。';return;}
+    const [area,type,scope]=location.hash.slice(1).split('/');
+    const ns=scope && !Object.hasOwn(ranges,scope.split('?')[0])?scope:'all';
+    const rule=rulesFor(allowedAssets().filter(a=>ns==='all'||a.ns===ns)).find(r=>r.id===form.dataset.rule);
+    if(area!=='monitor'||type!=='alerts'||!rule) {msg.textContent='无法在当前范围保存此规则。';return;}
+    const threshold=form.elements.threshold.valueAsNumber, duration=form.elements.duration.valueAsNumber;
+    if(!validRule(rule,threshold,duration)) {
+      msg.textContent=`阈值必须大于 0 且不超过 ${rule.max} ${metrics[rule.metric][1]}，持续时间必须为 1–1440 的整数分钟。`;
+      msg.className='warn foot';return;
+    }
+    Review.save('monitor-rule-'+rule.id,{threshold,duration});
+    Review.audit('保存监控阈值规则',`${rule.asset} · ${metrics[rule.metric][0]} > ${threshold} ${metrics[rule.metric][1]} · ${duration} 分钟`);
+    Review.refresh();
+    const updated=document.querySelector(`form[data-rule="${rule.id}"]`);
+    if(updated) {
+      updated.closest('details').open=true;
+      updated.querySelector('[role="status"]').textContent='已保存。告警及首页计数已重新计算。';
+      updated.querySelector('button').focus();
+    }
+  }
+  function alertPage(ns,range,params,visible,spaces) {
+    const all=events(visible), totals=counts(all), minutes=ranges[range];
+    const scoped=visible.filter(a=>ns==='all'||a.ns===ns);
+    const fields={state:{all:'全部状态',...statuses},level:{all:'全部严重度','严重':'严重','警告':'警告'},asset:{all:'全部资产',...Object.fromEntries(scoped.map(a=>[a.id,a.id+' · '+a.name]))}};
+    const selected={};
+    for(const [field,choices] of Object.entries(fields)) {
+      selected[field]=params.get(field)??'all';
+      if(!Object.hasOwn(choices,selected[field])) return unavailable();
+    }
+    const rows=all.filter(e=>(ns==='all'||e.asset.ns===ns) && (e.until==null||e.until>=-minutes) && (selected.state==='all'||e.state===selected.state) && (selected.level==='all'||e.level===selected.level) && (selected.asset==='all'||e.asset.id===selected.asset));
+    const filters=Object.entries(fields).map(([field,choices])=>{
+      const urls={};
+      for(const [value,label] of Object.entries(choices)) {
+        const q=new URLSearchParams({...selected,[field]:value});
+        urls[link('alerts',ns,range)+'?'+q]=label;
+      }
+      return jumpSelect({state:'事件状态',level:'严重度',asset:'资产'}[field],urls,link('alerts',ns,range)+'?'+new URLSearchParams(selected));
+    }).join('');
+    const body=rows.map(e=>{
+      const {asset,metric,at}=e;
+      const targetRange=Object.keys(ranges).find(r=>ranges[r]>=Math.max(minutes,-at));
+      const dest=link(asset.type,asset.ns,targetRange);
+      const curve=dest+`?metric=${metric}&amp;at=${at}&amp;channel=${e.channel??0}`;
+      return `<tr><td><b class="${e.state==='recovered'?'ok':'warn'}">${statuses[e.state]}</b><small>${e.level}</small></td>
+        <td><a href="${dest}">${asset.id} · ${asset.name}</a><small>${asset.ns} · ${source(asset.ns)}</small></td>
+        <td>${metrics[metric][0]}<small>${e.note}</small></td><td><time>${clock(at,true)}</time><small>${e.until==null?'持续中':'恢复 '+clock(e.until,true)}</small></td>
+        <td><div class="toolbar"><a href="${curve}">定位曲线</a>${contextLinks(asset)}</div></td></tr>`;
+    }).join('');
+    const activeFilters=new URLSearchParams(Object.entries(selected).filter(([,value])=>value!=='all'));
+    const head=routeHead('alerts',ns,range,spaces,activeFilters.size?'?'+activeFilters:'');
+    return head+`<section class="panel"><div class="group-title"><h2>告警事件</h2><small>平台首页 · 当前身份全部授权资产</small></div>
+      <p><strong>未恢复异常 ${totals.open}</strong> · <strong>采集中断 ${totals.missing}</strong></p>
+      <p class="note">首页分别统计快照时仍超阈值的事件和仍中断的采集源。已恢复事件仅在历史列表显示。下方筛选仅影响明细。</p>
+      <div class="toolbar foot">${filters}</div><p class="note foot" role="status">当前筛选 ${rows.length} 条 · ${clock(-minutes,true)} 至 ${clock(0,true)} 内触发或持续的事件</p>
+      ${body?`<div class="table-scroll" role="region" aria-label="告警事件明细" tabindex="0"><table style="min-width:600px"><thead><tr><th>状态</th><th>受影响资产</th><th>触发条件</th><th>触发时间</th><th>排查</th></tr></thead><tbody>${body}</tbody></table></div>`:'<p class="foot">当前条件没有匹配的告警。可调整筛选或扩大时间范围。</p>'}</section>
+      <details class="panel"><summary>阈值与持续时间规则</summary>${thresholdRules(visible,ns)}</details>`;
+  }
+  const unavailable=()=>'<section class="panel" role="alert"><h1>监控范围不可访问</h1><p class="foot">链接无效或超出当前身份的授权范围。</p><a class="go" href="#monitor/cluster">返回可见监控</a></section>';
+  function render(parts) {
+    const [,type,scopeParam,timeParam]=parts;
+    if(parts[0]!=='monitor'||!Object.hasOwn(types,type)||parts.length>4) return unavailable();
+    // A time-only deep link uses #monitor/<type>/<time>.
+    const timeOnly=scopeParam && Object.hasOwn(ranges,scopeParam.split('?')[0]);
+    if(timeOnly && timeParam!==undefined) return unavailable();
+    const ns=timeOnly?'all':scopeParam||'all';
+    const spec=(timeOnly?scopeParam:timeParam)??'1h';
+    const [range,query='']=spec.split('?'), params=new URLSearchParams(query);
+    const spaces=visibleSpaces();
+    if(!Object.hasOwn(ranges,range) || (ns!=='all'&&!spaces.includes(ns))) return unavailable();
+    const visible=allowedAssets();
+    if(type==='alerts') return alertPage(ns,range,params,visible,spaces);
+    const head=routeHead(type,ns,range,spaces);
+    const scoped=visible.filter(a=>ns==='all'||a.ns===ns);
+    const candidates=scoped.filter(a=>a.type===type);
+    const obj=type==='cluster'?{type,ns,name:'prod-east',id:'CLS-001',members:scoped.filter(a=>['app','database'].includes(a.type))}:candidates[0];
+    if(!obj) return head+`<section class="panel"><h2>当前命名空间没有${types[type]}监控对象</h2><p class="foot"><a href="${link(type,'all',range)}">查看全部可见命名空间</a></p></section>`;
+    let focus=null;
+    if(params.size) {
+      const metric=params.get('metric'), rawAt=params.get('at'), at=Number(rawAt), channel=Number(params.get('channel')??0);
+      if(!Object.hasOwn(metrics,metric) || !rawAt || !/^-?\d+$/.test(rawAt) || at>0 || at < -ranges[range] || ![0,1].includes(channel) || (channel===1&&!['network','gpu'].includes(metric)) || !contributors(obj,metric).length) return unavailable();
+      focus={metric,at,channel};
+    }
+    const keys=Object.keys(metrics);
+    if(focus) keys.unshift(...keys.splice(keys.indexOf(focus.metric),1));
+    const choices=candidates.length>1?`<nav class="bar" aria-label="可见实例"><span>选择实例</span>${candidates.map(a=>`<a href="${link(type,a.ns,range)}"${a===obj?' aria-current="true"':''}>${a.name}</a>`).join('')}</nav>`:'';
+    const markers=focus?`<p class="warn">已定位 ${metrics[focus.metric][0]} · ${clock(focus.at,true)}（图中竖线）</p>`:'';
+    return head+choices+details(obj,visible,range)+`<section aria-label="历史指标"><div class="group-title"><div><h2>指标历史</h2>${markers}</div><small>${clock(-ranges[range],true)} 至 ${clock(0,true)} · 每分钟采样</small></div><div class="pair">${keys.map(k=>chart(obj,k,ranges[range],focus)).join('')}</div></section>`;
+  }
+  return {render,summary,saveRule};
+})();
+
+</script>
+
+<script>
+'use strict';
+window.Inspection = (() => {
+  const { esc, read, save, admin, audit, download, refresh } = Review;
+  const key = 'inspection-weekly-v1';
+  const week = '2026-11-16', previousWeek = '2026-11-09', nextWeek = '2026-11-23';
+  const reviewTime = Date.parse('2026-11-19T04:00:00Z');
+  const minute = 60000, day = 1440 * minute;
+  const zones = { 'Asia/Shanghai': 8, UTC: 0, 'Asia/Tokyo': 9 };
+  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  const sourceA = 'prod-east/agent-a', sourceB = 'prod-east/agent-b';
+  const accounts = { 'svc-inspection': [sourceA, sourceB], 'svc-orders': [sourceA] };
+  const assets = [
+    { id: 'SRV-001', name: '订单工作节点', source: sourceA, ns: 'orders', checks: ['M1','M2','M3','M4','M5','V2'], link: '#machines/SRV-001' },
+    { id: 'SYS-001', name: '订单系统', source: sourceA, ns: 'orders', checks: ['A3'], link: '#systems/SYS-001' },
+    { id: 'order-api', name: '订单服务', source: sourceA, ns: 'orders', checks: ['V1','V3','A1','A4','A5'], link: '#prod-east/topology/orders/order-api' },
+    { id: 'shared-pg', name: '共享数据库', source: sourceA, ns: 'shared-data', checks: ['A2'], link: '#prod-east/topology/shared-data/shared-pg' },
+    { id: 'billing-api', name: '计费服务', source: sourceB, ns: 'billing', checks: ['A1','A5'], link: '#prod-east/topology/billing/billing-api' }
+  ];
+  const groups = { M: '机器', V: '漏洞与补丁', A: '应用' };
+  const checks = {
+    M1: ['运行与重启', '运行记录', '近 24 小时心跳连续，重启 0 次。'],
+    M2: ['CPU 与内存', '5 分钟资源样本', 'CPU 峰值 42%，内存峰值 61%，均低于 85% 评审线。'],
+    M3: ['可疑进程', '进程台账摘要', '最近一次盘点的 18 个进程均有已核验的归属。'],
+    M4: ['配置合规', '配置基线回执', '主机基线 6 项符合 6 项。'],
+    M5: ['异常登录与权限变更', '脱敏审计摘要', '近 24 小时异常登录 0 次，权限变更 1 笔，有审批记录。'],
+    V1: ['组件已知漏洞', '部署版本与示例公告', '订单组件 2.8.1，低于公告修复版本 2.10.0。'],
+    V2: ['待更新补丁', '维护清单', '与本期维护清单比对，待应用补丁 0 项。'],
+    V3: ['修复验证', '部署后版本回执', '缺少整改后的部署版本，等待登记和复检。'],
+    A1: ['服务可用性', '服务采样', '5 分钟内模拟心跳 5/5 正常，最近响应 38 ms。'],
+    A2: ['数据库状态', '数据库只读状态回执', '连接 34/100，副本延迟 0.4 秒，阈值 2 秒。'],
+    A3: ['流量异常', '业务流量汇总', '5 分钟均值 98 req/s，参考区间 70–120 req/s。'],
+    A4: ['Web 安全配置', '部署配置核验单', '发布台账内的 3 项 Web 配置均符合基线。'],
+    A5: ['指定 API', '业务接口验收回执', '服务状态接口预期 HTTP 200，样本 HTTP 200，耗时 41 ms。']
+  };
+  const issue = 'ISSUE-DEMO-017', baseline = '2.8.1', fixed = '2.10.0';
+  const asset = id => assets.find(a => a.id === id);
+  const allowed = (a, scope = '') => !!a && (admin() || (a.source === sourceA && ['orders','shared-data'].includes(a.ns))) &&
+    (!scope || [a.id, a.ns, a.source.split('/')[0], a.source].includes(scope));
+  const visible = (rows, scope) => rows.filter(row => allowed(asset(row.asset), scope));
+  const unique = values => [...new Set(values)];
+  const datetime = (at, zone) => new Intl.DateTimeFormat('sv-SE', { timeZone: zone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(at);
+  const schedule = p => `每${weekdays[p.weekday]} ${p.time} · ${p.zone}`;
+  function dueAt(p, start) {
+    const [hour, min] = p.time.split(':').map(Number);
+    return Date.parse(start+'T00:00:00Z') + p.weekday * day + (hour - zones[p.zone]) * 60 * minute + min * minute;
+  }
+  function checklist(p) {
+    return p.assets.flatMap(id => asset(id).checks.filter(c => p.checks.includes(c)).map(check => ({asset:id, check, status:'待执行', evidence:'', at:null})));
+  }
+  function obstacle(db, executor, a) {
+    if (!accounts[executor].includes(a.source) || db.revoked.includes(executor+'@'+a.source)) return '执行身份无目标授权';
+    if (db.offline.includes(a.source)) return 'Agent 离线';
+    return '';
+  }
+  const runFor = (db, p, start) => db.runs.find(r => r.plan.id === p.id && r.week === start);
+  function makeRun(p, start, at) {
+    return {id:`RUN-${p.id.slice(3)}-${start.replaceAll('-','')}`, week:start, plan:structuredClone(p), frozen:at, due:dueAt(p,start), rows:checklist(p), attempts:[], repairs:[]};
+  }
+  function collect(db, r, mode, at, scope) {
+    const events = [];
+    const pending = r.rows.filter(row => ['待执行','漏检'].includes(row.status) && (!scope || allowed(asset(row.asset),scope)));
+    for (const id of unique(pending.map(row => row.asset))) {
+      const reason = mode === '漏跑' ? '到期后 24 小时未收到调度事件' : obstacle(db,r.plan.executor,asset(id));
+      for (const row of pending.filter(row => row.asset === id)) {
+        row.status = reason ? '漏检' : ({V1:'发现', V3:'证据不足'}[row.check] || '通过');
+        row.evidence = reason || checks[row.check][2];
+        row.at = at;
+      }
+      events.push({asset:id, result:reason || '已采样'});
+    }
+    if (events.length) r.attempts.push({mode, at, events});
+  }
+  function seed() {
+    const p = {id:'PL-001', name:'业务资产周检', owner:'业务运维组', executor:'svc-inspection', weekday:1, time:'09:00', zone:'Asia/Shanghai', assets:assets.map(a=>a.id), checks:Object.keys(checks)};
+    const db = {plans:[p], runs:[], offline:[], revoked:['svc-inspection@'+sourceB]};
+    for (const start of [week,previousWeek]) {
+      const at = dueAt(p,start) + (start === previousWeek ? day : 0);
+      const r = makeRun(p,start,at);
+      collect(db,r,start === week ? '自动到期' : '漏跑',at);
+      db.runs.push(r);
+    }
+    return db;
+  }
+  const load = () => read(key,null) ?? seed();
+  function counts(rows) {
+    const byAsset = new Map();
+    for (const row of rows) {
+      if (!byAsset.has(row.asset)) byAsset.set(row.asset,new Map());
+      const items = byAsset.get(row.asset);
+      const rank = row.status === '待执行' ? 0 : row.status === '漏检' ? 1 : 2;
+      items.set(row.check,Math.max(items.get(row.check) ?? 0,rank));
+    }
+    let completed=0, missed=0;
+    for (const items of byAsset.values()) {
+      const ranks = [...items.values()];
+      if (ranks.every(rank => rank === 2)) completed++;
+      else if (ranks.includes(1)) missed++;
+    }
+    return {planned:byAsset.size, completed, missed};
+  }
+  function weekly(db, scope) {
+    return counts(db.plans.flatMap(p => visible(runFor(db,p,week)?.rows ?? checklist(p),scope)));
+  }
+  const summary = (scope = '') => weekly(load(),scope);
+  const url = (area, ...parts) => '#inspection/'+[area,...parts.filter(Boolean)].map(encodeURIComponent).join('/');
+  const link = (href, text, cls='') => `<a href="${esc(href)}" class="${cls}">${esc(text)}</a>`;
+  const go = (area,id,scope,text) => link(url(area,id,scope),text);
+  const sections = {plans:'巡检计划',runs:'执行记录',reports:'巡检报告'};
+  const note = text => `<p class="note foot">${esc(text)}</p>`;
+  const panel = (title,body,action='') => `<section class="panel"><div class="group-title"><h2>${esc(title)}</h2>${action}</div>${body}</section>`;
+  const facts = pairs => `<dl class="facts">${pairs.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+  const table = (cols,rows) => `<div class="table-scroll"><table><thead><tr>${cols.map(c=>`<th scope="col">${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(cells=>`<tr>${cells.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const options = (items,value) => items.map(([id,n])=>`<option value="${esc(id)}" ${String(id)===String(value)?'selected':''}>${esc(n)}</option>`).join('');
+  const op = (name,label,primary=false) => `<button type="submit" name="op" value="${name}"${primary?' class="action"':''}>${esc(label)}</button>`;
+  const form = (action,id,scope,body) => `<form data-inspection="${action}" data-id="${esc(id)}" data-scope="${esc(scope)}">${body}<p class="warn" role="alert" data-error></p></form>`;
+  const scopeText = scope => scope || (admin()?'全部授权资产':'我的可见范围');
+  function head(area,title,scope='') {
+    return `<nav class="crumbs" aria-label="当前位置">${link('#platform','资产')} › ${go(area,'',scope,sections[area])}</nav><div class="heading"><div><h1 tabindex="-1">${esc(title)}</h1><p class="note">模拟事件与证据 · 评审周 2026-11-16 至 11-22 · ${esc(scopeText(scope))}</p></div></div>
+      <nav class="tabs" aria-label="巡检视图">${Object.entries(sections).map(([id,n])=>`<a href="${esc(url(id,scope))}" ${id===area?'aria-current="page"':''}>${n}</a>`).join('')}</nav>`;
+  }
+  function inaccessible(area) {
+    return head(area,sections[area])+`<section class="panel" role="alert">此入口不存在或超出当前权限。 ${go(area,'','','返回列表')}</section>`;
+  }
+  function statLine(c) {
+    return `应检 ${c.planned} · 实检 ${c.completed} · 漏检 ${c.missed} · 待执行 ${c.planned-c.completed-c.missed}`;
+  }
+  const statHelp = '按资产主 ID 去重。全部适用项已执行计实检，证据不足另列；存在未补齐的漏项计漏检。跨计划同资产同项已有采样可抵同周应检。';
+  function scopePicker(area,scope) {
+    const values = unique(assets.filter(a=>allowed(a)).flatMap(a=>[a.source.split('/')[0],a.ns,a.id]));
+    return `<label class="scope">筛选范围 <select data-inspect-filter="${area}">${options([['','全部可见资产'],...unique([...values,...(scope?[scope]:[])]).map(v=>[v,v])],scope)}</select></label>`;
+  }
+  function listing(db,area,scope) {
+    const body = head(area,sections[area],scope)+`<div class="toolbar">${scopePicker(area,scope)}${area==='plans'&&admin()?link(url('plans','new',scope),'新建每周计划','action'):''}</div>`;
+    const total = panel('本周巡检资产',`<strong class="num">${statLine(weekly(db,scope))}</strong>${note(statHelp)}`);
+    if (area==='plans') {
+      const rows = db.plans.flatMap(p => {
+        const items=visible(checklist(p),scope); if(!items.length) return [];
+        return [[go(area,p.id,scope,p.name)+`<small>${esc(p.id)}</small>`,esc(schedule(p)),esc(p.owner),String(counts(items).planned)]];
+      });
+      return body+total+panel('每周计划',rows.length?table(['计划','执行时间','负责人','可见资产'],rows):note('当前范围内暂无计划。'));
+    }
+    const rows = db.runs.slice().sort((a,b)=>b.week.localeCompare(a.week)||b.frozen-a.frozen).flatMap(r=>{
+      const items=visible(r.rows,scope); if(!items.length) return [];
+      return [[go(area,r.id,scope,area==='runs'?r.id:r.plan.name)+`<small>${esc(area==='runs'?r.plan.name:r.id)}</small>`,esc(r.week),esc(statLine(counts(items))),esc(r.plan.owner)]];
+    });
+    return body+total+panel(sections[area],rows.length?table([area==='runs'?'运行编号':'周期报告','周期起始','资产结果','负责人'],rows):note('当前范围内暂无运行。计划首次触发后会生成记录和报告。'));
+  }
+  function preview(db,p,scope) {
+    const rows = visible(checklist(p),scope);
+    const ids = unique(rows.map(row=>row.asset));
+    return table(['应检对象','范围','所需数据','执行前提'],ids.map(id=>{
+      const a=asset(id), blocked=obstacle(db,p.executor,a);
+      return [link(a.link,id)+`<small>${esc(a.name)}</small>`,esc(a.source)+`<small>${esc(a.ns)}</small>`,rows.filter(row=>row.asset===id).map(row=>esc(checks[row.check][1])).join('、'),blocked?`<span class="warn">${esc(blocked)}</span>`:'可执行'];
+    }))+note(`${ids.length} 个应检资产 · ${rows.length} 项适用检查。首次触发冻结范围、检查项、负责人、执行身份及时间。`);
+  }
+  function planForm(db,p,scope='') {
+    const draft = p || {name:'',owner:'',executor:'svc-inspection',weekday:0,time:'09:00',zone:'Asia/Shanghai', assets:assets.filter(a=>allowed(a,scope)).map(a=>a.id), checks:Object.keys(checks)};
+    const box = (name,id,label,checked)=>`<label><input type="checkbox" name="${name}" value="${esc(id)}" ${checked?'checked':''}> ${esc(label)}</label>`;
+    const input = (name,title,value,max)=>`<label>${title}<br><input name="${name}" value="${esc(value)}" required maxlength="${max}"></label>`;
+    const select = (name,label,items,value)=>`<label>${label}<br><select name="${name}">${options(items,value)}</select></label>`;
+    return head('plans',p?'编辑每周计划':'新建每周计划',scope)+panel('计划配置',form('plan',p?.id||'',scope,`
+      <div class="toolbar">${input('name','计划名称',draft.name,64)}${input('owner','负责人',draft.owner,40)}${select('executor','Gateway 执行身份',Object.keys(accounts).map(v=>[v,v]),draft.executor)}</div>
+      <div class="toolbar foot">${select('weekday','每周',weekdays.map((v,i)=>[i,v]),draft.weekday)}<label>执行时间<br><input type="time" name="time" value="${esc(draft.time)}" required></label>${select('zone','时区',Object.keys(zones).map(v=>[v,v]),draft.zone)}</div>
+      <fieldset class="foot"><legend>资产范围</legend><div class="toolbar">${assets.map(a=>box('asset',a.id,`${a.id} · ${a.ns}`,draft.assets.includes(a.id))).join('')}</div></fieldset>
+      <fieldset class="foot"><legend>适用检查项</legend>${Object.entries(groups).map(([g,n])=>`<p><b>${n}</b></p><div class="toolbar">${Object.keys(checks).filter(c=>c.startsWith(g)).map(c=>box('check',c,checks[c][0],draft.checks.includes(c))).join('')}</div>`).join('')}</fieldset>
+      ${p?note('已冻结周期继续使用原配置。修改用于尚未冻结的周期。'):''}<div data-preview aria-live="polite"></div><div class="toolbar foot">${op('preview','预览计划',true)}<button name="op" value="save" disabled>保存计划</button>${go('plans',p?.id,scope,'取消')}</div>`));
+  }
+  function envForm(db,p,rows) {
+    const targets=unique(rows.map(row=>asset(row.asset).source));
+    const state = targets.map(target=>`${target} · ${db.offline.includes(target)?'离线':'在线'} · ${obstacle({...db,offline:[]},p.executor,{source:target})?'无授权':'已授权'}`).join(' / ');
+    return `<details class="foot"><summary>演练离线、撤权与恢复</summary>${note(`${p.executor} ｜ ${state}`)}${form('env',p.id,'',`<input type="hidden" name="executor" value="${esc(p.executor)}"><div class="toolbar foot"><label>来源目标 <select name="target">${options(targets.map(v=>[v,v]))}</select></label><label>模拟事件 <select name="event">${options([['offline','Agent 离线'],['online','Agent 恢复在线'],['revoke','撤销执行身份授权'],['grant','恢复原有授权']])}</select></label>${op('apply','应用模拟事件')}</div>`)}</details>`;
+  }
+  function planDetail(db,p,scope) {
+    const cycle = runFor(db,p,week);
+    const action = admin()?link(url('plans',p.id,'edit'),'编辑计划'):'';
+    const controls = !admin()?note('每周计划由平台管理员维护。'):form('trigger',p.id,scope,`<label>演练周期 <select name="week">${options([[week,'本周 · '+week],[nextWeek,'下周 · '+nextWeek]],week)}</select></label><div class="toolbar foot">${op('auto','模拟到期自动触发',true)}${op('manual','手动执行')}${op('miss','模拟漏跑')}</div>${note('自动事件推进到计划时间，漏跑事件推进到到期后 24 小时。同计划同周重复触发打开原运行。')}`);
+    return head('plans',p.name,scope)+panel('计划详情',facts([['计划编号',p.id],['每周执行',schedule(p)],['本周到期',datetime(dueAt(p,week),p.zone)+' · '+p.zone],['负责人',p.owner],['执行身份',p.executor]])+controls+(cycle&&visible(cycle.rows,scope).length?`<p class="foot">${go('runs',cycle.id,scope,'查看本周冻结清单与运行')}</p>`:'')+(admin()?envForm(db,p,visible(checklist(p))):''),action)+panel('计划范围预览',preview(db,p,scope));
+  }
+  function reportModel(r,scope) {
+    const rows=visible(r.rows,scope);
+    const repairs=r.repairs.filter(entry=>allowed(asset(entry.asset),scope));
+    const items=rows.map(row=>{
+      const a=asset(row.asset);
+      const change=repairs.find(entry=>entry.asset===a.id);
+      const last=change?.history.at(-1);
+      const verification=['V1','V3'].includes(row.check) && last;
+      return {asset:a.id, source:a.source, namespace:a.ns, check:row.check, group:groups[row.check[0]], name:checks[row.check][0],
+        status:verification?({'已修复':'通过','仍受影响':'发现','无法验证':'证据不足'}[last.result]):row.status,
+        evidence:verification?`${issue} · ${last.result} · ${last.evidence}`:row.evidence, sampledAt:verification?last.at:row.at,
+        original:{status:row.status, evidence:row.evidence, at:row.at}};
+    });
+    return {type:'模拟巡检报告', run:r.id, plan:r.plan.id, planName:r.plan.name, week:r.week, schedule:schedule(r.plan), due:r.due, frozen:r.frozen,
+      owner:r.plan.owner, executor:r.plan.executor, zone:r.plan.zone, scope:scopeText(scope), assets:counts(rows),
+      initialFindings:rows.filter(i=>i.status==='发现').length, findings:items.filter(i=>i.status==='发现').length, insufficient:items.filter(i=>i.status==='证据不足').length, items, repairs,
+      attempts:r.attempts.map(a=>({...a, events:visible(a.events,scope)})).filter(a=>a.events.length)};
+  }
+  function runDetail(db,r,scope) {
+    const m=reportModel(r,scope), p=r.plan;
+    const meta=facts([['冻结时刻',datetime(r.frozen,p.zone)],['计划到期',datetime(r.due,p.zone)],['时区',p.zone],['冻结负责人 / 执行身份',p.owner+' / '+p.executor],['本期资产',statLine(m.assets)]]);
+    const manifest=unique(m.items.map(i=>i.asset)).map(id=>{
+      const items=m.items.filter(i=>i.asset===id), a=asset(id);
+      return [link(a.link,id)+`<small>${esc(a.ns)}</small>`,esc(a.source),items.map(i=>i.check).join(' · '),esc(items[0].original.status==='漏检'?items[0].original.evidence:'已采样')];
+    });
+    const history=m.attempts.map(a=>[esc(datetime(a.at,p.zone)),esc(a.mode),a.events.map(ev=>`${esc(ev.asset)} · ${esc(ev.result)}`).join('<br>')]);
+    const recover=admin()&&m.items.some(i=>i.status==='漏检')?form('makeup',r.id,scope,`<div class="toolbar foot">${op('retry','补检本次漏项',true)}</div>${note('补检逐项复核冻结身份及当前目标授权，保留原周期、首次尝试和实际补检时间。')}`):'';
+    return head('runs',r.id,scope)+panel('周期运行',meta+`<div class="toolbar">${go('reports',r.id,scope,'查看本期报告')}${link('#diagnose/audit','回看运行审计')}${go('plans',p.id,'','查看当前计划')}</div>`,esc(r.week+' 起始周'))+
+      panel('冻结应检清单',table(['资产','来源','应检项编号','采集结果'],manifest)+recover+(admin()?envForm(db,p,visible(r.rows,scope)):''))+
+      panel('执行尝试',table(['模拟时间 · '+p.zone,'触发方式','逐资产回执'],history));
+  }
+  function repairPanel(m,scope) {
+    const finding=m.items.find(i=>i.check==='V1'&&i.original.status==='发现'); if(!finding) return '';
+    const change=m.repairs.find(c=>c.asset===finding.asset);
+    const before=facts([['虚构 Issue',issue],['对象',finding.asset],['首次证据',`${datetime(finding.original.at,m.zone)} · 部署 ${baseline} · 修复线 ${fixed}`],['当前整改状态',change?.history.at(-1)?.result || (change?'已登记，待复检':'待登记')]]);
+    const target=`<input type="hidden" name="asset" value="${esc(finding.asset)}">`;
+    let body=before;
+    if(!change) body+=form('repair',m.run,scope,`${target}<label>修复登记说明 <input name="memo" required maxlength="180" placeholder="记录变更单或部署说明"></label> ${op('register','登记修复')}${note('登记说明单独留存，复检以采集到的版本为准。')}`);
+    else {
+      body+=facts([['修复登记',`${datetime(change.at,m.zone)} · ${change.actor} · ${change.memo}`]]);
+      if(change.history.length) body+=table(['复检时间','首次版本 → 复检版本','结论与证据'],change.history.map(h=>[esc(datetime(h.at,m.zone)),esc(`${baseline} → ${h.version||'未取得'}`),`<b>${esc(h.result)}</b><small>${esc(h.evidence)}</small>`]));
+      body+=form('recheck',m.run,scope,`${target}<div class="toolbar foot"><label>模拟已部署版本 <input name="version" maxlength="17" placeholder="如 2.10.0" aria-describedby="ins-version-help"></label>${op('sample','比较版本复检',true)}</div><p id="ins-version-help" class="note foot">输入三段数字版本。留空演练取样缺失；离线与撤权也会留下无法验证的回执。</p>`);
+    }
+    return panel('整改与版本复检',body);
+  }
+  function reportDetail(r,scope) {
+    const m=reportModel(r,scope);
+    const stamp=t=>datetime(t,m.zone);
+    const sections=Object.entries(groups).map(([g,n])=>{
+      const rows=m.items.filter(i=>i.check.startsWith(g)); if(!rows.length)return '';
+      return panel(n,table(['检查项 / 对象','结论','模拟证据 / 时间'],rows.map(i=>[`${esc(i.check+' · '+i.name)}<small>${link(asset(i.asset).link,i.asset)}</small>`,`<b class="${i.status==='通过'?'ok':'warn'}">${esc(i.status)}</b>`,`${esc(i.evidence)}<small>${esc(i.source+' · '+i.namespace+' · '+stamp(i.sampledAt))}</small>`])));
+    }).join('');
+    const overview=facts([['运行编号',m.run],['周期与负责人',m.week+' 起始周 · '+m.owner],['执行身份',m.executor],['资产口径',statLine(m.assets)],['逐项结果',`共 ${m.items.length} 项 · 首检发现 ${m.initialFindings} 项 · 当前发现 ${m.findings} 项 · 证据不足 ${m.insufficient} 项`]]);
+    return head('reports',m.planName+' · 周期报告',scope)+panel('报告摘要',overview+`<div class="toolbar">${form('download',m.run,scope,op('export','下载报告 JSON',true))}${go('runs',m.run,scope,'查看运行与补检')}${link('#diagnose/audit','回看运行审计')}</div>`)+repairPanel(m,scope)+sections;
+  }
+  let message=null;
+  function render(parts) {
+    const [,area='plans',id='',sub='']=parts;
+    if(!Object.hasOwn(sections,area)||parts.length>4) return inaccessible('plans');
+    const db=load();
+    const validScope=scope=>!scope||assets.some(a=>allowed(a,scope));
+    let html;
+    if (id==='new' && area==='plans' && admin() && validScope(sub)) html=planForm(db,null,sub);
+    else if (id.startsWith('PL-') && area==='plans') {
+      const p=db.plans.find(p=>p.id===id);
+      if(p && sub==='edit' && admin()) html=planForm(db,p);
+      else if(p && validScope(sub) && visible(checklist(p),sub).length) html=planDetail(db,p,sub);
+    } else if(id.startsWith('RUN-') && area!=='plans') {
+      const r=db.runs.find(r=>r.id===id);
+      if(r && validScope(sub) && visible(r.rows,sub).length) html=area==='reports'?reportDetail(r,sub):runDetail(db,r,sub);
+    } else if(!sub && validScope(id)) html=listing(db,area,id);
+    if(!html) return inaccessible(area);
+    if(message && message.route===location.hash && message.admin===admin()) html+=`<p class="panel" role="status">${esc(message.text)}</p>`;
+    message=null;
+    return html;
+  }
+  function feedback(text,route=location.hash) {
+    message={route,text,admin:admin()};
+    if(route===location.hash) refresh(); else location.hash=route;
+  }
+  const inputs = (data,k) => String(data.get(k)??'').trim();
+  function changePlan(db,f,data,op) {
+    const id=f.dataset.id, scope=f.dataset.scope;
+    const p={id:id||`PL-${String(db.plans.length+1).padStart(3,'0')}`, name:inputs(data,'name'), owner:inputs(data,'owner'), executor:inputs(data,'executor'), weekday:Number(data.get('weekday')), time:inputs(data,'time'), zone:inputs(data,'zone'),
+      assets:assets.map(a=>a.id).filter(id=>data.getAll('asset').includes(id)), checks:Object.keys(checks).filter(c=>data.getAll('check').includes(c))};
+    if(!p.name || !p.owner || !Object.hasOwn(accounts,p.executor) || !Object.hasOwn(zones,p.zone) || !Number.isInteger(p.weekday) || !weekdays[p.weekday] || !/^([01]\d|2[0-3]):[0-5]\d$/.test(p.time)) return '请填写计划名称、负责人和有效的执行时间。';
+    const rows=checklist(p);
+    if(!rows.length || p.assets.some(id=>!rows.some(row=>row.asset===id))) return '请至少选择一个资产，并为每个选中资产匹配适用检查项。';
+    const signature=JSON.stringify(p);
+    if(op==='preview') {
+      f.querySelector('[data-preview]').innerHTML=`<h3 class="foot">保存前预览</h3>${facts([['责任与身份',p.owner+' / '+p.executor],['本周到期',datetime(dueAt(p,week),p.zone)+' · '+p.zone]])}${preview(db,p,'')}`;
+      f.dataset.preview=signature; f.querySelector('[value="save"]').disabled=false; return;
+    }
+    if(op!=='save' || f.dataset.preview!==signature) return '请先预览当前配置。';
+    const old=db.plans.find(v=>v.id===id); if(id&&!old)return '计划已不存在。';
+    const identityChanged=old && old.executor!==p.executor;
+    if(old) db.plans[db.plans.indexOf(old)]=p; else db.plans.unshift(p);
+    save(key,db); audit(old?'更新每周计划':'创建每周计划',p.id);
+    if(identityChanged) audit('变更巡检执行身份',`${p.id} · ${old.executor} → ${p.executor}`);
+    feedback('已保存每周计划。',url('plans',p.id,rows.some(row=>allowed(asset(row.asset),scope))?scope:''));
+  }
+  function trigger(db,f,data,op) {
+    const p=db.plans.find(p=>p.id===f.dataset.id), start=inputs(data,'week');
+    if(!p || ![week,nextWeek].includes(start) || !['auto','manual','miss'].includes(op)) return '无效的计划或周期。';
+    let r=runFor(db,p,start);
+    const existing=!!r;
+    if(!r) {
+      const mode={auto:'自动到期',manual:'手动执行',miss:'漏跑'}[op], due=dueAt(p,start);
+      const at=op==='manual' ? reviewTime+(start===nextWeek?7*day:0) : due+(op==='miss'?day:0);
+      r=makeRun(p,start,at); collect(db,r,mode,at); db.runs.unshift(r);
+      save(key,db); audit('巡检演练 · '+mode,r.id);
+    } else audit('重复触发复用周期运行',r.id);
+    const scope=visible(r.rows,f.dataset.scope).length?f.dataset.scope:'';
+    feedback(existing?'此周期已冻结，复用原运行和检查结果。':'周期清单已冻结，运行与报告已生成。',url('runs',r.id,scope));
+  }
+  function environment(db,f,data) {
+    const p=db.plans.find(p=>p.id===f.dataset.id), target=inputs(data,'target'), event=inputs(data,'event'), executor=inputs(data,'executor');
+    if(!p || !Object.hasOwn(accounts,executor) || ![sourceA,sourceB].includes(target) || !['online','offline','revoke','grant'].includes(event)) return '演练条件无效。';
+    if(event==='grant'&&!accounts[executor].includes(target)) return '此身份的授权范围不含该目标，无法恢复。';
+    const identityEvent=['grant','revoke'].includes(event), field=identityEvent?'revoked':'offline', value=identityEvent?executor+'@'+target:target;
+    db[field]=db[field].filter(v=>v!==value);
+    if(event==='offline'||event==='revoke') db[field].push(value);
+    const label={online:'Agent 恢复在线',offline:'Agent 离线',grant:'恢复执行身份授权',revoke:'撤销执行身份授权'}[event];
+    save(key,db); audit('模拟事件 · '+label,identityEvent?executor+' · '+target:target); feedback(`${target} · ${label}。`);
+  }
+  function nextSample(r) {
+    return Math.max(reviewTime,r.frozen,...r.attempts.map(a=>a.at),...r.repairs.flatMap(c=>[c.at,...c.history.map(h=>h.at)]))+minute;
+  }
+  function processForm(f,op) {
+    const action=f.dataset.inspection, data=new FormData(f), scope=f.dataset.scope;
+    if(!admin() && ['plan','trigger','env','makeup'].includes(action)) return '此操作需要平台管理员权限。';
+    const db=load();
+    if(action==='plan') return changePlan(db,f,data,op);
+    if(action==='trigger') return trigger(db,f,data,op);
+    if(action==='env') return environment(db,f,data);
+    const r=db.runs.find(r=>r.id===f.dataset.id);
+    if(!r || !visible(r.rows,scope).length) return '此记录不存在或超出当前权限。';
+    if(action==='download') {
+      const m=reportModel(r,scope); download(r.id+'.json',JSON.stringify(m,null,2),'application/json;charset=utf-8'); audit('下载巡检报告',r.id); return;
+    }
+    if(action==='makeup') {
+      if(!visible(r.rows,scope).some(row=>row.status==='漏检')) return '此范围已无待补漏项。';
+      collect(db,r,'补检',nextSample(r),scope); save(key,db); audit('补检原周期漏项',r.id); feedback('补检回执已记入原周期。'); return;
+    }
+    const id=inputs(data,'asset');
+    if(!visible(r.rows,scope).some(row=>row.asset===id&&row.check==='V1'&&row.status==='发现')) return '当前范围无此发现。';
+    const change=r.repairs.find(entry=>entry.asset===id);
+    const at=nextSample(r), actor=admin()?'平台管理员':'目标操作员';
+    if(action==='repair') {
+      const memo=inputs(data,'memo'); if(!memo || memo.length>180 || change) return '请填写有效说明，每条发现只需登记一次。';
+      r.repairs.push({asset:id,issue,beforeVersion:baseline,fixedVersion:fixed,at,actor,memo,history:[]});
+      save(key,db); audit('登记巡检修复',`${r.id} · ${id} · ${issue}`); feedback('修复已登记，可比较部署版本。'); return;
+    }
+    if(action==='recheck' && change) {
+      const version=inputs(data,'version');
+      if(version && !/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version)) return '版本须包含三段数字，例如 2.10.0。';
+      const reason=obstacle(db,r.plan.executor,asset(id)) || (!version?'缺少部署版本回执':'');
+      let result='无法验证';
+      if(!reason) {
+        const values=version.split('.').map(Number), threshold=fixed.split('.').map(Number);
+        const diff=values.map((n,i)=>n-threshold[i]).find(n=>n!==0)??0;
+        result=diff>=0?'已修复':'仍受影响';
+      }
+      change.history.push({at,actor,version:reason?null:version,result,evidence:reason||`${asset(id).source} · 部署 ${version}，修复线 ${fixed}`});
+      save(key,db); audit('巡检版本复检 · '+result,`${r.id} · ${id} · ${issue}`); feedback('复检结果已保存 · '+result); return;
+    }
+    return '无可执行操作。';
+  }
+  document.addEventListener('submit',event=>{
+    const f=event.target; if(!f.matches('form[data-inspection]'))return;
+    event.preventDefault(); const error=processForm(f,event.submitter?.value);
+    if(f.isConnected) f.querySelector('[data-error]').textContent=error||'';
+  });
+  document.addEventListener('input',event=>{
+    const f=event.target.closest('form[data-inspection="plan"]'); if(!f || !f.dataset.preview)return;
+    delete f.dataset.preview; f.querySelector('[data-preview]').replaceChildren(); f.querySelector('[value="save"]').disabled=true;
+  });
+  document.addEventListener('change',event=>{
+    const s=event.target; if(s.matches('select[data-inspect-filter]')) location.hash=url(s.dataset.inspectFilter,s.value);
+  });
+  return {render,summary};
+})();
+
+</script>
+
+<script>
+'use strict';
+const navSections = [['platform','平台看板'],['machines','机器'],['clusters','K8s 集群'],['systems','业务系统'],['inspection/plans','巡检']];
+const diagTools = {k8s:'Kubernetes',database:'数据库',website:'网站',credentials:'凭据',audit:'审计'};
+function simpleHead(name) {return `<nav class="crumbs"><a href="#platform">资产</a> › ${Review.esc(name)}</nav><h1 tabindex="-1">${Review.esc(name)}</h1>`;}
+function missingPage(message='当前入口不存在，或不在此身份的可见范围。') {return `${simpleHead('无法打开')}<section class="panel" role="alert">${Review.esc(message)} <a href="#platform">返回平台看板</a></section>`;}
+function coverageCard(kind,name,unit) {
+  const {covered,total}=Inventory.coverage(kind), pct=total ? Math.round(covered/total*1000)/10 : null;
+  const gap=Math.max(0,Math.ceil(total*.8)-covered), passed=total>0 && gap===0;
+  return `<article class="coverage ${passed?'':'below'}"><div class="bar"><h3>${name}</h3><strong>${pct===null?'—':pct+'<small>%</small>'}</strong></div><div class="rail" aria-hidden="true"><i style="width:${pct||0}%"></i></div><div class="bar"><span>已覆盖 <b>${covered} / ${total}</b> ${unit}</span><small class="${passed?'ok':'warn'}">${!total?'无适用资产':passed?'已达标':'距目标差 '+gap+' '+unit}</small></div><a class="go foot" href="#coverage/${kind}">查看${name}覆盖明细 →</a></article>`;
+}
+function platformPage() {
+  const clusters=Cluster.list(), alerts=Monitor.summary(), run=Inspection.summary();
+  const rows=clusters.map(c=>{
+    const counts=Inventory.clusterCounts(c.id), weekly=Inspection.summary(c.id);
+    return `<tr><td><a class="go" href="#${encodeURIComponent(c.id)}/overview/all">${Review.esc(c.name)}</a><small>${Review.esc(c.asset)}</small></td><td>${counts.machines} 台 / ${counts.systems} 个</td><td>${Number(c.sourceCount)} / ${Number(c.namespaceCount)}</td><td>${c.online?'在线':'离线'}<small>${Review.esc(c.lastVerified)}</small></td><td>${weekly.planned?weekly.completed+' / '+weekly.planned:'暂无应检资产'}</td></tr>`;
+  }).join('');
+  const standalone=Inventory.unclustered();
+  const standaloneList=standalone.map(asset=>`<li><a href="#machines/${encodeURIComponent(asset.id)}">${Review.esc(asset.name)}</a><small>${Review.esc(asset.reason)}</small></li>`).join('');
+  return simpleHead('平台看板')+`<div class="bar"><strong>${Review.admin()?'平台汇总':'我的可见范围'}</strong><small>盘点基准日 2026-11-19 · 当前 Gateway</small></div>
+  <section class="panel"><div class="group-title"><h2>拓扑覆盖率</h2><small>服务器、业务系统分别验收 · 目标 80%</small></div><div class="pair">${coverageCard('machines','在役服务器','台')}${coverageCard('systems','在役业务系统','个')}</div></section>
+  <section class="overview-row" aria-label="值班摘要"><a href="#monitor/alerts"><span>未恢复异常</span><strong>${alerts.open}</strong><small>另有 ${alerts.missing} 项采集中断</small></a><a href="#inspection/reports"><span>本周实检 / 应检</span><strong>${run.completed} / ${run.planned}</strong><small>本周漏检 ${run.missed} · 查看报告</small></a><a href="#topology"><span>平台拓扑</span><strong>${clusters.length} 个集群</strong><small>查看业务依赖、部署与物理承载 →</small></a></section>
+  <div class="tables"><section class="panel"><div class="group-title"><h2>集群对比</h2><a href="#clusters">查看集群台账</a></div><div class="table-scroll"><table><thead><tr><th>集群</th><th>机器 / 系统</th><th>来源 / 命名空间</th><th>连接 / 最近核验</th><th>本周实检 / 应检</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+  <section class="panel"><div class="group-title"><h2>未关联集群的机器</h2><small>${standalone.length} 台</small></div>${standaloneList?`<ul class="impact-list">${standaloneList}</ul>`:'<p class="note">当前授权范围内没有可见的未关联机器。</p>'}</section></div>`;
+}
+const diagSources={'prod-east/agent-a':['orders','shared-data'],'prod-east/agent-b':['billing','shared-data'],'stage-west/agent-c':['staging']};
+function allowedSources() {return Review.admin()?Object.keys(diagSources):['prod-east/agent-a'];}
+function diagnosticPage(parts) {
+  const [,tool,requested,scope='',object='']=parts;
+  if (!Object.hasOwn(diagTools,tool)) return missingPage();
+  if(tool==='audit') {
+    const actor=Review.admin()?'平台管理员':'目标操作员';
+    const rows=Review.read('audit-events',[]).filter(e=>Review.admin()||e.actor===actor);
+    return simpleHead('操作审计')+`<section class="panel"><div class="group-title"><h2>本次评审记录</h2><small>${Review.admin()?'全部演练操作':'我的演练操作'} · ${rows.length} 条</small></div>${rows.length?`<div class="table-scroll"><table><thead><tr><th>时间</th><th>身份</th><th>动作</th><th>对象</th></tr></thead><tbody>${rows.map(e=>`<tr><td>${Review.esc(new Date(e.at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}))}</td><td>${Review.esc(e.actor)}</td><td>${Review.esc(e.action)}</td><td>${Review.esc(typeof e.object==='string'?e.object:JSON.stringify(e.object))}</td></tr>`).join('')}</tbody></table></div>`:'<p>暂无操作。完成一次录入、巡检或诊断后可回看记录。</p>'}</section>`;
+  }
+  const sources=allowedSources(), src=requested||sources[0];
+  if(!sources.includes(src)||scope && !diagSources[src].includes(scope)||!Review.admin() && /billing|stage-west/i.test(object)) return missingPage();
+  const offline=src.startsWith('stage-west/');
+  const options=sources.map(s=>`<option ${s===src?'selected':''}>${Review.esc(s)}</option>`).join('');
+  const result={k8s:'Deployment 已就绪 2/2，关联 Pods 运行中。',database:'PostgreSQL 接受只读连接，连接数 34，磁盘使用量 80 GiB。',website:'健康端点返回 200，预期服务标识匹配，耗时 38 毫秒。',credentials:'当前目标绑定 1 个有效凭据引用；可用版本为 active。'}[tool];
+  return simpleHead(diagTools[tool]+' · 目标诊断')+`<nav class="tabs" aria-label="诊断工具">${Object.entries(diagTools).map(([id,n])=>`<a href="${id==='audit'?'#diagnose/audit':Review.diagnostic(id,src,scope,object)}" ${tool===id?'aria-current="page"':''}>${n}</a>`).join('')}</nav><section class="panel"><h2>执行上下文</h2><dl class="facts"><dt>来源目标</dt><dd><select id="diag-source" aria-label="来源目标">${options}</select></dd><dt>命名空间</dt><dd>${Review.esc(scope||'目标范围')}</dd><dt>资产</dt><dd>${Review.esc(object||'所选目标')}</dd><dt>通道</dt><dd>${offline?'离线 · 实时诊断不可用':'在线'}</dd></dl><button id="diag-run" ${offline?'disabled':''}>${tool==='credentials'?'查看绑定元数据':'运行示例诊断'}</button><div class="foot" role="status" id="diag-result" data-result="${Review.esc(result)}"></div></section>`;
+}
+function wireDiagnostics(parts) {
+  const select=document.querySelector('#diag-source'); if(!select) return;
+  select.onchange=()=>{location.hash=Review.diagnostic(parts[1],select.value,'','');};
+  const btn=document.querySelector('#diag-run');
+  btn.onclick=()=>{const el=document.querySelector('#diag-result');el.textContent='示例回执 · '+el.dataset.result;Review.audit('查看'+diagTools[parts[1]]+'诊断回执',select.value);};
+}
+function getParts() {return (location.hash.slice(1)||'platform').split('/').map(decodeURIComponent);}
+let previousHash;
+function renderReview() {
+  const work=document.getElementById('work'); let parts,html,navKey;
+  try {parts=getParts();} catch(error){parts=['invalid'];}
+  const [area]=parts;
+  if(area==='platform'){html=platformPage();navKey='platform';}
+  else if(['machines','systems','coverage'].includes(area)){html=Inventory.render(parts);navKey=area==='coverage'?'platform':area;}
+  else if(area==='inspection'){html=Inspection.render(parts);navKey='inspection/plans';}
+  else if(area==='monitor'){html=Monitor.render(parts);navKey='clusters';}
+  else if(area==='diagnose'){html=diagnosticPage(parts);navKey='diagnose';}
+  else if(area==='topology'||area==='clusters'||Cluster.list().some(c=>c.id===area)){html=Cluster.render(parts);navKey=area==='topology'?'platform':'clusters';}
+  else {html=missingPage();}
+  work.innerHTML=html;
+  if(area==='diagnose') wireDiagnostics(parts);
+  document.getElementById('main-nav').innerHTML=navSections.map(([id,name])=>`<a href="#${id}" ${id===navKey?'aria-current="page"':''}>${name}</a>`).join('') + '<a href="#diagnose/audit" '+(area==='diagnose'?'aria-current="page"':'')+'>审计</a>';
+  const back=document.getElementById('prev-view');back.hidden=!backRoute; document.getElementById('review-role').value=Review.admin()?'admin':'operator';
+  document.title=(work.querySelector('h1,h2')?.textContent.trim()||'资产')+' · DoOps 功能评审';
+  if(previousHash!==location.hash){window.scrollTo(0,0);const title=work.querySelector('h1,h2');if(title){title.tabIndex=-1;title.focus({preventScroll:true});}}
+  previousHash=location.hash;
+}
+let currentRoute=location.hash,backRoute='';
+window.addEventListener('hashchange',()=>{backRoute=currentRoute||'#platform';currentRoute=location.hash;renderReview();});
+document.getElementById('prev-view').onclick=()=>history.back();
+document.getElementById('review-role').onchange=e=>{Review.save('review-role',e.target.value);backRoute='';if(location.hash!=='#platform'){location.replace('#platform');}else{renderReview();}};
+renderReview();
+
+</script>
+</body>
+</html>

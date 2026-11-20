@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 // The console reaches a knowledge-base document through the public Gateway RPC.
@@ -25,7 +24,6 @@ func TestKnowledgeBaseRoundTripThroughReverseGateway(t *testing.T) {
 
 	fixture := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 15 * time.Second})
 	agent := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

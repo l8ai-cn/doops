@@ -8,6 +8,7 @@ import { Button, Input, Select } from "./ui"
 
 export type DatabaseCandidate = {
   database_asset_id: string
+  related_asset_ids?: string[]
   namespace: string
   service: string
   engine: string
@@ -23,7 +24,8 @@ const ENGINES: Record<string, string> = { postgres: "PostgreSQL", mysql: "MySQL"
 function isCandidate(value: unknown): value is DatabaseCandidate {
   if (!value || typeof value !== "object") return false
   const row = value as Record<string, unknown>
-  return ["database_asset_id", "namespace", "service", "engine", "host", "status", "source"].every((key) => typeof row[key] === "string" && row[key] !== "")
+  return ["database_asset_id", "namespace", "service", "engine", "status", "source"].every((key) => typeof row[key] === "string" && row[key] !== "")
+    && typeof row.host === "string" && (row.related_asset_ids === undefined || (Array.isArray(row.related_asset_ids) && row.related_asset_ids.every((id) => typeof id === "string")))
     && (row.database_name === undefined || typeof row.database_name === "string")
     && (row.port === undefined || typeof row.port === "number")
 }
@@ -45,12 +47,16 @@ async function readInventory(session: Session, cluster: string, instance: string
   return payload.candidates
 }
 
-export function DatabaseInventory({ session, target, sessionId, running, onQuery }: {
+function rowKey(row: DatabaseCandidate) {
+  return `${row.source}/${row.database_asset_id}`
+}
+
+export function DatabaseInventory({ session, target, sessionId, running, onOpen }: {
   session: Session
   target: Target
   sessionId: string
   running: boolean
-  onQuery: (database: DatabaseCandidate) => void
+  onOpen: (database: DatabaseCandidate) => void
 }) {
   const [rows, setRows] = useState<DatabaseCandidate[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,7 +64,6 @@ export function DatabaseInventory({ session, target, sessionId, running, onQuery
   const [revision, setRevision] = useState(0)
   const [engine, setEngine] = useState("")
   const [filter, setFilter] = useState("")
-  const [selectedId, setSelectedId] = useState("")
   const { cluster, instance } = target
 
   useEffect(() => {
@@ -69,11 +74,9 @@ export function DatabaseInventory({ session, target, sessionId, running, onQuery
       if (controller.signal.aborted) return
       setRows(next)
       setEngine((current) => next.some((row) => row.engine === current) ? current : "")
-      setSelectedId((current) => next.some((row) => row.database_asset_id === current) ? current : "")
     }).catch((reason) => {
       if (controller.signal.aborted) return
       setRows([])
-      setSelectedId("")
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false)
@@ -84,14 +87,13 @@ export function DatabaseInventory({ session, target, sessionId, running, onQuery
   const term = filter.trim().toLowerCase()
   const visible = rows.filter((row) => (!engine || row.engine === engine) &&
     [row.service, row.namespace, row.database_name].some((value) => value?.toLowerCase().includes(term)))
-  const selected = visible.find((row) => row.database_asset_id === selectedId)
 
   return (
     <section aria-label="数据库资源" className="card-surface min-w-0 p-4">
       <header className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <Database aria-hidden="true" className="size-5 shrink-0 text-primary" />
-          <div className="min-w-0"><h2 className="text-base font-semibold">数据库资源</h2><p className="break-all font-mono text-xs text-muted-foreground">{cluster}/{instance}</p></div>
+          <div className="min-w-0"><h2 className="text-base font-semibold">数据库实例</h2><p className="break-all font-mono text-xs text-muted-foreground">{cluster}/{instance}</p></div>
         </div>
         <Button size="sm" disabled={loading || running} onClick={() => setRevision((n) => n + 1)} aria-label="刷新数据库资源">
           <RefreshCw aria-hidden="true" className={`size-3.5 ${loading ? "motion-safe:animate-spin" : ""}`} />刷新
@@ -112,29 +114,18 @@ export function DatabaseInventory({ session, target, sessionId, running, onQuery
           {!visible.length ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">没有匹配的数据库实例</p> : (
             <div className="max-h-[55dvh] overflow-auto rounded-lg border border-border/60">
               <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-card text-xs text-muted-foreground"><tr>{["实例", "引擎", "数据库名", "命名空间"].map((label) => <th key={label} scope="col" className="px-3 py-2">{label}</th>)}</tr></thead>
+                <thead className="sticky top-0 bg-card text-xs text-muted-foreground"><tr>{["实例", "引擎", "命名空间"].map((label) => <th key={label} scope="col" className="px-3 py-2">{label}</th>)}</tr></thead>
                 <tbody className="divide-y divide-border/50">{visible.map((row) => (
-                  <tr key={row.database_asset_id} className={selected === row ? "bg-muted/50" : "hover:bg-muted/30"}>
-                    <td className="px-3 py-2"><button type="button" aria-expanded={selected === row} onClick={() => setSelectedId(selected === row ? "" : row.database_asset_id)} className="break-all text-left font-mono text-primary hover:underline">{row.service}</button></td>
+                  <tr key={rowKey(row)} className="hover:bg-muted/30">
+                    <td className="px-3 py-2"><button type="button" disabled={running} onClick={() => onOpen(row)} className="break-all text-left font-mono text-primary hover:underline">{row.service}</button></td>
                     <td className="px-3 py-2">{ENGINES[row.engine] ?? row.engine}</td>
-                    <td className="break-all px-3 py-2">{row.database_name || "待补充"}</td>
                     <td className="break-all px-3 py-2 text-muted-foreground">{row.namespace}</td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
           )}
-          {selected && (
-            <div aria-label="实例详情" role="region" className="mt-3 rounded-lg border border-border/60 p-3">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="break-all text-sm font-semibold">{selected.service}</h3><Button size="sm" disabled={running} onClick={() => onQuery(selected)}>带入只读查询</Button></div>
-              <dl className="grid gap-3 text-xs sm:grid-cols-2">
-                {Object.entries({ 地址: `${selected.host}${selected.port ? `:${selected.port}` : ""}`, 发现来源: selected.source,
-                  "资产 ID": selected.database_asset_id, 发现状态: selected.status === "candidate" ? "已识别" : selected.status === "needs_database_name_or_credential" ? "待补充库名或凭据" : selected.status }).map(([label, value]) => (
-                    <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="mt-1 break-all">{value}</dd></div>
-                  ))}
-              </dl>
-            </div>
-          )}
+
         </>
       )}
     </section>

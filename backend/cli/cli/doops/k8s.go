@@ -21,6 +21,8 @@ var errK8SHelp = errors.New("k8s help requested")
 
 const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
 
+这是常用 Kubernetes 操作的结构化便利入口。CLI 解析参数；Gateway 检查目标授权，Agent 校验操作和值。
+
 只读（可与发布并行）:
   get <kind> [name]               [-n|--namespace ns | -A|--all-namespaces] [-l|--selector sel] [-o|--output json|yaml|wide|name|jsonpath=...|custom-columns=...]
   describe <kind> <name>          [-n|--namespace ns]
@@ -31,7 +33,7 @@ const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
   helm list                       [-n|--namespace ns | -A]
   helm history|status <release>   -n|--namespace ns
   helm values <release>           -n|--namespace ns   (只返回 key 路径，不返回值)
-  Secret 与 ServiceAccount 不开放读取。
+  Agent 不允许通过此入口读取 Secret 与 ServiceAccount。
 
 写操作（选定操作即执行）:
   rollout restart <resource>      [-n ns]
@@ -39,7 +41,9 @@ const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
   node cordon|uncordon <node>
   delete pod <name>               [-n ns]
 
-业务发布使用 ask --apply，不用本入口。`
+目标已授权、命令已确定时，可用 doops -session <s> exec --target <t> --cmd '<命令>' 执行原生 kubectl 或 helm。
+已有脚本可继续使用上述 k8s 子命令。探索性诊断可用 ask，业务发布也可用 ask --apply。
+遇到授权或策略拒绝时停止执行，按返回的原因处理。`
 
 func buildK8SRequest(args []string) (K8SRequest, error) {
 	for _, arg := range args {
@@ -47,6 +51,14 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 			return K8SRequest{}, errK8SHelp
 		}
 	}
+	req, err := parseK8SRequest(args)
+	if err != nil {
+		return K8SRequest{}, fmt.Errorf("%w\nnext: doops k8s -h", err)
+	}
+	return req, nil
+}
+
+func parseK8SRequest(args []string) (K8SRequest, error) {
 	opts, positional, err := parseK8SFlags(args)
 	if err != nil {
 		return K8SRequest{}, err
@@ -215,28 +227,21 @@ func runK8SRequest(caller k8sCaller, req K8SRequest) (string, error) {
 }
 
 func parseK8SFlags(args []string) (map[string]string, []string, error) {
-	opts := map[string]string{
-		"target":    "",
-		"namespace": "",
-		"container": "",
-		"output":    "",
-		"tail":      "",
-		"replicas":  "",
-		"timeout":   "",
-		"for":       "",
-		"selector":  "",
-		"since":     "",
-	}
+	opts := map[string]string{}
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
 		case "--target", "--namespace", "-n", "--container", "-c", "--output", "-o", "--tail", "--replicas",
 			"--timeout", "--for", "--selector", "-l", "--since":
-			if i+1 >= len(args) {
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
 				return nil, nil, fmt.Errorf("%s requires a value", arg)
 			}
-			opts[k8sFlagName(arg)] = args[i+1]
+			value := args[i+1]
+			if len(value) > 1 && value[0] == '-' && (value[1] < '0' || value[1] > '9') {
+				return nil, nil, fmt.Errorf("%s requires a value before %s", arg, value)
+			}
+			opts[k8sFlagName(arg)] = value
 			i++
 		case "--all-namespaces", "-A":
 			opts["all-namespaces"] = "true"

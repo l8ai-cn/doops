@@ -10,12 +10,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 type doagentToolTrace struct {
 	ToolCallID                      string
 	ToolName                        string
 	Status                          string
+	ErrorCode                       string
+	ExitCode                        *int32
+	policyDenial                    string
 	AttestationSchema               string
 	ContextSchema                   string
 	OperationID                     string
@@ -48,6 +53,7 @@ type doagentToolTraceCollector struct {
 	calls                           map[string]doagentToolTrace
 	sequence                        uint64
 	collectAgentReport              bool
+	ordinaryAsk                     bool
 	expectedSessionID               string
 	expectedMutationAuthorityDigest string
 	finalMessage                    string
@@ -137,6 +143,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	if updateType != "tool_call" && updateType != "tool_call_update" {
 		return nil
 	}
+	if c.ordinaryAsk && stringField(update, "turnId") == "" {
+		return nil
+	}
 	toolCallID, _ := update["toolCallId"].(string)
 	if strings.TrimSpace(toolCallID) == "" {
 		return nil
@@ -174,6 +183,12 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 			return fmt.Errorf("conflicting duplicate toolCallId %q status", toolCallID)
 		}
 		trace.Status = status
+		if c.ordinaryAsk && status == "failed" && trace.ToolName == "Bash" && trace.policyDenial == "" {
+			output, _ := doagentAgentMessageText(update["content"])
+			if denial := dispatcher.ReportedDenial(output); denial != nil {
+				trace.policyDenial = denial.Error()
+			}
+		}
 	}
 	if result, ok := update["rawOutput"]; ok {
 		if err := mergeDoagentToolAttestationUpdate(update, result); err != nil {
@@ -208,6 +223,25 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		{"inputDigest", &trace.InputDigest},
 		{"resultDigest", &trace.AttestedResultDigest},
 		{"publicResultDigest", &trace.PublicResultDigest},
+	}
+	if c.ordinaryAsk && (trace.Status == "completed" || trace.Status == "failed") {
+		if number, ok := update["exitCode"].(json.Number); ok {
+			value, err := number.Int64()
+			if err != nil || value != int64(int32(value)) {
+				return fmt.Errorf("invalid tool exitCode")
+			}
+			exit := int32(value)
+			if trace.ExitCode != nil && *trace.ExitCode != exit {
+				return fmt.Errorf("conflicting tool exitCode")
+			}
+			trace.ExitCode = &exit
+		}
+		if code := stringField(update, "errorCode"); code != "" {
+			if trace.ErrorCode != "" && trace.ErrorCode != code {
+				return fmt.Errorf("conflicting tool errorCode")
+			}
+			trace.ErrorCode = code
+		}
 	}
 	for _, field := range stringFields {
 		value, exists := update[field.source]
@@ -607,24 +641,6 @@ func correctedHelmCall(traces []doagentToolTrace, index int) string {
 		}
 	}
 	return ""
-}
-
-func (c *doagentToolTraceCollector) hasFailedSQLRead() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, trace := range c.calls {
-		if trace.ToolName != "mcp_dosql_read" && trace.ToolName != "dosql_read" {
-			continue
-		}
-		if trace.Status == "failed" {
-			return true
-		}
-		var result map[string]interface{}
-		if json.Unmarshal(trace.resultJSON, &result) == nil && result["isError"] == true {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {

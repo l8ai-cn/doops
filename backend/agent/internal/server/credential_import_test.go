@@ -16,8 +16,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 const importCanary = "synthetic-import-p@ss:/word"
@@ -87,7 +85,6 @@ fi
 	t.Setenv("PATH", sourceBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 5 * time.Second})
 	agent := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

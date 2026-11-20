@@ -371,7 +371,7 @@ function k8sOutput(args: Record<string, unknown>): string[] {
   const name = String(args.name || "")
   switch (args.operation) {
     case "get":
-      if (args.output === "json") return [demoK8sResourceJson(String(args.kind))]
+      if (args.output === "json") return [demoK8sResourceJson(String(args.kind), String(args.namespace || ""))]
       if (/^nodes?$/.test(String(args.kind)))
         return [
           "NAME          STATUS   ROLES           AGE   VERSION\n",
@@ -431,10 +431,11 @@ function k8sOutput(args: Record<string, unknown>): string[] {
   }
 }
 
-function demoK8sResourceJson(kind: string): string {
-  const resources: Record<string, object[]> = {
+function demoK8sResourceJson(kind: string, namespace: string): string {
+  type DemoResource = { metadata: { name: string; namespace?: string; creationTimestamp: string }; spec?: object; status: object }
+  const resources: Record<string, DemoResource[]> = {
     nodes: [
-      { metadata: { name: "node-a", creationTimestamp: "2026-08-19T08:00:00Z" }, status: { conditions: [{ type: "Ready", status: "True" }] } },
+      { metadata: { name: "node-a", creationTimestamp: "2026-08-19T08:00:00Z" }, status: { capacity: { cpu: "8", memory: "32Gi" }, conditions: [{ type: "Ready", status: "True" }] } },
       { metadata: { name: "node-b", creationTimestamp: "2026-08-19T08:00:00Z" }, status: { conditions: [{ type: "Ready", status: "True" }] } },
     ],
     namespaces: [
@@ -454,7 +455,9 @@ function demoK8sResourceJson(kind: string): string {
       { metadata: { name: "doops-agent-0", namespace: "agents", creationTimestamp: "2026-11-18T08:00:00Z" }, status: { phase: "Pending", containerStatuses: [{ ready: false }] } },
     ],
   }
-  return JSON.stringify({ apiVersion: "v1", kind: "List", items: resources[kind] || [] }) + "\n"
+  const items = resources[kind] || []
+  const scoped = namespace && (kind === "pods" || kind === "deployments")
+  return JSON.stringify({ apiVersion: "v1", kind: "List", items: scoped ? items.filter((item) => item.metadata.namespace === namespace) : items }) + "\n"
 }
 
 export function demoAssistantReply(prompt: string): string {

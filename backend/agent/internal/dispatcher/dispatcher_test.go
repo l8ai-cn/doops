@@ -1,14 +1,42 @@
 package dispatcher
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 )
 
+func TestConfiguredRuleRejectsShellAndArgv(t *testing.T) {
+	t.Setenv(RulesEnv, `[{"name":"test_rule","match":"^printf 'two words'$","hint":"use a single word"}]`)
+	_, argvErr := CommandContext(context.Background(), "printf", "two words")
+	for _, err := range []error{Check("printf 'two words'"), argvErr} {
+		var denied *BlockedError
+		if !errors.As(err, &denied) || denied.Rule != "test_rule" || denied.Hint != "use a single word" {
+			t.Fatalf("unexpected denial: %v", err)
+		}
+	}
+	cmd, err := CommandContext(context.Background(), "printf", "two", "words")
+	if err != nil || len(cmd.Args) != 3 {
+		t.Fatalf("distinct arguments were merged: cmd=%v err=%v", cmd, err)
+	}
+	if err := Check("rm -rf /"); err == nil {
+		t.Fatal("configured rule displaced the built-in rule")
+	}
+}
+
+func TestInvalidRuleConfigFailsClosed(t *testing.T) {
+	for _, raw := range []string{"", "null", "{", `[] []`, `[{"name":"missing_hint","match":"^test$"}]`, `[{"name":"bad_regex","match":"[","hint":"stop"}]`, `[{"name":"delete_root_filesystem","match":"x","hint":"stop"}]`, `[{"name":"typo","match":"x","hint":"stop","other":1}]`} {
+		t.Setenv(RulesEnv, raw)
+		_, err := CommandContext(context.Background(), "printf", "ok")
+		if ValidateConfig() == nil || Check("printf ok") == nil || err == nil {
+			t.Fatalf("invalid rules accepted: %s", raw)
+		}
+	}
+}
+
 func TestCheckBlocksOnlyRootFilesystemDeletion(t *testing.T) {
 	t.Parallel()
-	d := NewDispatcher()
 	tests := []struct {
 		name    string
 		command string
@@ -36,7 +64,7 @@ func TestCheckBlocksOnlyRootFilesystemDeletion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := d.Check(tt.command)
+			err := Check(tt.command)
 			if !tt.blocked {
 				if err != nil {
 					t.Fatalf("Check(%q) = %v, want allowed", tt.command, err)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -298,4 +299,115 @@ func TestSessionMutationRequiresExplicitSession(t *testing.T) {
 	if agent.runtimeState().activeOps != 0 {
 		t.Fatal("rejected request acquired a lease")
 	}
+}
+
+func TestGatewaySessionExecAskQueue(t *testing.T) {
+	const session = "shared-workspace"
+	for _, order := range []struct{ name, holder, waiter string }{
+		{"exec-first", "doops_shell", "doops_agent_prompt"},
+		{"ask-first", "doops_agent_prompt", "doops_shell"},
+	} {
+		for _, outcome := range []string{"release", "cancel", "timeout", "disabled"} {
+			t.Run(order.name+"/"+outcome, func(t *testing.T) {
+				opts := GatewayHubOptions{MaxQueuedPerTarget: 1, TargetQueueTimeout: 10 * time.Second}
+				if outcome == "disabled" {
+					opts.MaxQueuedPerTarget = 0
+				}
+				if outcome == "timeout" {
+					opts.TargetQueueTimeout = time.Second
+				}
+				f := newExecutionLifecycleFixture(t, opts)
+				remote := f.agent(t, "session-queue")
+				target := f.hub.getAgent("dev", "local")
+				owner, waiter := f.client(t, f.admin), f.client(t, f.admin)
+				args := map[string]map[string]interface{}{
+					"doops_shell":        {"command": "pwd"},
+					"doops_agent_prompt": {"operation": "ask", "instruction": "describe this workspace"},
+				}
+				lifecycleSend(t, owner, 2, order.holder, session, args[order.holder])
+				held := remote.call(t, order.holder, session)
+				lifecycleSend(t, waiter, 2, order.waiter, session, args[order.waiter])
+
+				if outcome != "disabled" {
+					requireEventually(t, 3*time.Second, func() bool {
+						state := target.runtimeState()
+						return state.activeOps == 1 && state.queuedOps == 1
+					})
+				}
+				switch outcome {
+				case "disabled":
+					lifecycleResponse(t, waiter, 2, "target busy")
+				case "timeout":
+					// Withhold the original terminal until the Gateway's own timer fires.
+					lifecycleResponse(t, waiter, 2, "target queue timeout")
+				case "cancel":
+					writeGatewayJSON(t, waiter, map[string]interface{}{
+						"jsonrpc": "2.0", "id": "cancel", "method": "tools/cancel", "params": map[string]int{"id": 2},
+					})
+					if err := waiter.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+						t.Fatal(err)
+					}
+					// Collect both replies because their wire order is unspecified.
+					replies := make(map[interface{}]map[string]interface{})
+					for range 2 {
+						var reply map[string]interface{}
+						if err := waiter.ReadJSON(&reply); err != nil {
+							t.Fatal(err)
+						}
+						replies[reply["id"]] = reply
+					}
+					gitCancellationTestAck(t, replies["cancel"], "cancel", true)
+					gitCancellationTestTerminal(t, replies[float64(2)], 2, -32007, "operation canceled")
+				case "release":
+					lifecycleSend(t, owner, 3, order.waiter, session, args[order.waiter])
+					lifecycleResponse(t, owner, 3, "target queue full")
+				}
+				if outcome != "release" {
+					if state := target.runtimeState(); state.activeOps != 1 || state.queuedOps != 0 {
+						t.Fatalf("waiter exit disturbed ownership: %#v", state)
+					}
+				}
+				remote.complete(t, held, "")
+				lifecycleResponse(t, owner, 2, "")
+				if outcome == "release" {
+					remote.complete(t, remote.call(t, order.waiter, session), "")
+					lifecycleResponse(t, waiter, 2, "")
+				}
+				// A later request on the same agent connection exposes any stray dispatch.
+				lifecycleSend(t, owner, 4, "doops_node_info", session, map[string]interface{}{})
+				remote.complete(t, remote.call(t, "doops_node_info", session), "")
+				lifecycleResponse(t, owner, 4, "")
+				if state := target.runtimeState(); state.activeOps != 0 || state.queuedOps != 0 || len(state.resources) != 0 {
+					t.Fatalf("queue did not drain: %#v", state)
+				}
+				select {
+				case id := <-remote.cancels:
+					t.Fatalf("Gateway sent cancel for agent request %d while canceling a waiter", id)
+				default:
+				}
+			})
+		}
+	}
+}
+
+func TestGatewaySessionExecAskDuringUpgrade(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{MaxQueuedPerTarget: 1, TargetQueueTimeout: 10 * time.Second})
+	remote := f.agent(t, "session-upgrade")
+	owner, client := f.client(t, f.admin), f.client(t, f.admin)
+	lifecycleSend(t, owner, 2, "doops_agent_upgrade", "upgrade", map[string]interface{}{
+		"image": "registry.example/doops@sha256:" + strings.Repeat("a", 64), "mode": "k8s", "dry_run": true,
+	})
+	upgrade := remote.call(t, "doops_agent_upgrade", "upgrade")
+	lifecycleSend(t, client, 2, "doops_agent_prompt", "workspace", map[string]interface{}{"instruction": "describe this workspace"})
+	lifecycleResponse(t, client, 2, "target busy")
+	lifecycleSend(t, client, 3, "doops_shell", "workspace", map[string]interface{}{"command": "pwd"})
+	target := f.hub.getAgent("dev", "local")
+	requireEventually(t, 3*time.Second, func() bool {
+		state := target.runtimeState()
+		return state.busy && state.activeOps == 1 && state.queuedOps == 1
+	})
+	remote.complete(t, upgrade, "")
+	lifecycleResponse(t, owner, 2, "")
+	remote.complete(t, remote.call(t, "doops_shell", "workspace"), "")
+	lifecycleResponse(t, client, 3, "")
 }

@@ -7,6 +7,7 @@ import { TOOLS } from "@/lib/gateway"
 import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
 import { AgentRunOutput } from "@/components/agent-run-output"
 import { DatabaseInventory, type DatabaseCandidate } from "./database-inventory"
+import { DatabaseExplorer } from "./database-explorer"
 
 type DatabaseMode = "query" | "discover" | "plan"
 
@@ -33,6 +34,8 @@ export function DatabasePanel({
   const [databaseHint, setDatabaseHint] = useState("")
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
+  const [selectedAsset, setSelectedAsset] = useState<DatabaseCandidate | null>(null)
+  const [sqlRunning, setSqlRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
@@ -119,10 +122,15 @@ export function DatabasePanel({
 
   return (
     <div className="h-full overflow-y-auto p-4">
-      <DatabaseInventory session={session} target={target} sessionId={sessionId} running={running} onQuery={openQuery} />
+      <div hidden={!!selectedAsset}>
+        <DatabaseInventory session={session} target={target} sessionId={sessionId} running={running || sqlRunning} onOpen={setSelectedAsset} />
+      </div>
+      {selectedAsset && <DatabaseExplorer key={selectedAsset.database_asset_id} session={session} target={target} sessionId={sessionId} asset={selectedAsset}
+        busy={running || sqlRunning} onRunningChange={(value) => { setSqlRunning(value); onRunningChange(value) }}
+        onBack={() => setSelectedAsset(null)} onQuery={openQuery} />}
       <details className="card-surface mt-4 p-4" ref={operationsRef}>
         <summary className="cursor-pointer text-sm font-semibold">数据库操作</summary>
-        <div className="mt-4 flex flex-col gap-3">
+        <fieldset disabled={sqlRunning} className="mt-4 flex min-w-0 flex-col gap-3">
           <div className="flex w-fit flex-wrap items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
             {(["query", "discover", "plan"] as const).map((value) => (
               <button
@@ -197,7 +205,7 @@ export function DatabasePanel({
           <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
             <AgentRunOutput run={agentRun} running={running} empty="结果、journal 和 evidence 会由目标 Agent 返回，并进入统一 Gateway 审计。" />
           </section>
-        </div>
+        </fieldset>
       </details>
     </div>
   )

@@ -197,7 +197,7 @@ jobs:
         </h2>
         <p className="mb-4 text-sm text-muted-foreground">
           API Key 即你的<strong className="text-foreground">用户访问令牌</strong>，
-          代表你的身份与权限。页面不会预填当前会话令牌；请在「管理 → 令牌」中单独签发一枚专用于 CI/CD 的令牌，并只保存到 CI/CD 平台的加密 Secrets。
+          代表你的身份与权限。请由管理员在「平台管理 → 令牌」中单独签发 CI/CD 用户令牌，并只保存到流水线的加密 Secrets。
         </p>
 
         <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">

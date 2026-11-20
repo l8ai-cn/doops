@@ -1,0 +1,16 @@
+[Unit]
+Description=Process due DoOps asset inspections
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=doops-inspection
+Group=doops-inspection
+EnvironmentFile=/etc/doops/inspection/runner.env
+ExecStart=/usr/bin/python3 /opt/doops/inspection/runner.py
+TimeoutStartSec=120s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

@@ -1,0 +1,13 @@
+[Unit]
+Description=Record a local Linux host snapshot for the DoOps Agent
+
+[Service]
+Type=oneshot
+User=doops-sampler
+Group=doops-sampler
+StateDirectory=doops-host-samples
+StateDirectoryMode=0750
+ExecStart=/usr/bin/python3 /opt/doops/machine_diagnostic_collector.py --binding /etc/doops/host.json --root /var/lib/doops-host-samples
+TimeoutStartSec=45s
+NoNewPrivileges=yes
+UMask=0027

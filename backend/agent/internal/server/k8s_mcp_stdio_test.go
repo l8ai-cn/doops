@@ -319,35 +319,30 @@ exit 9
 	}
 }
 
-func TestK8SMCPStdioCancellationPreservesUnknownOutcome(t *testing.T) {
+func TestK8SMCPStdioReadInterruptionReturnsMachineCode(t *testing.T) {
 	bin := t.TempDir()
 	writeK8SMCPExecutable(t, bin, "kubectl", `#!/bin/sh
 sleep 10
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"get","kind":"pods"}}}` + "\n",
-	)
-	var output bytes.Buffer
-	if err := runK8SMCPStdioContext(
-		ctx,
-		input,
-		&output,
-		func() (string, error) { return "stdio-cancel", nil },
-	); err != nil {
-		t.Fatalf("run MCP server: %v", err)
-	}
-	response := decodeK8SMCPResponse(t, output.Bytes())
-	errorResponse, _ := response["error"].(map[string]interface{})
-	if errorResponse["code"] != float64(-32008) ||
-		!strings.Contains(errorResponse["message"].(string), errExecutionOutcomeUnknown.Error()) {
-		t.Fatalf("cancellation lost unknown outcome classification: %#v", response)
-	}
-	if _, exists := response["result"]; exists {
-		t.Fatalf("cancellation was converted to a tool result: %#v", response)
+	for _, code := range []string{"tool_cancelled", "tool_timeout"} {
+		t.Run(code, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if code == "tool_timeout" {
+				ctx, cancel = context.WithTimeout(t.Context(), 0)
+				defer cancel()
+			}
+			input := strings.NewReader(`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"get","kind":"pods"}}}` + "\n")
+			var output bytes.Buffer
+			if err := runK8SMCPStdioContext(ctx, input, &output, func() (string, error) { return "stdio-cancel", nil }); err != nil {
+				t.Fatal(err)
+			}
+			result := requireK8SToolResult(t, decodeK8SMCPResponse(t, output.Bytes()))
+			if result["errorCode"] != code || result["isError"] != true {
+				t.Fatalf("expected terminal read %s: %#v", code, result)
+			}
+		})
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -553,6 +554,16 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
 	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
+	mux.HandleFunc("/v1/assets/machines", h.HandleMachineInventory)
+	mux.HandleFunc("/v1/assets/clusters", h.HandleClusterInventory)
+	mux.HandleFunc("/v1/assets/node-links", h.HandleAssetNodeLinks)
+	mux.HandleFunc("/v1/assets/dashboard", h.HandleAssetDashboard)
+	mux.HandleFunc("/v1/assets/machine-diagnostics", h.HandleMachineDiagnostics)
+	mux.HandleFunc("/v1/assets/systems", h.HandleBusinessInventory)
+	mux.HandleFunc("/v1/assets/topology", h.HandleAssetTopology)
+	mux.HandleFunc("/v1/assets/coverage", h.HandleAssetCoverage)
+	mux.HandleFunc("/v1/assets/monitor", h.HandleAssetMonitor)
+	mux.HandleFunc("/v1/assets/inspections", h.HandleAssetInspection)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
 	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
@@ -1335,8 +1346,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, extractSession(params.Arguments), h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			finishAudit("canceled", "operation canceled", "", 0)
+			finishAudit("canceled", "operation_canceled", "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
+			return nil
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			finishAudit("timeout", "operation_timeout", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, "operation_timeout"))
 			return nil
 		}
 		errMsg := fmt.Sprintf("%v: %s/%s", err, cluster, instance)
@@ -1347,8 +1363,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	h.attachOperationLease(opID, lease)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
 	if err := opCtx.Err(); err != nil {
-		finishAudit("canceled", "operation canceled before dispatch", "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
+		if errors.Is(err, context.DeadlineExceeded) {
+			finishAudit("timeout", "operation_timeout", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, "operation_timeout"))
+		} else {
+			finishAudit("canceled", "operation_canceled", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
+		}
 		return nil
 	}
 	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
@@ -1449,6 +1470,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 					if action != ActionAgentUpgrade {
 						finalStatus = "error"
 						finalErr = resultContentText(result)
+						if action == ActionAsk && params.Name == "doops_agent_prompt" {
+							switch code := stringField(result, "errorCode"); code {
+							case askToolTimeout:
+								finalStatus, finalErr = "timeout", code
+							case askToolCancelled:
+								finalStatus, finalErr = "canceled", code
+							case askToolFailed:
+								finalErr = code
+							}
+						}
 					}
 					knownApplyFailure = true
 				}
@@ -1456,6 +1487,17 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
 				finalErr = relayErrorAuditText(params.Name, rpcErr)
+				if executionResponseCanceled(msg.Parsed) {
+					finalStatus = "canceled"
+					if finalErr == "operation canceled" {
+						finalErr = "operation_canceled"
+					}
+				} else if params.Name == "doops_agent_prompt" {
+					switch finalErr {
+					case "operation_timeout", doagentPromptAdmissionTimeout, "doagent_prompt_queue_timeout":
+						finalStatus = "timeout"
+					}
+				}
 				knownApplyFailure = true
 			}
 			raw, _ := json.Marshal(msg.Parsed)
@@ -1482,15 +1524,27 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finalStatus = "outcome_unknown"
 			// Keep the reason: the code alone cannot say which check failed.
 			finalErr = sanitizeSecretText(err.Error())
-			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32008, finalErr))
+			response := buildErrorResponse(req.ID, -32008, finalErr)
+			var receipt *unknownMutationReceipt
+			if params.Name == "doops_agent_prompt" && errors.As(err, &receipt) {
+				response.Error.Data = map[string]interface{}{"structuredContent": receipt.report}
+			}
+			finalResponse, _ = json.Marshal(response)
+		} else if errors.Is(err, errDoSQLReadCanceled) {
+			finalStatus = "canceled"
+			finalErr = doSQLReadCanceledCategory
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32007, errDoSQLReadCanceled.Error()))
 		} else if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
-			finalErr = errGatewayClientDisconnected.Error()
-			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
+			finalErr = "gateway_client_disconnected"
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, errGatewayClientDisconnected.Error()))
 		} else if errors.Is(err, context.Canceled) {
 			finalStatus = "canceled"
-			finalErr = "operation canceled"
-			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32007, finalErr))
+			finalErr = "operation_canceled"
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32007, "operation canceled"))
+		} else if errors.Is(err, errGatewayOperationTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			finalStatus, finalErr = "timeout", "operation_timeout"
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, err.Error()))
 		} else {
 			finalStatus = "error"
 			finalErr = sanitizeSecretText(err.Error())
@@ -2031,6 +2085,8 @@ func promptReplyUnknownError(tool string, response map[string]interface{}) error
 	return nil
 }
 
+var errGatewayOperationTimeout = errors.New("operation timed out")
+
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -2039,7 +2095,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	ch := a.registerPending(id, "tools/cancel")
 	defer a.unregisterPending(id)
 	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
-	uncertainWithoutTerminal := missingTerminalNeedsReconciliation(params.Name, params.Arguments)
+	var prompt api.AgentPromptParams
+	readSQL := params.Name == "doops_agent_prompt" && json.Unmarshal(params.Arguments, &prompt) == nil &&
+		strings.EqualFold(strings.TrimSpace(prompt.Operation), "ask") && doSQLDirectRequested(prompt) && !doSQLCopyRequested(prompt)
+	uncertainWithoutTerminal := readSQL || missingTerminalNeedsReconciliation(params.Name, params.Arguments)
 	sessionID := extractSession(params.Arguments)
 	routeNotifications := params.Name != "doops_task_status"
 	a.pendingMu.Lock()
@@ -2099,6 +2158,19 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			if err := promptReplyUnknownError(params.Name, msg.Parsed); err != nil {
 				return true, err
 			}
+			if result, ok := msg.Parsed["result"].(map[string]interface{}); readSQL && ok {
+				if _, ack := result["canceled"]; ack {
+					return false, nil
+				}
+			}
+			if readSQL && executionResponseCanceled(msg.Parsed) {
+				rpcError, _ := msg.Parsed["error"].(map[string]interface{})
+				data, _ := rpcError["data"].(map[string]interface{})
+				if data["category"] == doSQLReadCanceledCategory && data["sqlstate"] == "57014" {
+					return true, errDoSQLReadCanceled
+				}
+				return true, errExecutionOutcomeUnknown
+			}
 			if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
 				remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
 				return true, executionUnknownFromResponse(msg.Parsed)
@@ -2130,7 +2202,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			if err := promptReplyUnknownError(params.Name, ch.terminalMessage.Parsed); err != nil {
 				return true, err
 			}
-			if promptReplyProvesNoExecution(params.Name, ch.terminalMessage.Parsed) {
+			if readSQL || promptReplyProvesNoExecution(params.Name, ch.terminalMessage.Parsed) {
 				return forwardMessage(ch.terminalMessage)
 			}
 		default:
@@ -2157,7 +2229,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		if err := ctx.Err(); err != nil {
 			return true, err
 		}
-		return true, fmt.Errorf("operation timed out")
+		return true, errGatewayOperationTimeout
 	}
 	for {
 		// A busy output queue must not starve cancellation or the deadline.
@@ -2266,7 +2338,8 @@ func sessionForResourceKey(resourceKey string) string {
 
 func (a *GatewayAgent) sessionResourceHeldLocked(lockKey string) bool {
 	if strings.HasPrefix(lockKey, "target:") {
-		return a.writers > 0 || a.readers > 0 || len(a.resources) != 0
+		// A workspace slot can contain only waiters. Every granted slot counts as a reader.
+		return a.writers > 0 || a.readers > 0
 	}
 	session := sessionForResourceKey(lockKey)
 	if session == "" {
@@ -2297,30 +2370,33 @@ func (a *GatewayAgent) sessionResourceHeldLocked(lockKey string) bool {
 	return false
 }
 
-func (a *GatewayAgent) sessionWriterHeldLocked(resourceKey, session string) bool {
+func (a *GatewayAgent) conflictingResourceLocked(resourceKey, session string) string {
 	for key, count := range a.sessionWriters {
 		if count > 0 && strings.HasPrefix(key, "target:") {
-			return true
+			return key
 		}
 	}
 	if strings.HasPrefix(resourceKey, "target:") {
-		return a.writers > 0
+		if a.writers > 0 {
+			return resourceKey
+		}
+		return ""
 	}
 	workspace := sessionForResourceKey(resourceKey)
 	for key, count := range a.sessionWriters {
 		holder := sessionForResourceKey(key)
 		if count > 0 && ((session != "" && holder == session) || (workspace != "" && holder == workspace)) {
-			return true
+			return key
 		}
 	}
 	for key, slot := range a.resources {
 		if key != resourceKey && slot != nil && len(slot.slot) == 0 &&
 			((session != "" && (slot.session == session || sessionForResourceKey(key) == session)) ||
 				(workspace != "" && slot.session == workspace)) {
-			return true
+			return key
 		}
 	}
-	return false
+	return ""
 }
 
 func (a *GatewayAgent) acquireActionLeaseForSession(ctx context.Context, action GatewayAction, resourceKey, session string, maxQueued int, wait time.Duration) (*operationLease, error) {
@@ -2341,7 +2417,7 @@ func (a *GatewayAgent) acquireActionLeaseForSession(ctx context.Context, action 
 		return newOperationLease(a.releaseReadOnly), nil
 	}
 	if resourceKey != "" {
-		if err := a.acquireResource(ctx, resourceKey, session, maxQueued, wait); err != nil {
+		if err := a.acquireResource(ctx, action, resourceKey, session, maxQueued, wait); err != nil {
 			return nil, err
 		}
 		return newOperationLease(func() { a.releaseResource(resourceKey) }), nil
@@ -2392,10 +2468,7 @@ func (a *GatewayAgent) acquireExclusive(ctx context.Context, lockKey string, max
 			a.opsMu.Unlock()
 			return nil
 		}
-		if a.stateChanged == nil {
-			a.stateChanged = make(chan struct{})
-		}
-		changed := a.stateChanged
+		changed := a.stateChangedLocked()
 		a.opsMu.Unlock()
 
 		if !queued {
@@ -2467,15 +2540,9 @@ func (a *GatewayAgent) releaseReadOnly() {
 	a.signalStateChange()
 }
 
-func (a *GatewayAgent) acquireResource(ctx context.Context, key, session string, maxQueued int, wait time.Duration) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+func (a *GatewayAgent) acquireResource(ctx context.Context, action GatewayAction, key, session string, maxQueued int, wait time.Duration) error {
 	a.opsMu.Lock()
-	if a.draining || a.sessionWriterHeldLocked(key, session) {
-		a.opsMu.Unlock()
-		return fmt.Errorf("target busy")
-	}
+	defer a.opsMu.Unlock()
 	slot := a.resources[key]
 	if slot == nil {
 		if a.resources == nil {
@@ -2485,60 +2552,74 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key, session string,
 		slot.slot <- struct{}{}
 		a.resources[key] = slot
 	}
-	select {
-	case <-slot.slot:
-		slot.session = session
-		a.readers++
-		a.opsMu.Unlock()
-		return nil
-	default:
-	}
-	if maxQueued <= 0 {
-		a.opsMu.Unlock()
-		return fmt.Errorf("target busy")
-	}
-	if slot.queued >= maxQueued {
-		a.opsMu.Unlock()
-		return fmt.Errorf("target queue full")
-	}
-	slot.queued++
-	a.opsMu.Unlock()
+	var timer *time.Timer
 	defer func() {
-		a.opsMu.Lock()
-		if slot.queued > 0 {
+		if timer != nil {
+			timer.Stop()
 			slot.queued--
 		}
-		if slot.queued == 0 && len(slot.slot) == 1 && a.resources[key] == slot {
+		if slot.queued == 0 && len(slot.slot) == 1 {
 			delete(a.resources, key)
 		}
-		a.opsMu.Unlock()
 	}()
 
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-slot.slot:
-		a.opsMu.Lock()
+	// One queue entry and deadline cover both the session mutation and the
+	// workspace slot, even when another holder wins the race after a wakeup.
+	waitOn := func(ready <-chan struct{}) error {
+		if timer == nil {
+			if maxQueued <= 0 {
+				return fmt.Errorf("target busy")
+			}
+			if slot.queued >= maxQueued {
+				return fmt.Errorf("target queue full")
+			}
+			slot.queued++
+			timer = time.NewTimer(wait)
+		}
+		a.opsMu.Unlock()
+		defer a.opsMu.Lock()
+		select {
+		case <-ready:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("target queue timeout")
+		case <-a.closed:
+			return fmt.Errorf("target offline")
+		}
+	}
+
+	for {
 		if err := ctx.Err(); err != nil {
-			slot.slot <- struct{}{}
-			a.opsMu.Unlock()
 			return err
 		}
-		if a.draining || a.sessionWriterHeldLocked(key, session) {
-			slot.slot <- struct{}{}
-			a.opsMu.Unlock()
+		if a.draining {
 			return fmt.Errorf("target busy")
+		}
+		if blocker := a.conflictingResourceLocked(key, session); blocker != "" {
+			if action != ActionAsk || !strings.HasPrefix(key, "workspace:") || !strings.HasPrefix(blocker, "session-mutation:") {
+				return fmt.Errorf("target busy")
+			}
+			if err := waitOn(a.stateChangedLocked()); err != nil {
+				return err
+			}
+			continue
+		}
+		select {
+		case <-slot.slot:
+		default:
+			if err := waitOn(slot.slot); err != nil {
+				return err
+			}
+			if ctx.Err() != nil || a.draining || a.conflictingResourceLocked(key, session) != "" {
+				slot.slot <- struct{}{}
+				continue
+			}
 		}
 		slot.session = session
 		a.readers++
-		a.opsMu.Unlock()
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return fmt.Errorf("target queue timeout")
-	case <-a.closed:
-		return fmt.Errorf("target offline")
 	}
 }
 
@@ -2561,12 +2642,16 @@ func (a *GatewayAgent) releaseResource(key string) {
 	a.signalStateChange()
 }
 
-func (a *GatewayAgent) signalStateChange() {
-	a.opsMu.Lock()
+func (a *GatewayAgent) stateChangedLocked() chan struct{} {
 	if a.stateChanged == nil {
 		a.stateChanged = make(chan struct{})
 	}
-	previous := a.stateChanged
+	return a.stateChanged
+}
+
+func (a *GatewayAgent) signalStateChange() {
+	a.opsMu.Lock()
+	previous := a.stateChangedLocked()
 	a.stateChanged = make(chan struct{})
 	a.opsMu.Unlock()
 	close(previous)
@@ -2823,13 +2908,7 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 }
 
 func gatewayK8SReadOnly(operation string) bool {
-	switch strings.ToLower(strings.TrimSpace(operation)) {
-	case "get", "describe", "logs", "top", "events", "rollout-status", "configmap-keys",
-		"helm-list", "helm-history", "helm-status", "helm-values":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(k8sReadOperations, strings.ToLower(strings.TrimSpace(operation)))
 }
 
 func extractSession(args json.RawMessage) string {

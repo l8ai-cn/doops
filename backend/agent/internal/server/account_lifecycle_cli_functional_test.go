@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 const accountTestPassword = "synthetic-account-p@ss"
@@ -101,7 +99,6 @@ func TestAccountProvisioningLifecycleThroughCLIGatewayAndRealAgent(t *testing.T)
 
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

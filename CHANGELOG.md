@@ -8,21 +8,57 @@
 
 ## [Unreleased]
 
+## [0.3.15] — 2026-11-20
+
 ### Added
 
+- 数据库页可逐层打开实例、数据库和表，查看表数据，并在当前库运行只读 SQL。
+
+- 机器支持单个账号录入、CSV 批量保存登录凭据，以及从 XLSX 给已有资产补录。管理员可从机器详情查看已保存的账号；预览和回执分别列出待写、实际写入和已有凭据数。
+
+- 数据库详情新增「只读 SQL」，可明确选择受管凭据并在操作区查看实际行、列和执行 ID。
+
+- 资产入口增加平台和集群看板、业务系统及依赖拓扑、双 80% 盘点对账、监控趋势与周检报告。对应迁移、采集源及独立周检执行器的配置入口见 `backend/docs/DOOPS_API_GUIDE.md`。
+
 - 控制台「网站」默认列出当前目标通过 DoWeb 发布的站点，可筛选域名、查看当前及上一发布版本并进入巡检。站点列表需要支持 `doops_web site-list` 的 Agent。
+
+- K8s Skill 提供 `workload-status` 和 `release-status`，可一次读取工作负载及异常 Pod、相关 Warning 事件或 Helm 修订历史。
+
+- 控制台新增「资产」入口，支持物理机和虚拟机手工登记、CSV 预览与批量导入、规格编辑、宿主及 Node 关联。管理员可通过在线 Agent 验证并保存集群或指定命名空间，离线时仍可查看台账。启用前需执行资产表迁移，顺序见 `backend/docs/DOOPS_API_GUIDE.md`。
+
 - 控制台「数据库」标签默认展示当前目标发现的实例，支持筛选、查看发现详情，并将选中资产带入 DoSql 只读查询。
+
+- Kubernetes 资源列表可直接查询指定命名空间的 Pod 和 Deployment。节点列表可查看 Kubernetes 上报的 CPU 与内存容量。
+
 - 控制台的「Kubernetes」标签默认显示 Pod 列表，可切换 Deployment、节点和命名空间，按名称或命名空间筛选，点击资源名称查看详情。
 
 - DoSQL agent 脚本支持 `--help`，按 discover/read、change、journal、timeline、rollback/restore 分组列出全部命令；测试保证清单与实现不会漂移
 
 ### Changed
 
+- 主导航按工作范围整理为「目标运维、资产、发布部署、平台管理」。CI/CD 指南并入发布部署。平台及集群统计集中在资产看板，目标运维展示所选 Agent；从资产进入运维后可返回原来的机器详情或集群命名空间。
+
+- 结构化 kubectl 写操作返回非零时，Gateway 回执包含命令退出原因与脱敏后的错误输出。
+
+- CLI 帮助和运维指南明确了 `exec` 可在目标授权范围内执行已确定的原生 `kubectl` 或 `helm` 命令。`doops k8s` 是可选的结构化入口，已有脚本可沿用原调用。
+
+- exec、后台任务、ask 的 Bash 及 K8s/Helm 工具在 Agent 启动命令前执行同一组拒绝规则。可通过 Agent chart 的 `commandDenyRules` 追加规则；拒绝携带规则名和下一步提示。
+
 - Operator Skill 补充 `capabilities` 与 `version` 命令入口，并写明 `upgrade` 在缺少 `upgradeAudit v1` 的旧 Agent 上必然失败、`--dry-run` 只预览参数而不校验活体 release、挂载或权限
 - Operator Skill 按渐进引导收敛：红线不再重述命令表中的操作细节，同一主题只留一处入口与文档指针
 - Operator Skill 命令表按实际 CLI 校正：补 `uncordon`、`admin user password|disable`、`info`、`history` 与 `-contract`，说明 `k8s` 不开放读取 Secret/ServiceAccount，并写明 `sql --dry-run` 会先执行再回滚
 
 ### Fixed
+
+- DoSql 安装说明改为当前登录命令 `doops login --gateway <gateway-url>`。旧文仍要求先 `doops add` 再 `login --target`，那是首次登录尚不能发现 target 时的写法。
+- 公众号草稿的上手步骤不再把 user token 写入 `doops add --token`，安装命令补上必需的 `--version`。API 鉴权示例的 `next_action` 与 Gateway 一致，改为 `doops login --gateway`。
+- 数据库发现按 StatefulSet 控制者 UID 归并所属 Pod，根据实际 Service 与 selector 展示地址，保留成员资产引用。
+- DoSql 只读查询使用当前 Agent 二进制启动数据库 runner，支持从本机目录运行 Agent。
+
+- 新会话首次打开「网站」即可读取目标的站点发布记录，无需预先创建会话工作目录。
+
+- 同一会话的普通 `ask` 和 `exec` 发生冲突时，后到的请求按队列配置等待、超时或取消。
+- 普通 `ask` 返回本轮工具失败与 Bash 实际退出码。受管 Bash 等待后台请求的执行终态，保留标准输出和标准错误。Gateway 审计分别记录失败、超时和取消。
 
 - CLI 顶层 help 补上 `guide` 与 `history` 两个实际可用但未列出的命令，并修正 `credential`、`registry` 两行的 tab 缩进
 - DoSQL 文档不再声称支持 Oracle：实现只支持 MySQL、PostgreSQL 和 MongoDB

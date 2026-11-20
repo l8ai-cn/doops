@@ -19,13 +19,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 func cancellationTestAgent(t *testing.T) (*Gateway, *websocket.Conn, <-chan map[string]interface{}) {
 	t.Helper()
 	gw := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

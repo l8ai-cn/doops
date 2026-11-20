@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 func TestLifecycleCLIThroughGatewayAndRealAgent(t *testing.T) {
@@ -28,7 +26,6 @@ func TestLifecycleCLIThroughGatewayAndRealAgent(t *testing.T) {
 
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}

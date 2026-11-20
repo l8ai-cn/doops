@@ -160,6 +160,11 @@ exit 0`
 						fmt.Fprintf(w, "data: %s\n\n", encoded)
 						flusher.Flush()
 					}
+					// A failed diagnostic in an apply turn cannot replace its mutation receipts.
+					send(map[string]interface{}{
+						"sessionUpdate": "tool_call_update", "toolCallId": "read-before-repair",
+						"toolName": "mcp_doops_k8s_read", "status": "failed", "errorCode": "tool_timeout",
+					})
 					for index, id := range []string{"z-first", "a-correction"} {
 						input := map[string]interface{}{
 							"operation": "rollback", "release": "app", "namespace": "apps", "revision": 2 + index,
@@ -280,7 +285,7 @@ exit 0`
 				break
 			}
 			<-receiptsReady
-			if len(statuses) != 4 || statuses[0] != "in_progress" || statuses[2] != "in_progress" || statuses[3] != "completed" {
+			if len(statuses) != 5 || statuses[0] != "failed" || statuses[1] != "in_progress" || statuses[3] != "in_progress" || statuses[4] != "completed" {
 				t.Fatalf("WebSocket lost tool lifecycle: %v", statuses)
 			}
 			var report map[string]interface{}

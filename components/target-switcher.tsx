@@ -46,7 +46,6 @@ export function TargetSwitcher({
     return () => document.removeEventListener("mousedown", onDoc)
   }, [open])
 
-  // 无机器：管理员提示等待接入；普通用户可能是没有授权或已授权机器都不在线。
   if (targets.length === 0) {
     const empty = targetSwitcherEmptyCopy(isAdmin)
     return (
@@ -59,7 +58,7 @@ export function TargetSwitcher({
           variant="ghost"
           size="sm"
           icon
-          aria-label="刷新机器列表"
+          aria-label="刷新 Agent 目标列表"
         >
           <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
         </Button>
@@ -67,49 +66,44 @@ export function TargetSwitcher({
     )
   }
 
-  const single = targets.length === 1
+  const current = selected && targets.find(target => target.key === selected.key)
 
   return (
     <div ref={ref} className="relative min-w-0">
       <Button
-        onClick={() => !single && setOpen((v) => !v)}
+        onClick={() => setOpen((v) => !v)}
         size="sm"
-        className={`max-w-full ${single ? "cursor-default" : ""}`}
-        aria-haspopup={single ? undefined : "listbox"}
-        aria-expanded={single ? undefined : open}
+        className="max-w-full"
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${selected ? statusDot(selected) : "bg-muted-foreground"}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${current ? statusDot(current) : "bg-muted-foreground"}`}
           aria-hidden
         />
         <span className="max-w-[40vw] truncate text-xs font-medium text-foreground sm:max-w-[200px]">
-          {selected?.instance || "选择机器"}
+          {current?.instance || "选择 Agent 目标"}
         </span>
-        <span className="hidden font-mono text-[11px] text-muted-foreground sm:inline">
-          {selected?.cluster}
+        <span className="hidden truncate font-mono text-[11px] text-muted-foreground sm:inline">
+          {current?.cluster}
         </span>
-        {!single && (
-          <>
-            <span className="rounded-full bg-background px-1.5 text-[10px] text-muted-foreground">
-              {targets.length}
-            </span>
-            <ChevronDownIcon
-              width={13}
-              height={13}
-              className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-            />
-          </>
+        {targets.length > 1 && (
+          <span className="rounded-full bg-background px-1.5 text-[10px] text-muted-foreground">
+            {targets.length}
+          </span>
         )}
+        <ChevronDownIcon width={13} height={13} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </Button>
 
-      {open && !single && (
+      {open && (
         <div
           role="listbox"
+          aria-label="在线 Agent 目标"
           className="absolute left-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[calc(100vw_-_4.25rem)] overflow-y-auto rounded-lg border bg-card p-1 shadow-lg"
         >
           <div className="flex items-center justify-between px-2 py-1.5">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              在线机器 {targets.length}
+              在线 Agent 目标 {targets.length}
             </span>
             <Button
               onClick={onRefresh}
@@ -117,7 +111,7 @@ export function TargetSwitcher({
               variant="ghost"
               size="sm"
               icon
-              aria-label="刷新机器列表"
+              aria-label="刷新 Agent 目标列表"
             >
               <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
             </Button>

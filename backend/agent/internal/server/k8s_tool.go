@@ -6,15 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"text/tabwriter"
 
 	"github.com/user/doops/agent/api"
+	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 var (
@@ -346,7 +345,7 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		return []k8sCommand{{args: namespace([]string{"delete", "pod", params.Name})}}, nil
 	default:
-		return nil, fmt.Errorf("unsupported k8s operation %q", params.Operation)
+		return nil, fmt.Errorf("unsupported k8s operation %q; next: doops k8s -h", params.Operation)
 	}
 }
 
@@ -380,36 +379,44 @@ func validK8SOutput(output string) bool {
 }
 
 func runK8SCommand(ctx context.Context, args []string, push notificationSender, mutation bool) error {
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
-	stdout, err := cmd.StdoutPipe()
+	// waitCommandOutput owns cancellation of the entire process group.
+	cmd, err := dispatcher.CommandContext(context.WithoutCancel(ctx), "kubectl", args...)
+	if err != nil {
+		return err
+	}
+	_, stdout, stderr, err := startRawCommand(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("start kubectl: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("start kubectl: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start kubectl: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		streamReader(stdout, push)
-	}()
-	go func() {
-		defer wg.Done()
-		streamReader(stderr, push)
-	}()
-	wg.Wait()
-	if err := cmd.Wait(); err != nil {
-		if mutation {
-			// Once kubectl starts, a failed write cannot prove that no change landed.
-			return errExecutionOutcomeUnknown
+	// Redact complete diagnostics before exposing any part of them. Never
+	// retain an arbitrary suffix of a possibly multiline credential.
+	const limit = 8 << 10
+	var diagnostic strings.Builder
+	oversized := false
+	err = waitCommandOutput(ctx, cmd, stdout, stderr, push, func(event notificationEvent) {
+		if len(event.Data) > limit-diagnostic.Len() {
+			oversized = true
+		} else if !oversized {
+			diagnostic.WriteString(event.Data)
 		}
-		return fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
+	}, false)
+	reason, redactErr := redactDoagentUIText(strings.TrimSpace(diagnostic.String()))
+	if oversized || redactErr != nil {
+		reason = "[kubectl diagnostic withheld]"
+	}
+	if reason != "" {
+		push(rawNotification(reason + "\n"))
+	}
+	if err != nil {
+		failure := fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
+		if mutation {
+			// The native exit status describes the command, not the API write.
+			if reason != "" {
+				failure = fmt.Errorf("%w: %s", failure, reason)
+			}
+			return fmt.Errorf("%w: %w", errExecutionOutcomeUnknown, failure)
+		}
+		return failure
 	}
 	return nil
 }
@@ -417,7 +424,11 @@ func runK8SCommand(ctx context.Context, args []string, push notificationSender, 
 // runHelmReadCommand runs a read-only helm command. Values output is reduced to
 // its key paths so plaintext secrets in release values never reach the caller.
 func runHelmReadCommand(ctx context.Context, command k8sCommand, push notificationSender) error {
-	output, err := exec.CommandContext(ctx, "helm", command.args...).CombinedOutput()
+	cmd, err := dispatcher.CommandContext(ctx, "helm", command.args...)
+	if err != nil {
+		return err
+	}
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("helm %s failed: %s", command.args[0], sanitizeSecretText(strings.TrimSpace(string(output))))
 	}
@@ -488,7 +499,10 @@ type configMapKeysObject struct {
 func runConfigMapKeysCommand(ctx context.Context, args []string, push notificationSender) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd, err := dispatcher.CommandContext(ctx, "kubectl", args...)
+	if err != nil {
+		return err
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

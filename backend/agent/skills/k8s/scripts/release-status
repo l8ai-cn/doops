@@ -1,0 +1,25 @@
+#!/usr/bin/python3 -B
+import argparse
+
+from _diagnostic import namespace, read_json, report, resource_name
+
+
+def collect():
+    parser = argparse.ArgumentParser(description="Read the five most recent Helm release revisions.")
+    parser.add_argument("-n", "--namespace", required=True, type=namespace)
+    parser.add_argument("release", type=resource_name)
+    args = parser.parse_args()
+    rows = read_json("helm", "history", args.release, "--namespace", args.namespace,
+                     "--max", "5", "--output", "json")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("missing release history")
+    history = []
+    for row in rows:
+        if type(row["revision"]) is not int or not all(isinstance(row[k], str) for k in ("status", "chart", "updated")):
+            raise ValueError("invalid release revision")
+        history.append({key: row[key] for key in ("revision", "status", "chart", "updated")})
+    history.sort(key=lambda entry: entry["revision"], reverse=True)
+    return dict(namespace=args.namespace, release=args.release, current=history[0], previous=history[1:5])
+
+
+report(collect)

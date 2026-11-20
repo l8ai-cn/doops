@@ -14,6 +14,8 @@ export type K8sResource = {
   namespace?: string
   status?: string
   ready?: string
+  cpu?: string
+  memory?: string
 }
 
 export type K8sResourceGroup = {
@@ -21,7 +23,7 @@ export type K8sResourceGroup = {
   error?: string
 }
 
-export type K8sOverview = Record<K8sOverviewKey, K8sResourceGroup> & {
+export type K8sOverview = Partial<Record<K8sOverviewKey, K8sResourceGroup>> & {
   fetchedAt: string
 }
 
@@ -62,6 +64,9 @@ function itemFor(key: K8sOverviewKey, item: Record<string, unknown>): K8sResourc
       return value.type === "Ready"
     }) as Record<string, unknown> | undefined
     resource.status = ready?.status === "True" ? "Ready" : ready?.status === "False" ? "NotReady" : "Unknown"
+    const capacity = status.capacity as Record<string, unknown> | undefined
+    resource.cpu = stringValue(capacity?.cpu)
+    resource.memory = stringValue(capacity?.memory)
   } else if (key === "namespaces") {
     resource.status = stringValue(status.phase) || "Unknown"
   } else if (key === "deployments") {
@@ -101,6 +106,7 @@ async function fetchResourceGroup(
   sessionId: string,
   query: (typeof K8S_OVERVIEW_QUERIES)[number],
   signal: AbortSignal,
+  namespace: string,
 ): Promise<K8sResourceGroup> {
   let output = ""
   try {
@@ -116,7 +122,7 @@ async function fetchResourceGroup(
           operation: "get",
           kind: query.kind,
           output: "json",
-          ...(query.allNamespaces ? { all_namespaces: true } : {}),
+          ...(namespace ? { namespace } : query.allNamespaces ? { all_namespaces: true } : {}),
         },
       },
       (event) => {
@@ -136,10 +142,12 @@ export async function fetchK8sOverview(
   target: Pick<Target, "cluster" | "instance">,
   sessionId: string,
   signal: AbortSignal,
+  namespace = "",
 ): Promise<K8sOverview> {
+  const queries = namespace ? K8S_OVERVIEW_QUERIES.filter((query) => query.allNamespaces) : K8S_OVERVIEW_QUERIES
   const groups = await Promise.all(
-    K8S_OVERVIEW_QUERIES.map(async (query) => [query.key, await fetchResourceGroup(session, target, sessionId, query, signal)] as const),
+    queries.map(async (query) => [query.key, await fetchResourceGroup(session, target, sessionId, query, signal, namespace)] as const),
   )
-  const overview = Object.fromEntries(groups) as Record<K8sOverviewKey, K8sResourceGroup>
+  const overview = Object.fromEntries(groups)
   return { ...overview, fetchedAt: new Date().toISOString() }
 }

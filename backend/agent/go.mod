@@ -10,6 +10,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.6
+	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/microsoft/go-mssqldb v1.9.2
 	github.com/sijms/go-ora/v2 v2.9.0
 	go.mongodb.org/mongo-driver/v2 v2.3.0

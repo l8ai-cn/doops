@@ -59,12 +59,14 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 
 ## 命令选择
 
+`doops k8s` 是可选的结构化入口，已有脚本可沿用原调用。
+
 | 需求 | 命令 |
 | :--- | :--- |
 | 路由 / 在线 / 准入 | `doops -session <s> list`（本地）；`doops -session <s> sync --target <t>`（补路由）；`doops -session <s> targets --target <t> [--admission]` |
 | 协议能力 | `doops -session <s> capabilities --target <t> --require structuredSSH\|executionLifecycle`（调用前暴露能力缺失） |
 | 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version`）；`doops -contract` 输出机器可读契约版本 |
-| 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
+| 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'`（包括目标授权范围内已确定的原生 `kubectl` 和 `helm` 命令） |
 | 节点资源 | `doops -session <s> info --target <t>`（CPU/内存/磁盘） |
 | 本地历史 | `doops history`（本机操作历史，password/token 等已脱敏） |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`） |
@@ -112,7 +114,7 @@ DoSql 必须从 `doops sql` 进入，普通 `ask` 不保证注入工具；默认
   helm_verification_failed|helm_interrupted` 见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；`credential_*` 与
   `credential preflight failed` 见 `docs/CREDENTIAL_RESOURCES.md`；`doagent_apply_tool_failed: <工具>: <错误>`
   是工具自身失败，模型说"成功"不算数；`execution_outcome_unknown` 不重放 mutation，按原因去 target
-  核对；`blocked_command(delete_root_filesystem)` 是 exec 唯一拦截的命令。
+  核对。Agent 在执行前统一过滤命令，遇到 `blocked_command(rule)` 停止执行并按 `next:` 处理。
 - `ask --apply` 没有可信 mutation 证据：检查 Agent 是否注册 `mcp_doops_helm` 及 attestation。
 - target 不可见：空结果可能是离线，也可能是缺少精确 grant，不能断言集群宕机。
 - `busy=true` 只表示 Agent 自升级占用整个 target；普通操作按 session/资源互斥。
