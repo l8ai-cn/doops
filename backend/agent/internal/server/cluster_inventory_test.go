@@ -250,6 +250,7 @@ func TestClusterInventoryRealKubectl(t *testing.T) {
 		t.Skip("kubectl executable required for REST/JSONPath integration")
 	}
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	f.httpTimeout = 30 * time.Second
 	applyInventoryMigration(t, f)
 	var mu sync.Mutex
 	var resourcePaths []string

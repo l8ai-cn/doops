@@ -20,12 +20,13 @@ import (
 )
 
 type executionLifecycleFixture struct {
-	path   string
-	store  *GatewayStore
-	hub    *GatewayHub
-	server *httptest.Server
-	admin  CreatedToken
-	opts   GatewayHubOptions
+	path        string
+	store       *GatewayStore
+	hub         *GatewayHub
+	server      *httptest.Server
+	admin       CreatedToken
+	opts        GatewayHubOptions
+	httpTimeout time.Duration
 }
 
 func newExecutionLifecycleFixture(t *testing.T, opts GatewayHubOptions) *executionLifecycleFixture {
@@ -99,7 +100,11 @@ func (f *executionLifecycleFixture) http(t *testing.T, token CreatedToken, metho
 	}
 	req.Header.Set("Authorization", "Bearer "+token.Plaintext)
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 3 * time.Second}
+	timeout := f.httpTimeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)

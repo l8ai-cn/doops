@@ -296,31 +296,31 @@ func TestMachineInventoryCSVReorderConflictReplayAndReopen(t *testing.T) {
 
 func TestMachineInventoryBoundedInputAndMetadataOnlyAudit(t *testing.T) {
 	f := newMachineFixture(t)
-	const secret = "ghp_012345678901234567890123456789"
+	const canary = "token: aaaaaaaaaa"
 	header := "asset_id,name,kind\n"
 	for _, csv := range []string{header + strings.Repeat("m,a,vm\n", inventoryCSVRows+1), strings.Repeat("x", inventoryCSVBytes+1)} {
 		f.request(t, f.admin, "POST", "", confirmationRequest(csv, strings.Repeat("0", 64)), 413)
 	}
 	f.request(t, f.admin, "POST", "", []byte(strings.Repeat(" ", inventoryJSONBytes+1)), 413)
-	for _, csv := range []string{"asset_id,name\n1,x", "asset_id,name,kind,token\na,n,vm," + secret, "asset_id,kind,name,name\na,vm,x,y", header + "good,n,physical\nbad,wrong-width\n", header + "a,\"bad,vm", header} {
+	for _, csv := range []string{"asset_id,name\n1,x", "asset_id,name,kind,token\na,n,vm," + canary, "asset_id,kind,name,name\na,vm,x,y", header + "good,n,physical\nbad,wrong-width\n", header + "a,\"bad,vm", header} {
 		resp := f.request(t, f.admin, "POST", "", confirmationRequest(csv, strings.Repeat("0", 64)), 400)
-		if bytes.Contains(resp, []byte(secret)) {
+		if bytes.Contains(resp, []byte(canary)) {
 			t.Fatal("error echoed payload")
 		}
 	}
-	for _, raw := range [][]byte{[]byte(`{"action":"create","machine":{"asset_id":"a","name":"x","kind":"vm","token":"` + secret + `"}}`), []byte(`{"action":"` + secret + `"}`), []byte(`{"action":"create","machine":{"asset_id":"a","name":"` + secret + `","kind":"vm"}}`), []byte(`{"action":"create","machine":{"asset_id":"a","name":"x","kind":"vm","address":"http://user:pw@host"}}`), []byte(`{"action":"preview","csv":"a"}{}`), {0xff}} {
+	for _, raw := range [][]byte{[]byte(`{"action":"create","machine":{"asset_id":"a","name":"x","kind":"vm","token":"` + canary + `"}}`), []byte(`{"action":"` + canary + `"}`), []byte(`{"action":"create","machine":{"asset_id":"a","name":"` + canary + `","kind":"vm"}}`), []byte(`{"action":"create","machine":{"asset_id":"a","name":"x","kind":"vm","address":"http://user:pw@host"}}`), []byte(`{"action":"preview","csv":"a"}{}`), {0xff}} {
 		resp := f.request(t, f.admin, "POST", "", raw, 400)
-		if bytes.Contains(resp, []byte(secret)) {
-			t.Fatal("invalid body echoed secret")
+		if bytes.Contains(resp, []byte(canary)) {
+			t.Fatal("invalid body echoed canary")
 		}
 	}
-	batch := f.batch(t, "import", header+secret+",valid,vm\nasset,"+secret+",vm\n", "error", "error")
+	batch := f.batch(t, "import", header+canary+",valid,vm\nasset,"+canary+",vm\n", "error", "error")
 	if batch.Rows[0].AssetID != "" || batch.Rows[0].Code != "invalid_asset_id" || batch.Rows[1].Code != "invalid_name" {
-		t.Fatal("secret ID in receipt")
+		t.Fatal("canary ID in receipt")
 	}
 	receipt := f.request(t, f.admin, "GET", "?batch_id="+batch.BatchID, nil, 200)
-	if bytes.Contains(receipt, []byte(secret)) {
-		t.Fatal("secret in retained receipt")
+	if bytes.Contains(receipt, []byte(canary)) {
+		t.Fatal("canary in retained receipt")
 	}
 	f.save(t, "create", machineInventoryInput{AssetID: "vm", Name: "synthetic-private-label", Kind: "vm", Address: "private-address.example"}, 0, 200)
 	events, err := f.store.ListAudit(100)
@@ -328,7 +328,7 @@ func TestMachineInventoryBoundedInputAndMetadataOnlyAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(events)
-	for _, s := range []string{secret, "synthetic-private-label", "private-address.example", header} {
+	for _, s := range []string{canary, "synthetic-private-label", "private-address.example", header} {
 		if bytes.Contains(encoded, []byte(s)) {
 			t.Fatal("audit contains input values")
 		}
