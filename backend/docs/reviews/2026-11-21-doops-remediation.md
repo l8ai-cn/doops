@@ -22,7 +22,7 @@
 | 会话文本文件 | 限制相对路径访问，限制读取大小，Linux 相对路径已修复 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，工作区模板仍支持任意文本 |
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | 已发布，待线上验收 |
-| Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | 运行时规则已发布，部署脚本已合入 main，待实际发布验证 |
+| Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | 部署脚本已随 v0.3.21 发布，待实际服务验证 |
 | Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
 | CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [CLI 历史测试](../../cli/cli/doops/auth_test.go) | 已发布，旧文件内容保留 |
@@ -40,6 +40,8 @@
 从 `v0.3.20` 发布提交构建的 Linux AMD64 Web 镜像使用了镜像源中相同 digest 的 Node 基础镜像。本地按镜像 ID `sha256:5c4aa4f057b29ccd4e45654c83e8ecbb7c59cef85c9ab455460a0363dad32892` 启动容器，校验提交标签和首页。配置的 HTTPS 来源通过同源检查并进入参数校验（400），跨源登录请求返回 403。
 
 使用同一发布提交构建 Linux AMD64 Agent 镜像 `sha256:2754b45122a82fbe6a8a6d9a7db29ff13aa350356107a51f143dfb800ce72a22`。构建使用锁定 digest 的运行时和基础组件，Go 依赖从校验过的本地模块缓存读取。隔离容器按镜像 ID 运行 Agent 二进制并挂载临时集群 kubeconfig。与正式 Gateway 联调时，Web 容器完成会话建立与恢复并拒绝跨源登录。随后 Gateway 与 Agent 容器复跑凭证创建、列表隔离、重启后持久化、验证、提升和撤销，Secret 清理和载荷脱敏通过。
+
+`v0.3.21` 纳入 Web 部署脚本修复，发布提交为 `e6d3d225cd7f5416583ad7d646dbf977173a9228`。主分支 CI 和正式发布复验通过，发布流程从公开资产完成 CLI 与 Skill 安装。该提交构建的 Linux AMD64 Web 镜像 `sha256:89141a437d2eb2ca5f82d735339920b728111c6108d168886ba1be8519c4bdd2` 已通过首页、配置来源登录参数校验（400）及跨源拒绝（403）检查。[CI](https://github.com/symansun/doops/actions/runs/44888902665) · [发布验证](https://github.com/symansun/doops/actions/runs/44888939631) · [发布资产](https://github.com/symansun/doops/releases/tag/v0.3.21)
 
 ## 凭证回归矩阵
 
