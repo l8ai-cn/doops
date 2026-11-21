@@ -43,6 +43,8 @@
 
 `v0.3.21` 纳入 Web 部署脚本修复，发布提交为 `e6d3d225cd7f5416583ad7d646dbf977173a9228`。主分支 CI 和正式发布复验通过，发布流程从公开资产完成 CLI 与 Skill 安装。该提交构建的 Linux AMD64 Web 镜像 `sha256:89141a437d2eb2ca5f82d735339920b728111c6108d168886ba1be8519c4bdd2` 已通过首页、配置来源登录参数校验（400）及跨源拒绝（403）检查。[CI](https://github.com/symansun/doops/actions/runs/44888902665) · [发布验证](https://github.com/symansun/doops/actions/runs/44888939631) · [发布资产](https://github.com/symansun/doops/releases/tag/v0.3.21)
 
+隔离 Kubernetes 环境使用校验过 SHA-256 的 `v0.3.21` 正式 Gateway 二进制、同提交构建并回读版本的本机 Agent，以及上述 Web 镜像。合成凭证创建、暂存、绑定、列表隔离、Gateway 重启后持久化、验证、提升、撤销、Secret 清理和日志脱敏均通过。Web 会话建立、恢复及跨源拒绝检查通过。部署回归还执行了候选校验失败和切换后校验失败的分支，分别确认保留现有服务和恢复旧容器。[部署合同测试](../../test/test_web_console_deploy_contract.py)
+
 ## 凭证回归矩阵
 
 | 给定 | 执行 | 预期与回归证据 |
