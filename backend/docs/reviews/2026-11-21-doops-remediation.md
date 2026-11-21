@@ -37,6 +37,8 @@
 
 使用 `v0.3.20` 同提交构建的本机 Gateway 与 Agent，在隔离 Kubernetes 集群上通过 HTTP 验证合成凭证创建、暂存、绑定、用户列表隔离、Gateway 重启后持久化、验证、提升及撤销。验证后临时 Secret 已清理，提升后读到一个 Secret，撤销后 Secret 数量恢复为零。HTTP 响应与运行日志未回显合成值。正式 Gateway 和 CLI 资产的 SHA-256 另已校验。随后用该正式 Linux AMD64 Gateway 二进制在容器中运行，并连接由同一发布提交构建的 Agent，在隔离 Kubernetes 集群复测上述流程。创建、列表隔离、Gateway 重启后持久化、验证、提升、撤销、Secret 清理和响应及日志脱敏均通过。
 
+从 `v0.3.20` 发布提交构建的 Linux AMD64 Web 镜像使用了镜像源中相同 digest 的 Node 基础镜像。本地按镜像 ID `sha256:5c4aa4f057b29ccd4e45654c83e8ecbb7c59cef85c9ab455460a0363dad32892` 启动容器，校验提交标签和首页。配置的 HTTPS 来源通过同源检查并进入参数校验（400），跨源登录请求返回 403。
+
 ## 凭证回归矩阵
 
 | 给定 | 执行 | 预期与回归证据 |
