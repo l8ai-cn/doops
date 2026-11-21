@@ -16,6 +16,7 @@ Options:
   --port PORT         SSH port. Default: 22.
   --image IMAGE       Immutable Web image digest. Required.
   --gateway URL       Allowed Gateway origin. Default: https://doops.l8ai.cn.
+  --console-origin URL Public HTTPS console origin for TLS-terminating proxies.
   --dry-run           Verify host, Docker, current container, and image only.
 EOF
 }
@@ -25,6 +26,7 @@ SSH_USER="ubuntu"
 SSH_PORT="22"
 IMAGE=""
 GATEWAY="https://doops.l8ai.cn"
+CONSOLE_ORIGIN=""
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --port) SSH_PORT="${2:-}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --gateway) GATEWAY="${2:-}"; shift 2 ;;
+    --console-origin) CONSOLE_ORIGIN="${2:?--console-origin requires a URL}"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -53,6 +56,15 @@ if [[ ! "${GATEWAY}" =~ ^https://[^/?#]+$ ]]; then
   exit 2
 fi
 
+if [[ -n "$CONSOLE_ORIGIN" ]]; then
+  if [[ ! "$CONSOLE_ORIGIN" =~ ^https://[a-z0-9.-]+(:[1-9][0-9]{0,4})?$ ]] ||
+     [[ "$CONSOLE_ORIGIN" =~ :([0-9]+)$ && "${BASH_REMATCH[1]}" -gt 65535 ]]; then
+    echo "--console-origin must be a lowercase HTTPS origin without a path" >&2
+    exit 2
+  fi
+  CONSOLE_ORIGIN="${CONSOLE_ORIGIN%:443}"
+fi
+
 deploy_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 candidate="doops-web-candidate-${deploy_id}"
 backup="doops-web-rollback-${deploy_id}"
@@ -62,6 +74,7 @@ echo "Web console deploy plan"
 echo "  host: ${SSH_USER}@${HOST}:${SSH_PORT}"
 echo "  image: ${IMAGE}"
 echo "  allowed Gateway: ${GATEWAY}"
+echo "  console origin: ${CONSOLE_ORIGIN:-derive from request}"
 
 "${SSH[@]}" "set -e
 hostname
@@ -75,12 +88,13 @@ if [[ "${DRY_RUN}" == "true" ]]; then
   exit 0
 fi
 
-"${SSH[@]}" bash -s -- "${IMAGE}" "${GATEWAY}" "${candidate}" "${backup}" <<'REMOTE'
+"${SSH[@]}" bash -s -- "${IMAGE}" "${GATEWAY}" "${candidate}" "${backup}" "${CONSOLE_ORIGIN}" <<'REMOTE'
 set -euo pipefail
 image="$1"
 gateway="$2"
 candidate="$3"
 backup="$4"
+console_origin="${5:-}"
 committed=false
 
 cleanup() {
@@ -93,8 +107,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+check_console_origin() {
+  local port="$1"
+  [[ -n "$console_origin" ]] || return 0
+  test "$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/login" \
+    -H "Origin: $console_origin" -H "Content-Type: application/json" --data '{}' || true)" = "400"
+  test "$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/login" \
+    -H "Origin: http://cross-origin.invalid" -H "Content-Type: application/json" --data '{}' || true)" = "403"
+}
+
 sudo -n docker run -d --name "$candidate" \
   -e "DOOPS_CONSOLE_ALLOWED_GATEWAYS=$gateway" \
+  -e "DOOPS_CONSOLE_ORIGIN=$console_origin" \
   -p 127.0.0.1:3001:3000 \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
@@ -103,12 +127,14 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/)" = "200"
+check_console_origin 3001
 sudo -n docker rm -f "$candidate" >/dev/null
 
 sudo -n docker stop doops-web >/dev/null
 sudo -n docker rename doops-web "$backup"
 sudo -n docker run -d --name doops-web --restart unless-stopped \
   -e "DOOPS_CONSOLE_ALLOWED_GATEWAYS=$gateway" \
+  -e "DOOPS_CONSOLE_ORIGIN=$console_origin" \
   -p 127.0.0.1:3000:3000 \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
@@ -117,6 +143,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)" = "200"
+check_console_origin 3000
 test "$(sudo -n docker inspect --format '{{.Config.Image}}' doops-web)" = "$image"
 test "$(sudo -n docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' doops-web |
   awk -F= '$1 == "DOOPS_CONSOLE_ALLOWED_GATEWAYS" {print $2}')" = "$gateway"
