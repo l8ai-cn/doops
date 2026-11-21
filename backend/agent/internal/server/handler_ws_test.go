@@ -1971,9 +1971,12 @@ func TestAgentWebSocketCancelsGitHTTPOverTunnel(t *testing.T) {
 		t.Fatal("git handler did not start")
 	}
 
+	// The cancellation acknowledgement has its own RPC ID, independent of the
+	// terminal response from the original Git request.
+	cancelID := float64(45)
 	if err := conn.WriteJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
-		"id":      id,
+		"id":      cancelID,
 		"method":  "git/cancel",
 		"params":  map[string]interface{}{"id": id},
 	}); err != nil {
@@ -1994,7 +1997,7 @@ func TestAgentWebSocketCancelsGitHTTPOverTunnel(t *testing.T) {
 		if err := conn.ReadJSON(&message); err != nil {
 			t.Fatalf("read git/cancel response: %v", err)
 		}
-		if gotID, _ := message["id"].(float64); gotID != id {
+		if gotID, _ := message["id"].(float64); gotID != cancelID {
 			continue
 		}
 		result, _ := message["result"].(map[string]interface{})
