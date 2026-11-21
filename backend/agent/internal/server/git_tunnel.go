@@ -116,7 +116,8 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	status := "success"
 	errMsg := ""
-	bytesOut, relayErr := agent.relayGitHTTPRequest(opCtx, w, r, gitHTTPRequestParams{
+	response := &tunnelResponseWriter{ResponseWriter: w}
+	bytesOut, relayErr := agent.relayGitHTTPRequest(opCtx, response, r, gitHTTPRequestParams{
 		Method:        r.Method,
 		Path:          "/git/" + session + ".git" + rest,
 		RawQuery:      r.URL.RawQuery,
@@ -133,7 +134,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(relayErr, errExecutionOutcomeUnknown) {
 			status = "outcome_unknown"
 		}
-		if bytesOut == 0 {
+		if !response.committed {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
 	}
@@ -145,6 +146,9 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		EndedAt:  time.Now().UTC(),
 	}); err != nil {
 		log.Printf("[gateway] finish git audit failed: id=%d: %v", auditID, err)
+	}
+	if relayErr != nil && response.committed {
+		panic(http.ErrAbortHandler)
 	}
 }
 

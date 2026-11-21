@@ -475,6 +475,10 @@ function enforceOperationPolicy({ input, mode, classification }) {
     throw new Error("mongoOperation is required; raw MongoDB JavaScript is not executable");
   }
   ensureSingleSqlStatement(input.engine, input.statement, "statement");
+  if (mode === "query" && classification.engine === "mysql" &&
+      /\bINTO\b|\/\*(?:!|M!)/i.test(input.statement)) {
+    throw new Error("query does not allow MySQL INTO clauses or executable comments");
+  }
   if (mode === "query" && classification.operationKind !== "read") {
     throw new Error("query only accepts read-only database operations");
   }

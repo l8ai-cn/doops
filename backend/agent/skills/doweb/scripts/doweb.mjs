@@ -635,9 +635,9 @@ docker run -d \\
   --restart unless-stopped \\
   -p ${httpPort}:80 \\
   -p ${httpsPort}:443 \\
-  -v ${spec.baseDir}:${spec.baseDir}:ro \\
-  -v ${spec.dockerNginxDir}:${spec.dockerNginxDir}:ro \\
-  -v ${spec.dockerNginxDir}/conf.d:/etc/nginx/conf.d:ro \\
+  -v ${shellQuote(`${spec.baseDir}:${spec.baseDir}:ro`)} \\
+  -v ${shellQuote(`${spec.dockerNginxDir}:${spec.dockerNginxDir}:ro`)} \\
+  -v ${shellQuote(`${spec.dockerNginxDir}/conf.d:/etc/nginx/conf.d:ro`)} \\
   ${image}
 
 /usr/local/bin/doweb-nginx -t

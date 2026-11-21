@@ -103,6 +103,68 @@ func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.
 	}
 }
 
+func TestCredentialGrantChangesInvalidateVerification(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("c", 32))
+	store := openCredentialTestStore(t)
+	owner := createCredentialTestUser(t, store, "verification-owner")
+	resource, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "verification-registry", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry,
+		OwnerID: owner.ID, CreatedBy: owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: resource.ID, CreatedBy: owner.ID,
+		Payload: json.RawMessage(`{"server":"registry.example.com","username":"owner","password":"synthetic"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantRequest := CredentialGrantCreateRequest{
+		CredentialID: resource.ID, CreatedBy: owner.ID,
+		Scope: credentialStoreImageScope("cluster-a", "instance-a", "apps"),
+	}
+	grant, err := store.CreateCredentialGrant(grantRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify := func() {
+		t.Helper()
+		if err := store.RecordCredentialVerification(CredentialVerification{
+			CredentialID: resource.ID, VersionID: version.ID, GrantID: grant.ID, Use: CredentialUseImagePull,
+			Request:  CredentialMaterializeRequest{Scope: grant.Scope},
+			Evidence: CredentialMaterialization{Status: "verified"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertInvalidated := func() {
+		t.Helper()
+		verifications, err := store.CredentialVerifications(resource.ID, version.ID)
+		if err != nil || len(verifications) != 0 {
+			t.Fatalf("expected no current verification, got %d, %v", len(verifications), err)
+		}
+	}
+	verify()
+	grantRequest.Scope.Namespace = "other-apps"
+	updated, err := store.CreateCredentialGrant(grantRequest)
+	if err != nil || updated.ID != grant.ID {
+		t.Fatalf("update binding: %v", err)
+	}
+	assertInvalidated()
+	grant = updated
+	verify()
+	if _, err := store.RevokeCredentialGrant(resource.ID, grant.ID, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	regranted, err := store.CreateCredentialGrant(grantRequest)
+	if err != nil || regranted.ID != grant.ID {
+		t.Fatalf("reactivate binding: %v", err)
+	}
+	assertInvalidated()
+}
+
 func TestCredentialTargetListRequiresActiveVersion(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("v", 32))
 	store := openCredentialTestStore(t)

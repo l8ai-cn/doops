@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -89,6 +90,9 @@ func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.Age
 	}
 	report.EvidencePath = writeDirectDoSQLEvidence(sessionID, report, execErr)
 	if execErr != nil {
+		if ctx.Err() != nil && result.ImplicitCommits > 0 {
+			return "", fmt.Errorf("%w: %s (operation_id=%s)", errExecutionOutcomeUnknown, strings.TrimSpace(partialCommitNote(&result)), report.OperationID)
+		}
 		return "", fmt.Errorf("%w (operation_id=%s%s)", execErr, report.OperationID, doSQLVersionSuffix(report))
 	}
 	encoded, err := json.MarshalIndent(report, "", "  ")
@@ -142,8 +146,36 @@ func directReadOnlyStatement(engine, statement string) bool {
 	if engine == "mongodb" {
 		return mongoOperationKind(statement) == "read"
 	}
-	return doSQLReadOnlyStatement(statement)
+	if !doSQLReadOnlyStatement(statement) {
+		return false
+	}
+	// A SELECT-like prefix alone does not establish that the statement has
+	// no side effects. Reject ambiguous forms before any database work begins.
+	if engine == "mysql" {
+		words, err := doSQLMySQLStatementWords(statement)
+		if err != nil || !doSQLMySQLDryRunSafe(words) {
+			return false
+		}
+	}
+	code := statement
+	if engine == "postgres" || engine == "mysql" {
+		var unquoted strings.Builder
+		if _, err := scanDoSQLStatements(engine, statement, &unquoted); err != nil {
+			return false
+		}
+		code = unquoted.String()
+	}
+	words := directReadOnlyTokens.FindAllString(strings.ToUpper(code), -1)
+	for _, word := range words {
+		switch word {
+		case "INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE", "UPSERT", "INTO", "NEXTVAL", "SETVAL":
+			return false
+		}
+	}
+	return true
 }
+
+var directReadOnlyTokens = regexp.MustCompile(`[A-Z_][A-Z0-9_]*`)
 
 func directDoSQLMode(request doSQLDirectRequest) string {
 	switch {

@@ -618,6 +618,9 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 				string(scopeJSON), grant.CreatedBy, formatTime(grant.CreatedAt), existing.ID); updateErr != nil {
 				return CredentialGrant{}, updateErr
 			}
+			if err := invalidateCredentialGrantVerifications(tx, existing.ID); err != nil {
+				return CredentialGrant{}, err
+			}
 			existing.Scope = grant.Scope
 			existing.CreatedBy = grant.CreatedBy
 			existing.CreatedAt = grant.CreatedAt
@@ -641,6 +644,9 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 			string(scopeJSON), grant.CreatedBy, formatTime(grant.CreatedAt), existing.ID); updateErr != nil {
 			return CredentialGrant{}, updateErr
 		}
+		if err := invalidateCredentialGrantVerifications(tx, existing.ID); err != nil {
+			return CredentialGrant{}, err
+		}
 		existing.Scope = grant.Scope
 		existing.CreatedBy = grant.CreatedBy
 		existing.CreatedAt = grant.CreatedAt
@@ -653,6 +659,13 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 			return CredentialGrant{}, err
 		}
 		return existing, nil
+	}
+	// Clear evidence from grants revoked by older Gateway versions before
+	// their stable IDs are reused by the upsert below.
+	if _, err := tx.Exec(`DELETE FROM credential_verifications WHERE grant_id IN (
+		SELECT id FROM credential_grants WHERE credential_id = ? AND grantee_id = ? AND scope_json = ? AND state = ?
+	)`, grant.CredentialID, grant.CreatedBy, string(scopeJSON), CredentialStateRevoked); err != nil {
+		return CredentialGrant{}, err
 	}
 	_, err = tx.Exec(`INSERT INTO credential_grants
 		(id, credential_id, grantee_id, scope_json, state, created_by, created_at)
@@ -755,6 +768,11 @@ func (s *GatewayStore) BeginCredentialGrantRevocation(credentialID, grantID, act
 	return grant, nil
 }
 
+func invalidateCredentialGrantVerifications(tx *sql.Tx, grantID string) error {
+	_, err := tx.Exec("DELETE FROM credential_verifications WHERE grant_id = ?", grantID)
+	return err
+}
+
 func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	credentialID string,
 	grantID string,
@@ -802,6 +820,9 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	}
 	if affected != 1 {
 		return CredentialGrant{}, ErrCredentialGrantDenied
+	}
+	if err := invalidateCredentialGrantVerifications(tx, grant.ID); err != nil {
+		return CredentialGrant{}, err
 	}
 	if auditID != 0 {
 		if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(grant)); err != nil {

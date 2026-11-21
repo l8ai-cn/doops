@@ -44,7 +44,7 @@ func RecordHistory(target, session, command string, result ...HistoryResult) err
 
 	historyPath := historyLogPath()
 
-	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(historyPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,13 @@ func RecordHistory(target, session, command string, result ...HistoryResult) err
 }
 
 func historyLogPath() string {
-	return filepath.Join(ensureDoopsStateDir(), "history.jsonl")
+	dir := ensureDoopsStateDir()
+	legacy := filepath.Join(dir, "history.jsonl")
+	if info, err := os.Lstat(legacy); err == nil && info.Mode().IsRegular() {
+		// Keep the operator's historical file but stop displaying its raw input.
+		_ = os.Chmod(legacy, 0600)
+	}
+	return filepath.Join(dir, "history-v2.jsonl")
 }
 
 var upgradeSecretKey = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key|private[_-]?key|authorization|cookie|payload)$`)

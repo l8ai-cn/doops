@@ -277,6 +277,9 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		// registry from its own tools.
 		if err := deliverRegistryAuthEntry(pendingRegistryAuth.server, pendingRegistryAuth.entry,
 			pendingRegistryAuth.credentialID, pendingRegistryAuth.grantID, pendingRegistryAuth.versionID); err != nil {
+			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot, actual); restoreErr != nil {
+				return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
+			}
 			return CredentialMaterialization{}, err
 		}
 	}
@@ -341,7 +344,8 @@ func restoreCredentialTarget(
 		}
 		if len(bytes.TrimSpace(current)) != 0 {
 			currentIdentity, identityErr := inspectCredentialSecretIdentity(current)
-			if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID {
+			if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID ||
+				(applied.ResourceVersion != "" && currentIdentity.ResourceVersion != applied.ResourceVersion) {
 				return errors.New("credential_secret_restore_failed")
 			}
 			deleteOptions, _ := json.Marshal(map[string]any{
@@ -365,7 +369,8 @@ func restoreCredentialTarget(
 			return errors.New("credential_secret_restore_failed")
 		}
 		currentIdentity, identityErr := inspectCredentialSecretIdentity(current)
-		if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID {
+		if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID ||
+			(applied.ResourceVersion != "" && currentIdentity.ResourceVersion != applied.ResourceVersion) {
 			return errors.New("credential_secret_restore_failed")
 		}
 		manifest, sanitizeErr := credentialSecretRestoreManifest(snapshot.Secret, currentIdentity)

@@ -102,6 +102,10 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 	}
 	if err != nil {
 		if command.mutationID == "" {
+			if (command.operation() == "rollback" || command.operation() == "uninstall") &&
+				(ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown)) {
+				return "", helmStepUnknown("helm_mutation_unverified", "Helm did not confirm the operation; inspect release status before retrying")
+			}
 			return "", err
 		}
 		// A failed upgrade may leave a pending revision that locks the release.
@@ -244,7 +248,7 @@ func settleHelmRevision(ctx context.Context, command helmCommand) (string, error
 			"revision %d is %s and there is no deployed revision to roll back to; inspect the release before retrying", mine.Revision, mine.Status))
 	}
 	rollbackCmd, err := dispatcher.CommandContext(settleCtx, "helm", "rollback", command.release, fmt.Sprintf("%d", deployed),
-		"--namespace", command.namespace)
+		"--namespace", command.namespace, "--wait")
 	if err != nil {
 		return "", helmStepUnknown("helm_interrupted", fmt.Sprintf("revision %d stayed %s; rollback to revision %d did not start: %v", mine.Revision, mine.Status, deployed, err))
 	}
@@ -255,6 +259,18 @@ func settleHelmRevision(ctx context.Context, command helmCommand) (string, error
 		return "", helmStepUnknown("helm_interrupted", fmt.Sprintf(
 			"revision %d stayed %s and the rollback to revision %d failed: %s",
 			mine.Revision, mine.Status, deployed, helmStderrReason(stderr.Bytes())))
+	}
+	statusCmd, err := dispatcher.CommandContext(settleCtx, "helm", "status", command.release,
+		"--namespace", command.namespace, "--output", "json")
+	if err != nil {
+		return "", helmStepUnknown("helm_interrupted", "could not read release status after rollback")
+	}
+	statusCmd.Dir = command.cwd
+	raw, err = statusCmd.Output()
+	var status helmReleaseJSON
+	if err != nil || json.Unmarshal(raw, &status) != nil || status.Info.Status != "deployed" || status.Version <= mine.Revision ||
+		status.Info.Description != fmt.Sprintf("Rollback to %d", deployed) {
+		return "", helmStepUnknown("helm_interrupted", "Helm reported a rollback but the restored release could not be verified")
 	}
 	return fmt.Sprintf("revision %d stayed %s, so the release was rolled back to revision %d to unlock it; check the release before retrying",
 		mine.Revision, mine.Status, deployed), nil

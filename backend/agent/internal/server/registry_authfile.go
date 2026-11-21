@@ -121,7 +121,26 @@ func writeRegistryAuthFile(auths map[string]json.RawMessage, rest map[string]jso
 	if err != nil {
 		return errors.New("registry_authfile_unavailable")
 	}
+	defer clear(encoded)
+	previous, err := os.ReadFile(registryAuthFilePath())
+	existed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("registry_authfile_unavailable")
+	}
+	defer clear(previous)
 	if err := writeFileAtomic0600(registryAuthFilePath(), append(encoded, '\n')); err != nil {
+		return errors.New("registry_authfile_unavailable")
+	}
+	restore := func() error {
+		var err error
+		if existed {
+			err = writeFileAtomic0600(registryAuthFilePath(), previous)
+		} else {
+			err = os.Remove(registryAuthFilePath())
+		}
+		if err != nil && (existed || !errors.Is(err, os.ErrNotExist)) {
+			return errors.New("credential_target_outcome_unknown")
+		}
 		return errors.New("registry_authfile_unavailable")
 	}
 	sort.Slice(record.Entries, func(i, j int) bool {
@@ -132,16 +151,16 @@ func writeRegistryAuthFile(auths map[string]json.RawMessage, rest map[string]jso
 	})
 	encodedRecord, err := json.Marshal(record)
 	if err != nil {
-		return errors.New("registry_authfile_unavailable")
+		return restore()
 	}
 	if len(record.Entries) == 0 {
 		if err := os.Remove(registryAuthRecordPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errors.New("registry_authfile_unavailable")
+			return restore()
 		}
 		return nil
 	}
 	if err := writeFileAtomic0600(registryAuthRecordPath(), append(encodedRecord, '\n')); err != nil {
-		return errors.New("registry_authfile_unavailable")
+		return restore()
 	}
 	return nil
 }

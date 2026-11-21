@@ -314,6 +314,10 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 			Image         string `json:"image"`
 			ReleaseCommit string `json:"release_commit"`
 			Outcome       string `json:"outcome"`
+			OperationID   string `json:"upgrade_operation_id"`
+			Job           string `json:"job"`
+			Phase         string `json:"phase"`
+			Stage         string `json:"verification_stage"`
 		} `json:"revisions"`
 	}
 	if json.Unmarshal(out, &stored) != nil || json.Unmarshal([]byte(stored.Data["evidence.json"]), &evidence) != nil ||
@@ -327,9 +331,23 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 		}
 	}
 	for _, row := range history {
-		if row.Status == "superseded" && row.Revision < current && row.Revision > previous && evidence.Revisions[fmt.Sprint(row.Revision)].Image != "" {
-			previous = row.Revision
+		entry := evidence.Revisions[fmt.Sprint(row.Revision)]
+		if row.Status != "superseded" || row.Revision >= current || row.Revision <= previous || entry.Image == "" {
+			continue
 		}
+		// Upgrade candidates may have live verification before the controller
+		// commits its terminal outcome. A failed apply cannot certify that revision.
+		if entry.Phase == "apply" && entry.Stage != "baseline" && entry.Stage != "rollback" {
+			if entry.OperationID == "" || entry.Job != selfUpgradeJobName(entry.OperationID, "apply") {
+				continue
+			}
+			receipt, err := p.readUpgradeReceipt(ctx, namespace, entry.Job, entry.OperationID)
+			if err != nil || receipt["outcome"] != "succeeded" || receipt["release"] != release || receipt["workload"] != workload ||
+				receipt["revision"] != row.Revision || receipt["verified_image"] != entry.Image || receipt["release_commit"] != entry.ReleaseCommit {
+				continue
+			}
+		}
+		previous = row.Revision
 	}
 	if previous == 0 {
 		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid no previously verified superseded revision")

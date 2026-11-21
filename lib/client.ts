@@ -394,6 +394,7 @@ export async function runAgentUpgrade(
   signal: AbortSignal,
   onChange: (operation: AgentUpgradeOperation) => void,
   resume = false,
+  beforeSubmit?: (operation: AgentUpgradeOperation) => void,
 ): Promise<void> {
   let operation = { ...initial }
   let verificationRejected = false
@@ -479,7 +480,9 @@ export async function runAgentUpgrade(
         let fields: Record<string, string>
         try { fields = upgradeResponse(data.result).fields } catch { throw error }
         if (fields.upgrade_operation_id === operation.id) {
-          if (fields.outcome === "failed" && (args.observe_job ? matchesObservation(fields) : fields.phase === operation.phase)) update({ status: "failed" })
+          if (fields.outcome === "failed" && (args.observe_job ? matchesObservation(fields) : fields.phase === operation.phase)) {
+            update({ status: "failed", ...(!args.observe_job && { job: undefined }) })
+          }
           if (fields.outcome === "unknown") {
             update({ status: "outcome_unknown" })
             if (!args.observe_job && fields.phase === operation.phase && fields.job && fields.namespace) {
@@ -499,7 +502,7 @@ export async function runAgentUpgrade(
     return result
   }
   function matchesObservation(fields: Record<string, string>) {
-    return fields.job === operation.job && fields.namespace === operation.namespace &&
+    return fields.job === operation.job && Boolean(fields.namespace) && (!operation.namespace || fields.namespace === operation.namespace) &&
       fields.upgrade_operation_id === operation.id && fields.phase === "observe" &&
       fields.job_phase === operation.phase && Boolean(fields.release) &&
       (!operation.release || fields.release === operation.release) &&
@@ -512,7 +515,7 @@ export async function runAgentUpgrade(
     }
     // An unknown create result can carry only the deterministic Job identity.
     // Recover the missing receipt fields from that Job's correlated observation.
-    if (!operation.release) update({ release: parsed.fields.release })
+    if (!operation.release || !operation.namespace) update({ release: parsed.fields.release, namespace: parsed.fields.namespace })
     if (operation.phase === "rollback" && !operation.expectedCommit && /^[a-f0-9]{40}$/.test(parsed.fields.expected_release_commit || "")) {
       update({ expectedCommit: parsed.fields.expected_release_commit })
     }
@@ -524,7 +527,10 @@ export async function runAgentUpgrade(
     return parsed.status
   }
   async function accept(phase: AgentUpgradeOperation["phase"]) {
-    update({ phase, verificationComplete: false, job: undefined, namespace: undefined, release: undefined, deadline: Date.now() + 21 * 60_000 })
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(operation.id)))
+    const job = "doops-self-upgrade-" + Array.from(digest.slice(0, 12), byte => byte.toString(16).padStart(2, "0")).join("") + "-" + phase
+    update({ phase, verificationComplete: false, job, namespace: undefined, release: undefined, deadline: Date.now() + 21 * 60_000 })
+    beforeSubmit?.(operation)
     const result = await invoke(phase === "rollback" ? { rollback: true } : { image: operation.image, mode: "k8s", preflight: phase === "preflight" })
     update({ status: "outcome_unknown" })
     const { status, fields } = upgradeResponse(result)
@@ -541,7 +547,7 @@ export async function runAgentUpgrade(
     }
   }
   async function observe() {
-    if (!operation.job || !operation.namespace) throw new Error("没有可恢复观察的 Job，请按操作 ID 核对审计；不要重复提交")
+    if (!operation.job) throw new Error("没有可恢复观察的 Job，请按操作 ID 核对审计；不要重复提交")
     while (true) {
       const args = { observe_job: operation.job, namespace: operation.namespace }
       const result = await invoke(args)

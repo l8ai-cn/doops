@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -89,6 +90,27 @@ func modelProviderRecordPath() string {
 	return filepath.Join(filepath.Dir(doagentSettingsPath()), "doops-model-provider.json")
 }
 
+var modelProviderSettingsMu sync.Mutex
+
+func modelProviderPendingPath() string { return modelProviderRecordPath() + ".pending" }
+
+// An interrupted write cannot establish ownership of the settings. Remove the
+// model fields before accepting further deliveries, then let the Gateway redeliver.
+func recoverPendingModelSettings() error {
+	if _, err := os.Lstat(modelProviderPendingPath()); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := writeDoagentSettings(nil); err != nil {
+		return err
+	}
+	if err := os.Remove(modelProviderRecordPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Remove(modelProviderPendingPath())
+}
+
 func readModelProviderRecord() (modelProviderRecord, bool) {
 	data, err := os.ReadFile(modelProviderRecordPath())
 	if err != nil {
@@ -141,6 +163,11 @@ var modelSettingsKeys = []string{"model", "provider", "model_tiers", "default_mo
 // key copied from a previously mounted Secret) is dropped, so a stale provider
 // is never used. The Gateway delivers the model after the Agent connects.
 func EnsureDoagentBaseSettings() error {
+	modelProviderSettingsMu.Lock()
+	defer modelProviderSettingsMu.Unlock()
+	if err := recoverPendingModelSettings(); err != nil {
+		return errors.New("credential_target_outcome_unknown")
+	}
 	settings := map[string]any{}
 	if _, delivered := readModelProviderRecord(); delivered {
 		if data, err := os.ReadFile(doagentSettingsPath()); err == nil {
@@ -254,13 +281,27 @@ func materializeModelProviderCredential(ctx context.Context, req CredentialMater
 	if payload.ImageModel != "" {
 		model["image_model"] = payload.ImageModel
 	}
-	if err := writeDoagentSettings(model); err != nil {
-		return CredentialMaterialization{}, errors.New("model_settings_write_failed")
+	modelProviderSettingsMu.Lock()
+	defer modelProviderSettingsMu.Unlock()
+	if err := recoverPendingModelSettings(); err != nil {
+		return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 	}
 	record, _ := json.Marshal(modelProviderRecord{
 		CredentialID: req.CredentialID, GrantID: req.GrantID, VersionID: req.VersionID, Digest: digest,
 	})
+	if err := writeFileAtomic0600(modelProviderPendingPath(), record); err != nil {
+		return CredentialMaterialization{}, errors.New("model_settings_write_failed")
+	}
+	if err := writeDoagentSettings(model); err != nil {
+		if removeErr := os.Remove(modelProviderPendingPath()); removeErr != nil {
+			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
+		}
+		return CredentialMaterialization{}, errors.New("model_settings_write_failed")
+	}
 	if err := writeFileAtomic0600(modelProviderRecordPath(), record); err != nil {
+		return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
+	}
+	if err := os.Remove(modelProviderPendingPath()); err != nil {
 		return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 	}
 	result := CredentialMaterialization{
@@ -280,6 +321,11 @@ func materializeModelProviderCredential(ctx context.Context, req CredentialMater
 // does not look for a Kubernetes Secret a model credential never creates. A
 // settings file owned by another grant is left alone.
 func cleanupModelProviderCredential(req CredentialCleanupRequest) (bool, error) {
+	modelProviderSettingsMu.Lock()
+	defer modelProviderSettingsMu.Unlock()
+	if err := recoverPendingModelSettings(); err != nil {
+		return false, errors.New("credential_target_outcome_unknown")
+	}
 	record, delivered := readModelProviderRecord()
 	if !delivered || record.CredentialID != req.CredentialID || record.GrantID != req.GrantID {
 		return false, nil

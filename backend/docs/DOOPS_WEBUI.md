@@ -239,10 +239,10 @@ so it keeps working with an air-gapped Gateway.
   origin，未配置时生产代理接口拒绝请求；除本机 loopback 外，生产 Gateway 必须使用
   HTTPS。
 - 控制台的变更请求（POST/PUT/PATCH/DELETE）要求浏览器 `Origin` 与控制台同源，并拒绝
-  `Sec-Fetch-Site` 为跨站的请求；同一可注册域下的兄弟站点也会被拒绝。默认按 `Host`
-  或 `X-Forwarded-Host` 与 `X-Forwarded-Proto` 推断控制台来源，适用于仓库里的 TLS 反向代理
-  配置。反向代理不传这些头、或控制台有多个对外地址时，设置
-  `DOOPS_CONSOLE_ORIGIN=https://doops.example.com`（多个用英文逗号分隔），设置后只接受这些 origin。
+  `Sec-Fetch-Site` 为跨站的请求。同一可注册域下的兄弟站点也会被拒绝。
+  默认根据 Next.js 接收到的 URL 和 Host 校验来源。TLS 在反向代理终止、公开地址与服务地址不同或有多个公开地址时，
+  设置 `DOOPS_CONSOLE_ORIGIN=https://doops.example.com`（多个用英文逗号分隔）。设置后只接受这些 origin。
+- 模型密钥在凭证管理中录入、验证并启用。配置中心记录模型配置与凭证引用，打开时会清除旧浏览器配置里的 API 密钥字段。
 
 ## Console layout and shared controls
 

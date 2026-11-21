@@ -366,7 +366,7 @@ Git HTTP 的 `init`、`upload-pack`、`receive-pack` 及其 hook 也由请求拥
 handler 返回、取消 ACK 或已经发出的 HTTP 200 作为成功依据。流式响应开始后
 Git 退出失败仍返回 `execution_outcome_unknown`，不会发送成功 EOF。取消仍保留
 未知结果保护，因为 hook 可能已提交部分工作区变更或触发外部操作；本地进程停止
-不等于这些副作用已回滚。
+不等于这些副作用已回滚。HTTP 反代与 Git 隧道在发出最终响应头之前失败时返回 502。发头之后发生转发错误时，Gateway 记录审计终态并中止响应流。
 
 `ask` 链路是 `CLI -> gateway -> doops-agent -> doagent ACP HTTP`。如果 `exec` 成功而 `ask` 失败，优先检查目标 agent 容器内：
 

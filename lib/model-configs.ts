@@ -8,7 +8,7 @@ export const SETTINGS_PATH = "/root/.agent/settings.json"
 export type ConfigKind = "model" | "file"
 
 // 一个可复用的配置项，保存在浏览器本地，可一键应用/发布到任意节点。
-// - kind="model"：大模型配置，按字段合并进节点 settings.json
+// - kind="model"：浏览器中的模型元数据和受管凭证引用
 // - kind="file" ：通用配置文件，把 content 原样写入目标 path
 export interface ModelConfig {
   id: string
@@ -22,7 +22,7 @@ export interface ModelConfig {
   provider?: string
   model?: string
   base_url?: string
-  api_key?: string
+  credentialRef?: string
   temperature?: number
   max_tokens?: number
   models?: string[]
@@ -43,7 +43,6 @@ const SEED: ModelConfig[] = [
     provider: "openai-compatible",
     model: "",
     base_url: "",
-    api_key: "",
     temperature: 0.2,
     max_tokens: 8192,
     models: [],
@@ -78,22 +77,31 @@ export function loadConfigs(): ModelConfig[] {
       return SEED.map((c) => ({ ...c }))
     }
     const parsed = JSON.parse(raw) as ModelConfig[]
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    const clean = parsed.filter((item) => item && typeof item === "object").map(withoutLegacyKey)
+    if (JSON.stringify(clean) !== raw) persist(clean)
+    return clean
   } catch {
     return []
   }
 }
 
+function withoutLegacyKey(config: ModelConfig & { api_key?: string }): ModelConfig {
+  const clean = { ...config }
+  delete clean.api_key
+  return clean
+}
+
 function persist(list: ModelConfig[]) {
   if (typeof window === "undefined") return
-  window.localStorage.setItem(STORE_KEY, JSON.stringify(list))
+  window.localStorage.setItem(STORE_KEY, JSON.stringify(list.map(withoutLegacyKey)))
 }
 
 export function upsertConfig(cfg: ModelConfig): ModelConfig[] {
   const list = loadConfigs()
   const idx = list.findIndex((c) => c.id === cfg.id)
   // 编辑后内容变化视为有未发布改动：保留 published_at，由 UI 通过 updated_at>published_at 判断
-  const next = { ...cfg, updated_at: new Date().toISOString() }
+  const next = { ...withoutLegacyKey(cfg), updated_at: new Date().toISOString() }
   if (idx >= 0) list[idx] = next
   else list.push(next)
   persist(list)
@@ -127,28 +135,6 @@ export function newConfigId(): string {
   return "cfg_" + Math.random().toString(36).slice(2, 10)
 }
 
-async function readRemote(session: Session, target: Target, sessionId: string, path: string): Promise<string> {
-  let buf = ""
-  await callTool(
-    session,
-    {
-      cluster: target.cluster,
-      instance: target.instance,
-      tool: TOOLS.fileRead,
-      arguments: { session_id: sessionId, path },
-    },
-    (ev) => {
-      if (ev.type === "output") buf += ev.data
-      else if (ev.type === "result") {
-        const r = ev.result as any
-        if (typeof r === "string") buf += r
-        else if (Array.isArray(r?.content)) buf += r.content.map((c: any) => c?.text ?? "").join("")
-      }
-    },
-  )
-  return buf
-}
-
 async function writeRemote(session: Session, target: Target, sessionId: string, path: string, content: string) {
   let writeErr: string | null = null
   await callTool(
@@ -167,7 +153,7 @@ async function writeRemote(session: Session, target: Target, sessionId: string, 
 }
 
 // 把配置应用（发布）到节点：
-// - model：读取现有 settings.json，合并模型字段后写回
+// - model：由凭证管理发布，配置中心不写入 settings.json
 // - file ：把 content 原样写入目标 path
 export async function applyConfigToNode(
   session: Session,
@@ -182,25 +168,5 @@ export async function applyConfigToNode(
     return
   }
 
-  // model 类型：合并进现有 settings.json
-  const path = configTargetPath(cfg)
-  let base: Record<string, unknown> = {}
-  const buf = await readRemote(session, target, sessionId, path)
-  try {
-    if (buf.trim()) base = JSON.parse(buf)
-  } catch {
-    base = {}
-  }
-
-  const merged: Record<string, unknown> = { ...base }
-  if (cfg.provider !== undefined) merged.provider = cfg.provider
-  if (cfg.model !== undefined) merged.model = cfg.model
-  if (cfg.base_url !== undefined) merged.base_url = cfg.base_url
-  if (cfg.api_key) merged.api_key = cfg.api_key
-  if (cfg.temperature !== undefined) merged.temperature = cfg.temperature
-  if (cfg.max_tokens !== undefined) merged.max_tokens = cfg.max_tokens
-  if (cfg.models && cfg.models.length) merged.models = cfg.models
-
-  const content = JSON.stringify(merged, null, 2) + "\n"
-  await writeRemote(session, target, sessionId, path, content)
+  throw new Error("请在凭证管理中验证并启用目标的模型凭证。配置中心不会向节点写入模型设置。")
 }

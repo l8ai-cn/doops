@@ -356,6 +356,7 @@ spec:
 		{"evidence image mismatch", manifest, true},
 		{"missing verified commit", manifest, true},
 		{"unverified commit", manifest, true},
+		{"candidate without successful receipt", manifest, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := upgradeProcess{run: func(ctx context.Context, stdin, name string, args ...string) ([]byte, error) {
@@ -375,12 +376,21 @@ spec:
 					if tc.name == "unverified commit" {
 						outcome = "failed"
 					}
+					entry := map[string]string{"image": image, "release_commit": commit, "outcome": outcome}
+					if tc.name == "candidate without successful receipt" {
+						entry["phase"], entry["verification_stage"] = "apply", "controller"
+						entry["upgrade_operation_id"] = "upgrade-review"
+						entry["job"] = selfUpgradeJobName(entry["upgrade_operation_id"], "apply")
+					}
 					evidence, _ := json.Marshal(map[string]interface{}{
 						"schemaVersion": 1, "release": "doops-agent-live", "workload": "doops-agent",
-						"revisions": map[string]interface{}{"7": map[string]string{"image": image, "release_commit": commit, "outcome": outcome}},
+						"revisions": map[string]interface{}{"7": entry},
 					})
 					raw, _ := json.Marshal(map[string]interface{}{"data": map[string]string{"evidence.json": string(evidence)}})
 					return raw, nil
+				}
+				if tc.name == "candidate without successful receipt" && name == "kubectl" && strings.Contains(joined, "doops-upgrade-receipt-") {
+					return nil, nil
 				}
 				if name != "helm" {
 					t.Fatalf("unexpected mutation or command: %s %s", name, joined)

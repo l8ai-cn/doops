@@ -59,7 +59,6 @@ func TestDoSQLTargetMatchesDriverEffectiveDestination(t *testing.T) {
 	t.Setenv("PGDATABASE", "environment_database")
 	for _, tc := range []struct{ engine, scheme, port, query string }{
 		{"postgres", "postgres", "5432", "?sslmode=disable"},
-		{"postgres", "cockroachdb", "5432", "?sslmode=disable"},
 		{"mysql", "mysql", "3306", "?host=ignored.test&port=1234&dbname=ignored"},
 		{"mssql", "sqlserver", "1433", "?encrypt=disable"},
 		{"oracle", "oracle", "1521", ""},

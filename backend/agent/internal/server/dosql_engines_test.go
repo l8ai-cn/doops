@@ -7,7 +7,7 @@ import (
 
 func TestDoSQLSchemesMapToEngines(t *testing.T) {
 	for scheme, want := range map[string]string{
-		"postgres": "postgres", "postgresql": "postgres", "cockroachdb": "postgres",
+		"postgres": "postgres", "postgresql": "postgres",
 		"mysql": "mysql", "mariadb": "mysql", "tidb": "mysql",
 		"oracle": "oracle", "sqlserver": "mssql", "mssql": "mssql", "mongodb": "mongodb",
 	} {

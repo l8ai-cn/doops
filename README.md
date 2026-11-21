@@ -553,7 +553,7 @@ doops -session agent-upgrade upgrade \
 | `DOOPS_CONFIG` | 覆盖 CLI 默认配置文件路径 | 不是 Web 控制台的 Gateway 配置 |
 | `-gateway-url`、`-cluster`、`-instance` | Agent 注册位置和身份 | 裸二进制应显式传参；不要假定 Helm 中的同名环境变量会自动生效 |
 | `DOOPS_AGENT_ENROLL_TOKEN` | 可选的 Agent enrollment token | 优先用环境变量（Helm：`gateway.enrollmentTokenSecret`），不要用 `-enroll-token` 命令行参数。该 target 用它连通过一次之后才强制；迁移与恢复见 [Gateway 隧道](backend/docs/DOOPS_GATEWAY_TUNNEL.md)；不要使用 user token |
-| `DOOPS_CONSOLE_ORIGIN` | 可选，Web 控制台对外的来源，如 `https://doops.example.com` | 控制台的变更请求要求 `Origin` 同源。默认按 `Host`/`X-Forwarded-Host` 与 `X-Forwarded-Proto` 推断；反向代理不传这些头时显式设置 |
+| `DOOPS_CONSOLE_ORIGIN` | 可选，Web 控制台对外的来源，如 `https://doops.example.com` | 控制台的变更请求要求 `Origin` 同源。默认使用应用看到的 URL 与 `Host`。反向代理改变对外来源时，请显式设置 |
 | `-edge`、`-edge-enroll-token` | Edge 公网隧道开关及其 enrollment 凭据 | 默认关闭、生产未上线；与 Agent enrollment token 不是同一份，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
 | `DOOPS_WORKSPACE_ROOT` | Agent 会话工作区根目录 | 默认 `/root/ws`；修改后需调整相关脚本路径 |
 | `DOOPS_GATEWAY_SECRET_KEY` | Gateway 加密凭据的密钥材料 | 启用凭据功能时安全注入、持久保存并备份 |

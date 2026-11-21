@@ -141,6 +141,25 @@ func TestModelProviderProbeFailureLeavesSettingsUntouched(t *testing.T) {
 	}
 }
 
+func TestModelProviderCleanupRecoversInterruptedDelivery(t *testing.T) {
+	path := useModelProviderTestSettings(t, nil)
+	if err := writeDoagentSettings(map[string]any{"model": "test-provider/test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic0600(modelProviderPendingPath(), []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanupModelProviderCredential(CredentialCleanupRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := readTestSettings(t, path)["model"]; found {
+		t.Fatal("an interrupted model delivery survived cleanup")
+	}
+	if _, err := os.Stat(modelProviderPendingPath()); !os.IsNotExist(err) {
+		t.Fatalf("pending marker survived cleanup: %v", err)
+	}
+}
+
 func TestModelProviderUseMismatchIsRejected(t *testing.T) {
 	useModelProviderTestSettings(t, nil)
 	request := modelProviderTestRequest("credver_"+strings.Repeat("c", 24), modelProviderTestPayload(modelProviderCanary))

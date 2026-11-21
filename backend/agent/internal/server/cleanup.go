@@ -75,9 +75,14 @@ func performCleanup(maxAge time.Duration) {
 				log.Printf("🗑️ [GC] Removing expired workspace/repo item: %s (age: %v)",
 					dirPath, age.Round(time.Hour))
 
-				if err := os.RemoveAll(dirPath); err != nil {
-					log.Printf("💥 [GC] Failed to remove %s: %v", dirPath, err)
+				workspaceReplacementMu.Lock()
+				current, err := os.Lstat(dirPath)
+				if err == nil && os.SameFile(info, current) && current.ModTime().Equal(info.ModTime()) {
+					if err := os.RemoveAll(dirPath); err != nil {
+						log.Printf("💥 [GC] Failed to remove %s: %v", dirPath, err)
+					}
 				}
+				workspaceReplacementMu.Unlock()
 			}
 		}
 	}

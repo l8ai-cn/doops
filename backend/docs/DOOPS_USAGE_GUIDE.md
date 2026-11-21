@@ -107,7 +107,7 @@ journal（begin/end + statement 指纹 + committed/verified），用于审计和
 自然语言只读查询使用当前 Agent 可执行文件启动集群查询 Job。宿主机部署可通过 `DOSQL_SCRIPT` 指定同版本 `dosql-agent.mjs`，并通过 `DOSQL_NODE` 指定本机 Node 路径。Job 使用集群内可达的连接地址，原样 SQL 使用 Agent 所在网络可达的连接地址。
 
 已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
-二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、sqlserver、mongodb；MariaDB、TiDB 走 mysql 路径，CockroachDB 走 postgres 路径，由凭据 `connection_uri` 的 scheme 决定。
+二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、sqlserver、mongodb；MariaDB 和 TiDB 根据凭据 `connection_uri` 的 scheme 使用 mysql 路径。
 
 其它数据库可由运维在 Agent 主机放置外置驱动：可执行文件 `dosql-driver-<scheme>`（默认目录 `<工作区根的上级>/.doops-dosql-drivers`，与版本日志同处，Agent 换 Pod 后随 agent-home 保留；可用 `DOOPS_DOSQL_DRIVER_DIR` 覆盖，不得 world-writable）。Agent 每批调用一次，DSN（含密码）只经 stdin 传入，helper 在进程内完成事务、回滚和 dry-run，并把 `doSQLDirectResult` JSON 写到 stdout；版本日志和 evidence 仍由 Agent 写。没有对应文件时返回 `dosql_engine_unsupported`。模板见 `backend/agent/cmd/dosql-driver`，Agent 不自动下载驱动。
 
@@ -136,7 +136,7 @@ doops -session db-schema sql --target <t> --mode query --database orders \
 
 - 不要在 SQL 里写 `BEGIN/COMMIT/ROLLBACK/SAVEPOINT`，事务边界由 DoSql 持有；写了返回
   `dosql_statement_transaction_control_forbidden`。
-- `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
+- `--verify`/`--verify-file` 只能是一条只读语句。直连路径在开始执行前拒绝有变更或文件输出的验证形式，拒绝时返回 `dosql_verification_invalid`。
   查询执行失败返回 `dosql_verification_failed`；返回的行和值须与任务验收条件比较，不会自动
   将非零计数判为失败。`--verify` 与 `--dry-run` 只用于 apply。
 - query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。

@@ -29,6 +29,12 @@ var doSQLTransactionKeywords = map[string]bool{
 // (approval fingerprints) and Agent (execution). Comments are kept verbatim
 // because Oracle optimizer hints live in them.
 func splitDoSQLStatements(engine, text string) ([]string, error) {
+	return scanDoSQLStatements(engine, text, nil)
+}
+
+// code, when supplied, receives only the unquoted SQL outside comments.
+// Keep this in the splitter so read-only checking and execution share lexing rules.
+func scanDoSQLStatements(engine, text string, code *strings.Builder) ([]string, error) {
 	// JavaScript and Go disagree on whether these are whitespace, which would
 	// make the executor's statement fingerprint differ from the signed one.
 	if strings.ContainsAny(text, "\u0085\uFEFF") {
@@ -52,11 +58,15 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 		case char == ';':
 			flush()
 			continue
-		case char == '-' && index+1 < len(runes) && runes[index+1] == '-',
+		case char == '-' && index+1 < len(runes) && runes[index+1] == '-' &&
+			(engine != "mysql" || index+2 == len(runes) || unicode.IsSpace(runes[index+2])),
 			char == '#' && engine == "mysql":
 			end := index
 			for end < len(runes) && runes[end] != '\n' {
 				end++
+			}
+			if code != nil {
+				code.WriteByte(' ')
 			}
 			current.WriteString(string(runes[index:end]))
 			index = end - 1
@@ -71,6 +81,9 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 				return nil, errors.New("dosql_statement_unterminated_comment")
 			}
 			length := len([]rune(string(runes[index+2:])[:end])) + 4
+			if code != nil {
+				code.WriteByte(' ')
+			}
 			current.WriteString(string(runes[index : index+length]))
 			index += length - 1
 			continue
@@ -80,6 +93,9 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 			end := doSQLClosingQuote(runes, index, char, backslash)
 			if end < 0 {
 				return nil, errors.New("dosql_statement_unterminated_quote")
+			}
+			if code != nil {
+				code.WriteByte(' ')
 			}
 			current.WriteString(string(runes[index : end+1]))
 			index = end
@@ -93,6 +109,9 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 					return nil, errors.New("dosql_statement_unterminated_dollar_quote")
 				}
 				length := len([]rune(tag)) + len([]rune(body[:end])) + len([]rune(tag))
+				if code != nil {
+					code.WriteByte(' ')
+				}
 				current.WriteString(string(runes[index : index+length]))
 				index += length - 1
 				hasCode = true
@@ -101,6 +120,9 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 		}
 		if !unicode.IsSpace(char) {
 			hasCode = true
+		}
+		if code != nil {
+			code.WriteRune(char)
 		}
 		current.WriteRune(char)
 	}

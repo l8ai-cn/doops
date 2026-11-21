@@ -72,6 +72,23 @@ func TestRegistryCredentialMaterializationDeliversAuthfile(t *testing.T) {
 	}
 }
 
+func TestRegistryOwnershipWriteFailureRestoresAuthfile(t *testing.T) {
+	path := useRegistryAuthFileFixture(t)
+	server := "registry.example.com"
+	if err := deliverRegistryAuthEntry(server, map[string]string{"username": "original"}, "cred_a", "grant_a", "ver_a"); err != nil {
+		t.Fatal(err)
+	}
+	previous := registryAuthRecordPathOverride
+	registryAuthRecordPathOverride = t.TempDir()
+	t.Cleanup(func() { registryAuthRecordPathOverride = previous })
+	if err := deliverRegistryAuthEntry(server, map[string]string{"username": "replacement"}, "cred_a", "grant_a", "ver_b"); err == nil {
+		t.Fatal("expected ownership persistence failure")
+	}
+	if got := registryAuthFileEntries(t, path)[server]["username"]; got != "original" {
+		t.Fatal("the previous auth entry was not restored")
+	}
+}
+
 // The authfile is shared: a second registry credential adds to it without
 // dropping the first one.
 func TestRegistryAuthfileMergesMultipleRegistries(t *testing.T) {

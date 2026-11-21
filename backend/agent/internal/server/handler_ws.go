@@ -1125,6 +1125,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			result, err := handle(ctx, sessionID, args)
 			if err != nil {
+				if errors.Is(err, errExecutionOutcomeUnknown) {
+					writeJSON(buildErrorResponse(reqID, -32008, sanitizeSecretText(err.Error())))
+					return
+				}
 				if errors.Is(err, errDoSQLReadCanceled) {
 					reply := buildErrorResponse(reqID, -32007, errDoSQLReadCanceled.Error())
 					reply.Error.Data = map[string]string{"sqlstate": "57014", "category": doSQLReadCanceledCategory}

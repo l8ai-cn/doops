@@ -620,6 +620,11 @@ func TestCallAndCaptureRejectsEmptyFinalResult(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no result received") {
 		t.Fatalf("expected empty final result to fail immediately, got %v", err)
 	}
+	stream := newGatewayTestClient(t, ts.URL, "s")
+	stream.CallTimeout = time.Second
+	if err := stream.Call("doops_bg", map[string]interface{}{"command": "sleep 1"}); err == nil || !strings.Contains(err.Error(), "outcome_unknown") {
+		t.Fatalf("streaming call accepted an empty terminal response: %v", err)
+	}
 }
 
 func TestCallStructuredReadsStructuredContentWithoutParsingText(t *testing.T) {

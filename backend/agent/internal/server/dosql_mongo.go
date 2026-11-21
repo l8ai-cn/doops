@@ -109,10 +109,11 @@ func parseMongoOperation(statement string) (mongoOperation, error) {
 		}
 	}
 	for _, raw := range [][]byte{op.Filter, op.Sort, op.Projection, op.Pipeline, op.Document, op.Documents, op.Update, op.Replacement, op.Keys, op.Options, op.PartialFilter} {
-		for _, forbidden := range mongoForbiddenOperators {
-			if bytes.Contains(raw, []byte(`"`+forbidden+`"`)) {
-				return op, fmt.Errorf("dosql_mongo_javascript_forbidden: %s runs server-side JavaScript", forbidden)
-			}
+		if len(raw) == 0 {
+			continue
+		}
+		if err := validateMongoDocumentKeys(raw); err != nil {
+			return op, err
 		}
 	}
 	if op.Limit < 0 {
@@ -269,6 +270,42 @@ func mongoOperationKind(statement string) string {
 		return ""
 	}
 	return mongoOpKinds[op.Op]
+}
+
+// Walk the decoded keys as tokens so duplicate fields cannot hide an earlier value.
+func validateMongoDocumentKeys(raw json.RawMessage) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var visit func() error
+	visit = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, compound := token.(json.Delim)
+		if !compound {
+			return nil
+		}
+		for decoder.More() {
+			if delimiter == '{' {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				for _, forbidden := range mongoForbiddenOperators {
+					if key == forbidden {
+						return fmt.Errorf("dosql_mongo_javascript_forbidden: %s runs server-side JavaScript", forbidden)
+					}
+				}
+			}
+			if err := visit(); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	return visit()
 }
 
 func mongoBSON(raw json.RawMessage) (bson.D, error) {

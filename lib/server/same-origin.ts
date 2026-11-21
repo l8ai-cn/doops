@@ -5,11 +5,8 @@ const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
 // different origin and are rejected.
 //
 // Set DOOPS_CONSOLE_ORIGIN (for example https://doops.example.com) to pin the
-// console origin explicitly. Without it the console accepts the origin the
-// request was addressed to: its Host (or X-Forwarded-Host from the reverse
-// proxy) and its scheme (X-Forwarded-Proto from a TLS-terminating proxy, else
-// the scheme Next.js saw). Browsers cannot set these headers on a cross-site
-// request, so they do not let another site pass the check.
+// console origin explicitly when the proxy or public URL differs from Next.js.
+// Without this setting, only the URL and Host seen by Next.js are used.
 export function rejectCrossOriginMutation(req: Request): Response | null {
   if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return null
   const origin = (req.headers.get("origin") || "").trim()
@@ -43,11 +40,9 @@ function consoleOrigins(req: Request): Set<string> {
     url = null
   }
   const schemes = new Set<string>()
-  const forwardedProto = firstHeaderValue(req, "x-forwarded-proto").toLowerCase()
-  if (forwardedProto === "http" || forwardedProto === "https") schemes.add(forwardedProto)
   if (url) schemes.add(url.protocol.replace(/:$/, ""))
   const hosts = new Set<string>()
-  for (const host of [firstHeaderValue(req, "x-forwarded-host"), firstHeaderValue(req, "host"), url?.host || ""]) {
+  for (const host of [(req.headers.get("host") || "").trim(), url?.host || ""]) {
     if (host) hosts.add(host.toLowerCase())
   }
   for (const scheme of schemes) {
@@ -60,8 +55,4 @@ function consoleOrigins(req: Request): Set<string> {
     }
   }
   return allowed
-}
-
-function firstHeaderValue(req: Request, name: string): string {
-  return (req.headers.get(name) || "").split(",")[0].trim()
 }

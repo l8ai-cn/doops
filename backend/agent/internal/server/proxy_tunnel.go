@@ -127,7 +127,8 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	bytesOut, relayErr := agent.relayProxyHTTPRequest(opCtx, w, r, proxyHTTPRequestParams{
+	response := &tunnelResponseWriter{ResponseWriter: w}
+	bytesOut, relayErr := agent.relayProxyHTTPRequest(opCtx, response, r, proxyHTTPRequestParams{
 		Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery,
 		Header: cloneProxyHeader(r.Header), ContentLength: r.ContentLength, Upstream: route.Upstream,
 	}, h.opts.OperationTimeout)
@@ -140,7 +141,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(relayErr, errExecutionOutcomeUnknown) {
 			status, errorText = "outcome_unknown", errExecutionOutcomeUnknown.Error()
 		}
-		if bytesOut == 0 {
+		if !response.committed {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
 	}
@@ -148,6 +149,32 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		Status: status, Error: errorText, BytesIn: r.ContentLength, BytesOut: bytesOut,
 		EndedAt: time.Now().UTC(),
 	})
+	if relayErr != nil && response.committed {
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// A failed HTTP stream can only change its status before the final header.
+type tunnelResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *tunnelResponseWriter) WriteHeader(status int) {
+	if status >= 200 || status == http.StatusSwitchingProtocols {
+		w.committed = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *tunnelResponseWriter) Write(data []byte) (int, error) {
+	w.committed = true
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *tunnelResponseWriter) Flush() {
+	w.committed = true
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 
 func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params proxyHTTPRequestParams, timeout time.Duration) (bytesOut int64, finalErr error) {

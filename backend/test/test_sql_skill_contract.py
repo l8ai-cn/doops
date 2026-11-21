@@ -72,7 +72,7 @@ def cli(tmp_path_factory):
 
 def assert_cli_accepts(cli, words):
     binary, sql_file, config = cli
-    args = [re.sub(r"<[^>]+>", "contract", word) for word in words[1:]]
+    args = [re.sub(r"<[^>]+>", "contract", word.replace("<n>", "2")) for word in words[1:]]
     for flag in ("--file", "--verify-file"):
         if flag in args:
             args[args.index(flag) + 1] = str(sql_file)
@@ -90,6 +90,18 @@ def assert_cli_accepts(cli, words):
 
 @pytest.mark.parametrize("path,words", list(documented_commands()))
 def test_documented_sql_combinations_pass_cli_validation(cli, path, words):
+    assert_cli_accepts(cli, words)
+
+
+def operator_examples():
+    text = (ROOT / "backend/skills/SKILL.md").read_text()
+    for example in re.findall(r"`(doops[^`\n]+)`", text):
+        if re.search(r"\b(?:ssh|k8s|credential configure) --target\b", example):
+            yield from command_variants(example.replace("<user@host>", "review@example.test"))
+
+
+@pytest.mark.parametrize("words", list(operator_examples()))
+def test_operator_examples_pass_cli_validation(cli, words):
     assert_cli_accepts(cli, words)
 
 

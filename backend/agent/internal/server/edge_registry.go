@@ -86,6 +86,11 @@ func (r *EdgeRegistry) Pick(cluster, instance string) *edgeGatewaySession {
 	list := r.sessions[tunnelKey(cluster, instance)]
 	var best *edgeGatewaySession
 	for _, session := range list {
+		select {
+		case <-session.ws.closed:
+			continue
+		default:
+		}
 		if best == nil || session.ws.sched.BudgetUsed() < best.ws.sched.BudgetUsed() {
 			best = session
 		}
@@ -316,12 +321,19 @@ func pipeEdgeTCP(ctx context.Context, ws *edgeWSSession, id uint32, conn net.Con
 func (r *EdgeRegistry) register(session *edgeGatewaySession) error {
 	r.mu.Lock()
 	key := tunnelKey(session.cluster, session.instance)
-	r.generations[key]++
-	session.generation = r.generations[key]
-	r.sessions[key] = append(r.sessions[key], session)
+	defer r.mu.Unlock()
 	count := len(r.sessions[key])
-	r.mu.Unlock()
-	return r.store.MarkEdgeAgentOnline(session.cluster, session.instance, session.remote, count, session.generation)
+	if count >= defaultEdgeMaxSessionsPerTarget {
+		return errors.New("too many edge sessions")
+	}
+	generation := r.generations[key] + 1
+	if err := r.store.MarkEdgeAgentOnline(session.cluster, session.instance, session.remote, count+1, generation); err != nil {
+		return err
+	}
+	r.generations[key] = generation
+	session.generation = generation
+	r.sessions[key] = append(r.sessions[key], session)
+	return nil
 }
 
 func (r *EdgeRegistry) unregister(session *edgeGatewaySession) {
@@ -341,9 +353,13 @@ func (r *EdgeRegistry) unregister(session *edgeGatewaySession) {
 	} else {
 		r.sessions[key] = filtered
 	}
-	count := len(r.sessions[key])
+	if len(filtered) == 0 {
+		_ = r.store.MarkEdgeAgentOffline(session.cluster, session.instance, 0)
+	} else {
+		latest := filtered[len(filtered)-1]
+		_ = r.store.MarkEdgeAgentOnline(latest.cluster, latest.instance, latest.remote, len(filtered), latest.generation)
+	}
 	r.mu.Unlock()
-	_ = r.store.MarkEdgeAgentOffline(session.cluster, session.instance, count)
 }
 
 func closeWrite(conn net.Conn) {

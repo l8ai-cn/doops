@@ -217,7 +217,7 @@ CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失�
 `doops-upgrade-receipt-<operation-hash>-<phase>` 在 Job 回收后仍可用于核验，观察结果进入
 Gateway 的持久审计。缺失或冲突的回执不能作为成功证据。
 手动回滚使用当前 Agent 的控制器镜像执行验证，恢复历史已验证的镜像与 commit；不运行
-旧版本镜像里的验证逻辑。无历史 commit 回执时拒绝回滚，须按受审计的恢复方案处理。
+旧版本镜像里的验证逻辑。apply 候选修订必须同时具有与其身份匹配的成功操作回执，才能参与回滚选择。无充分历史回执时拒绝回滚，须按受审计的恢复方案处理。
 收编备份改为带操作编号的不可变 Secret，保留完整 Deployment 供恢复，不在 ConfigMap
 或日志内长期保存其明文环境变量。Secret 的保密性仍取决于集群 RBAC 和静态加密配置。
 

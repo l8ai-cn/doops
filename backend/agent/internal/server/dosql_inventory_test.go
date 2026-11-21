@@ -56,7 +56,7 @@ func TestDatabaseInventoryGroupsOnlyVerifiedStatefulSetMembers(t *testing.T) {
 
 func TestDatabaseDiscoveryRecognizesSupportedImagesAndJDBCNames(t *testing.T) {
 	for _, tc := range []struct{ image, jdbc, engine, database string }{
-		{"cockroachdb/cockroach:v24", "jdbc:postgresql://orders:26257/sales", "postgres", "sales"},
+		{"postgres:16", "jdbc:postgresql://orders:5432/sales", "postgres", "sales"},
 		{"mysql:8", "jdbc:mysql://orders:3306/sales?useSSL=true", "mysql", "sales"},
 		{"gvenzl/oracle-free:23", "", "oracle", ""},
 		{"container-registry.oracle.com/database/enterprise:19", "", "oracle", ""},

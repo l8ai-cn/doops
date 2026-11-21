@@ -22,6 +22,7 @@ import (
 )
 
 var uploadLocks sync.Map
+var workspaceReplacementMu sync.Mutex
 
 type workspaceBeginParams struct {
 	SessionID string `json:"session_id"`
@@ -138,10 +139,31 @@ func handleFileWrite(argBytes json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	root, err := openWorkspaceFileRoot(args.SessionID, true)
+	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil {
+	defer root.Close()
+	name, err := filepath.Rel(root.Name(), path)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(name)
+	if parent != "." {
+		current := ""
+		for _, component := range strings.Split(parent, string(os.PathSeparator)) {
+			current = filepath.Join(current, component)
+			if err := root.Mkdir(current, 0755); err != nil && !os.IsExist(err) {
+				return "", err
+			}
+		}
+	}
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := io.WriteString(file, args.Content)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Wrote %d bytes to %s", len(args.Content), path), nil
@@ -159,24 +181,68 @@ func handleFileRead(argBytes json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(path)
+	root, err := openWorkspaceFileRoot(args.SessionID, false)
 	if err != nil {
 		return "", err
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("doops read is for small text files only: %s is a directory", path)
+	defer root.Close()
+	name, err := filepath.Rel(root.Name(), path)
+	if err != nil {
+		return "", err
+	}
+	info, err := root.Stat(name)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("doops read is for regular text files only: %s", path)
 	}
 	if info.Size() > maxFileReadBytes() {
 		return "", fmt.Errorf("doops read is for viewing small text files only; file size %d exceeds limit %d", info.Size(), maxFileReadBytes())
 	}
-	data, err := os.ReadFile(path)
+	file, err := root.Open(name)
 	if err != nil {
 		return "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxFileReadBytes()+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > maxFileReadBytes() {
+		return "", errors.New("doops read exceeded file size limit")
 	}
 	if !looksLikeText(data) {
 		return "", fmt.Errorf("doops read is for viewing small text files only; %s looks like binary data", path)
 	}
 	return string(data), nil
+}
+
+func openWorkspaceFileRoot(sessionID string, create bool) (*os.Root, error) {
+	base := workspaceRoot()
+	if create {
+		if err := os.MkdirAll(base, 0755); err != nil {
+			return nil, err
+		}
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if create {
+		if err := root.Mkdir(sessionID, 0755); err != nil && !os.IsExist(err) {
+			return nil, err
+		}
+	}
+	info, err := root.Lstat(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("workspace session root must be a directory")
+	}
+	return root.OpenRoot(sessionID)
 }
 
 func resolveWorkspaceFilePath(sessionID, rawPath string) (string, error) {
@@ -639,6 +705,8 @@ func handleCleanWorkspace(argBytes json.RawMessage) (string, error) {
 	}
 	wsPath := filepath.Join(workspaceRoot(), workspace)
 	repoPath := filepath.Join("/tmp/repos", workspace+".git")
+	workspaceReplacementMu.Lock()
+	defer workspaceReplacementMu.Unlock()
 	if err := os.RemoveAll(wsPath); err != nil {
 		return "", err
 	}
@@ -841,18 +909,36 @@ func handleWorkspaceCommit(argBytes json.RawMessage) (string, error) {
 	if err := os.Rename(tmp, ready); err != nil {
 		return "", err
 	}
-	if err := os.RemoveAll(dest); err != nil {
+	if err := replaceWorkspace(tmpDest, dest); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmpDest, dest); err != nil {
-		return "", err
-	}
-	tmpDest = ""
 	if err := cleanupUpload(args.UploadID); err != nil {
 		return "", err
 	}
 	cleanupOnFailure = false
 	return fmt.Sprintf("workspace ready: %s", dest), nil
+}
+
+func replaceWorkspace(tmpDest, dest string) error {
+	workspaceReplacementMu.Lock()
+	defer workspaceReplacementMu.Unlock()
+	if info, err := os.Lstat(dest); os.IsNotExist(err) {
+		if err := os.Rename(tmpDest, dest); err != nil {
+			return err
+		}
+	} else {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return errors.New("workspace destination is not a directory")
+		}
+		// The old tree moves to tmpDest in the same atomic operation.
+		if err := exchangeWorkspaceDirectories(tmpDest, dest); err != nil {
+			return fmt.Errorf("atomic workspace replacement: %w", err)
+		}
+	}
+	return nil
 }
 
 func extractTarGz(archivePath, dest string, maxBytes int64) error {

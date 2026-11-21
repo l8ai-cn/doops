@@ -9,7 +9,7 @@ import (
 // SQL rules DoSql applies. Databases that speak another engine's wire protocol
 // share that engine's code path instead of getting a second implementation.
 var doSQLSchemeEngine = map[string]string{
-	"postgres": "postgres", "postgresql": "postgres", "cockroachdb": "postgres", "cockroach": "postgres",
+	"postgres": "postgres", "postgresql": "postgres",
 	"mysql": "mysql", "mariadb": "mysql", "tidb": "mysql",
 	"oracle":    "oracle",
 	"sqlserver": "mssql", "mssql": "mssql",

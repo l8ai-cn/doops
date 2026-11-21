@@ -57,7 +57,7 @@ doops credential list --target <target> --view managed
 active target binding 的 staged version 执行验证时，页面提交 target/use 和物化 namespace；
 workload、image、Helm 或 required keys 只在本次执行确实需要时作为可选元数据传入，不作为
 Gateway 授权条件。Promote 请求仍由 Gateway 检查所有 active target binding 的验证状态；
-grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
+重新授予已吊销的 grant 或修改影响物化的绑定元数据后，需要重新验证 staged 版本。grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
 
 target 视图只读取 target 接口，不并行请求 managed 列表或 versions；管理接口的权限状态
 不能清空成功返回的目标凭据。该视图仅展示可用凭据与目标绑定，管理操作在 `我管理的`
@@ -419,7 +419,7 @@ doops -session db-setup credential configure \
   例如 Test MySQL 将 `EXAM_MYSQL_JDBC_URL`、`EXAM_MYSQL_USERNAME`、`EXAM_MYSQL_PASSWORD`
   映射为 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`。
 - URI scheme 支持 postgres/postgresql、mysql、oracle、sqlserver/mssql、mongodb，以及按同协议处理的
-  mariadb、tidb（MySQL 协议）和 cockroachdb（Postgres 协议），必须含用户名、host 和数据库路径，不允许密码、
+  mariadb、tidb（MySQL 协议）。URI 必须含用户名、host 和数据库路径，不允许密码、
   query 或 fragment；`--password-key` 必须是唯一选中的 key，输出 payload 只有 `connection_uri`。
   需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
 - 不带 `--from-secret` 时只读 stdin，格式与 `credential put` 相同；Secret 模式不读 stdin。

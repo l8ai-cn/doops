@@ -20,6 +20,8 @@ case "$1" in
 history)
   if [ -n "$HISTORY_FAIL" ]; then exit 1; fi
   cat "$ROOT/history.json"; exit 0;;
+status)
+  printf '%s\n' '{"version":7,"info":{"status":"deployed","description":"Rollback to 5"}}'; exit 0;;
 rollback)
   printf '%s\n' "$@" > "$ROOT/rollback-args"
   if [ -n "$ROLLBACK_FAIL" ]; then printf 'Error: %s\n' "$ROLLBACK_FAIL" >&2; exit 1; fi
@@ -85,7 +87,7 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			name:         "pending revision is rolled back to the last deployed one",
 			history:      history(entry("5", "deployed", "old"), entry("6", "pending-upgrade", mine)),
 			want:         "revision 6 stayed pending-upgrade, so the release was rolled back to revision 5",
-			wantRollback: "rollback\napp\n5\n--namespace\napps\n",
+			wantRollback: "rollback\napp\n5\n--namespace\napps\n--wait\n",
 		},
 		{
 			name:    "pending install with nothing to roll back to",
@@ -98,7 +100,7 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			rollbackFail: "release locked by synthetic test",
 			want:         "the rollback to revision 5 failed: release locked by synthetic test",
 			wantErr:      true,
-			wantRollback: "rollback\napp\n5\n--namespace\napps\n",
+			wantRollback: "rollback\napp\n5\n--namespace\napps\n--wait\n",
 		},
 		{
 			name:    "other terminal state is left alone",
@@ -244,6 +246,8 @@ func TestHelmWaitTimeoutLeavesNoPendingRevision(t *testing.T) {
 case "$1" in
 history)
   cat "$ROOT/history.json"; exit 0;;
+status)
+  printf '%s\n' '{"version":7,"info":{"status":"deployed","description":"Rollback to 5"}}'; exit 0;;
 rollback)
   printf '%s\n' "$@" > "$ROOT/rollback-args"; exit 0;;
 esac

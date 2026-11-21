@@ -68,10 +68,10 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 发布身份 | `doops -session <s> version`（release tag 与提交；无 `--version`）；`doops -contract` 输出机器可读契约版本 |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'`（包括目标授权范围内已确定的原生 `kubectl` 和 `helm` 命令） |
 | 节点资源 | `doops -session <s> info --target <t>`（CPU/内存/磁盘） |
-| 本地历史 | `doops history`（本机操作历史，password/token 等已脱敏） |
+| 本地历史 | `doops history`（本机操作历史，不含 ask 或 exec 正文） |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
-| 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
+| 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd>`（命令后可追加参数） |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '只读检查 <对象与问题>，禁止变更；返回证据与结论'` |
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |
 | DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|discover [--database <name>] --request '<req>'` |
@@ -85,12 +85,12 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
 | 上传 / 下载 COS 快照 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
 | 拉取远端工作区当前文件 | `doops -session <existing-session> pull --storage gateway --target <t> --dest <new-download-dir>` |
-| OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...` |
-| 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
+| OCI 镜像 | `doops image -h` 和 `doops registry sync -h` 提供构建、复制和同步参数。 |
+| 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id>`（默认从 stdin 读取版本输入） |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
-| 用户与授权 | `doops -session <s> admin user create\|list\|password\|disable --target <t> ...`；`doops -session <s> admin grant list\|add\|delete --target <t> ...` |
-| 网站代理路由 | `doops -session <s> admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
-| token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（普通 ask 不提供） |
+| 用户与授权 | `doops -session <s> admin user list --target <t>`。创建、改密、停用及目标授权见 [CLI 使用指南](docs/DOOPS_USAGE_GUIDE.md)。 |
+| 网站代理路由 | `doops -session <s> admin proxy list --target <t>`（更新使用 `set --id`，只改传入字段）。 |
+| token | `doops -session <s> admin token list --target <t>`（普通 ask 不提供）。 |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览参数，不校验活体 release、挂载或权限）；`--rollback` 恢复上一已验证 revision。旧 Agent 无 `upgradeAudit v1` 时失败（`upgrade_audit_unsupported`），首升须经 Gateway exec 提交独立 Job，见 `docs/BUILD_DEPLOY_SOP.md` |
 | Gateway 交互登录 | `doops login --gateway <gateway-url>`（密码由终端隐藏输入） |
 | CI 导入已有 Gateway user token | `printf '%s' "$DOOPS_GATEWAY_TOKEN" \| doops login --gateway <gateway-url> --token-stdin` |

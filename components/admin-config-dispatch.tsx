@@ -26,8 +26,6 @@ import {
   TrashIcon,
   SaveIcon,
   RefreshIcon,
-  EyeIcon,
-  EyeOffIcon,
   ServerIcon,
   CheckIcon,
   KeyIcon,
@@ -50,7 +48,6 @@ const EMPTY_MODEL: ModelConfig = {
   provider: "openai-compatible",
   model: "",
   base_url: "",
-  api_key: "",
   temperature: 0.2,
   max_tokens: 8192,
   models: [],
@@ -70,7 +67,6 @@ const EMPTY_FILE: ModelConfig = {
 export function AdminConfigDispatch({ session }: { session: Session }) {
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [editing, setEditing] = useState<ModelConfig | null>(null)
-  const [showKey, setShowKey] = useState(false)
 
   const [instances, setInstances] = useState<AdminInstance[]>([])
   const [loadingInst, setLoadingInst] = useState(false)
@@ -104,13 +100,11 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
   function startNew(kind: ConfigKind) {
     const base = kind === "file" ? EMPTY_FILE : EMPTY_MODEL
     setEditing({ ...base, id: newConfigId() })
-    setShowKey(false)
     setFormError("")
   }
 
   function startEdit(cfg: ModelConfig) {
     setEditing({ ...cfg, models: cfg.models ? [...cfg.models] : [] })
-    setShowKey(false)
     setFormError("")
   }
 
@@ -237,8 +231,6 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           {editing ? (
             <ConfigEditor
               cfg={editing}
-              showKey={showKey}
-              onToggleKey={() => setShowKey((v) => !v)}
               formError={formError}
               onChange={(next) => {
                 setFormError("")
@@ -347,7 +339,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 
             >
               <option value="">选择一个配置…</option>
-              {configs.map((c) => (
+              {configs.filter((c) => configKind(c) === "file").map((c) => (
                 <option key={c.id} value={c.id}>
                   {configKind(c) === "file" ? "[文件] " : "[模型] "}
                   {c.name}
@@ -465,17 +457,13 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 
 function ConfigEditor({
   cfg,
-  showKey,
   formError,
-  onToggleKey,
   onChange,
   onSave,
   onCancel,
 }: {
   cfg: ModelConfig
-  showKey: boolean
   formError: string
-  onToggleKey: () => void
   onChange: (c: ModelConfig) => void
   onSave: () => void
   onCancel: () => void
@@ -563,23 +551,12 @@ function ConfigEditor({
               placeholder="https://<endpoint>/v1"
             />
           </Row>
-          <Row label="API 密钥">
-            <div className="flex items-center gap-1.5">
-              <Input
-                className="w-full font-mono"
-                type={showKey ? "text" : "password"}
-                value={cfg.api_key ?? ""}
-                onChange={(e) => set({ api_key: e.target.value })}
-                placeholder="sk-..."
-              />
-              <button
-                onClick={onToggleKey}
-                className="shrink-0 rounded-md border p-2 text-muted-foreground transition-colors hover:bg-muted"
-                aria-label={showKey ? "隐藏密钥" : "显示密钥"}
-              >
-                {showKey ? <EyeOffIcon width={15} height={15} /> : <EyeIcon width={15} height={15} />}
-              </button>
-            </div>
+          <Row label="模型凭证">
+            <Input
+              value={cfg.credentialRef ?? ""}
+              onChange={(e) => set({ credentialRef: e.target.value })}
+              placeholder="在凭证管理中绑定和启用"
+            />
           </Row>
           <div className="grid grid-cols-2 gap-3">
             <Row label="Temperature">

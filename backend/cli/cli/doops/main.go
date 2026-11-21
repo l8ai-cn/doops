@@ -63,7 +63,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   registry    通用 OCI 镜像 registry sync（DoOps 目标机执行）
   version     查看 DoOps 发布身份（release tag 和精确提交）
   guide       按场景打印有序命令（onboard/diagnose/release/credential/...）
-  history     查看本地操作历史；password/token 等字段已脱敏
+  history     查看本地操作历史，不含 ask 或 exec 正文
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        下载已上传的 COS 快照；--storage gateway 获取远端当前工作区
@@ -537,7 +537,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
-			RecordHistory(server.Name, *sessionName, "bg "+cmdStr)
+			RecordHistory(server.Name, *sessionName, "exec --bg")
 			break
 		}
 
@@ -624,16 +624,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		// Log History
-		cmdLog := toolName
-		if toolName == "doops_shell" {
-			cmdLog = cmdStr
-		} else if toolName == "doops_agent_prompt" {
-			cmdLog = msgStr
-		} else if toolName == "doops_file_write" || toolName == "doops_file_read" {
-			cmdLog = fmt.Sprintf("%s %s", toolName, path)
-		}
-		RecordHistory(server.Name, *sessionName, cmdLog)
+		RecordHistory(server.Name, *sessionName, command)
 
 	case "guide":
 		if err := runGuide(cmdArgs, os.Stdout); err != nil {

@@ -133,7 +133,18 @@ func TestProxyUpstreamOutcomeClassification(t *testing.T) {
 			req := httptest.NewRequest(test.method, gatewayServer.URL+"/operation", strings.NewReader("payload"))
 			req.Host = "outcome.example.test"
 			recorder := httptest.NewRecorder()
-			hub.HandlePublicProxy(recorder, req)
+			var abort any
+			func() {
+				defer func() { abort = recover() }()
+				hub.HandlePublicProxy(recorder, req)
+			}()
+			if test.mode == "truncated" {
+				if abort != http.ErrAbortHandler {
+					t.Fatalf("incomplete response did not abort: %v", abort)
+				}
+			} else if abort != nil {
+				panic(abort)
+			}
 			if recorder.Code != test.status {
 				t.Fatalf("HTTP status=%d, want %d: %s", recorder.Code, test.status, recorder.Body.String())
 			}
@@ -188,8 +199,13 @@ func TestProxyDownstreamWriteFailureUsesCancelOutcome(t *testing.T) {
 				writer := &failingProxyResponseWriter{failed: make(chan struct{}), resume: resumeWrite}
 				result := make(chan struct{})
 				go func() {
+					defer close(result)
+					defer func() {
+						if abort := recover(); abort != http.ErrAbortHandler {
+							t.Errorf("expected HTTP abort after downstream write failure, got %v", abort)
+						}
+					}()
 					hub.HandlePublicProxy(writer, request)
-					close(result)
 				}()
 
 				select {

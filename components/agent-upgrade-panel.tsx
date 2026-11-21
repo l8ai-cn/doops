@@ -88,7 +88,10 @@ function UpgradePanel({ session, target, sessionId }: Props) {
       // Persist the operation identity before any request can create a Job.
       sessionStorage.setItem(upgradeStorageKey(session, target), JSON.stringify(next))
       setStorageError("")
-      await runAgentUpgrade(session, target, next, ac.signal, value => { latest = value; save(value) }, resume)
+      await runAgentUpgrade(session, target, next, ac.signal, value => { latest = value; save(value) }, resume, pending => {
+        ac.signal.throwIfAborted()
+        sessionStorage.setItem(upgradeStorageKey(session, target), JSON.stringify(pending))
+      })
     } catch (err) {
       if (mounted.current) setError(latest.error || (err instanceof Error && err.name === "AbortError" ? "已停止观察，集群 Job 可能继续执行" : err instanceof Error ? err.message : "升级请求失败"))
     } finally {
@@ -124,7 +127,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
     void execute(next)
   }
 
-  const canResume = Boolean(operation?.job && operation?.namespace && ["running", "paused", "audit_failed", "outcome_unknown"].includes(operation.status))
+  const canResume = Boolean(operation?.job && ["running", "paused", "audit_failed", "outcome_unknown"].includes(operation.status))
   const unresolved = Boolean(operation && (["running", "paused", "outcome_unknown"].includes(operation.status) ||
     (operation.status === "audit_failed" && operation.job && !operation.verificationComplete)))
   const offline = target.status === "offline"

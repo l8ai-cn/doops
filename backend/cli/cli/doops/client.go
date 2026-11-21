@@ -744,11 +744,15 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 			// Handle final result
 			if id, ok := msg["id"].(float64); ok && int64(id) == reqID {
 				if result, ok := msg["result"].(map[string]interface{}); ok {
-					contentList, _ := result["content"].([]interface{})
+					contentList, hasContent := result["content"].([]interface{})
+					_, hasStructured := result["structuredContent"].(map[string]interface{})
+					if !hasContent && !hasStructured && !toolResultIsError(result) {
+						return executionOutcomeUnknownError()
+					}
 					for _, item := range contentList {
-						m := item.(map[string]interface{})
-						if m["type"] == "text" {
-							text := m["text"].(string)
+						m, ok := item.(map[string]interface{})
+						text, textOK := m["text"].(string)
+						if ok && m["type"] == "text" && textOK {
 							if printFinalResult(toolName, streamedAny, streamedAnswer) {
 								if !endsWithNewline {
 									fmt.Println()
@@ -778,8 +782,10 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 					code, _ := rpcErr["code"].(float64)
 					data, _ := rpcErr["data"].(map[string]interface{})
 					return &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"]), Data: data}
+				} else {
+					return executionOutcomeUnknownError()
 				}
-				return nil // 收到最终结果，完成
+				return nil
 			}
 		case <-timeout.C:
 			if timedOut {

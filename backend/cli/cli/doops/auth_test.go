@@ -91,8 +91,8 @@ func TestDoopsStatePathsUseCanonicalAgentSkillDirectory(t *testing.T) {
 	if got := defaultSessionStorePath(); got != filepath.Join(stateDir, "sessions.json") {
 		t.Fatalf("session path mismatch\nwant: %s\n got: %s", filepath.Join(stateDir, "sessions.json"), got)
 	}
-	if got := historyLogPath(); got != filepath.Join(stateDir, "history.jsonl") {
-		t.Fatalf("history path mismatch\nwant: %s\n got: %s", filepath.Join(stateDir, "history.jsonl"), got)
+	if got := historyLogPath(); got != filepath.Join(stateDir, "history-v2.jsonl") {
+		t.Fatalf("history path mismatch\nwant: %s\n got: %s", filepath.Join(stateDir, "history-v2.jsonl"), got)
 	}
 }
 

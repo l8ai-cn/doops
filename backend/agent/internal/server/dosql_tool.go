@@ -436,7 +436,7 @@ func detectDatabaseEngine(item map[string]interface{}) string {
 	switch {
 	case strings.Contains(value, "mongodb") || strings.Contains(value, "mongo"):
 		return "mongodb"
-	case strings.Contains(value, "postgres") || strings.Contains(value, "cockroachdb") || strings.Contains(value, "cockroach:"):
+	case strings.Contains(value, "postgres"):
 		return "postgres"
 	case strings.Contains(value, "mysql") || strings.Contains(value, "mariadb") || strings.Contains(value, "tidb"):
 		return "mysql"
