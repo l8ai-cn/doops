@@ -1,6 +1,6 @@
 # DoOps 整改交付记录
 
-基线为 `v0.3.16`。发布版本为 `v0.3.19`，提交为 `0c1fdbed451c5554e37d0066d538a1b585e5969e`。下表按当前可核对的代码行为列项。
+基线为 `v0.3.16`。初次交付为 `v0.3.19`。Helm 中断观测补丁随 `v0.3.20` 发布，提交为 `5b36d1aa9cbda9f11b822060b770bc82cd85e3d8`。下表按当前可核对的代码行为列项。
 
 | 检查项 | 当前行为 | 证据 | 状态 |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@
 | MongoDB 文档校验 | 在解码后区分键和字面值 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | DoSQL 部分提交 | 结果未知时保留已知的部分提交证据 | [handler_ws.go](../../agent/internal/server/handler_ws.go) | 已发布，Agent CI 通过 |
 | Helm 补偿回滚 | 等待回滚并回读 live release 状态 | [helm_interrupt_test.go](../../agent/internal/server/helm_interrupt_test.go) | 已发布 |
-| Helm 原生回滚和卸载中断 | 保留结果未知，补充有界的只读状态观测 | [Helm 中断测试](../../agent/internal/server/helm_interrupt_test.go) | 未发布，定向回归通过 |
+| Helm 原生回滚和卸载中断 | 保留结果未知，补充有界的只读状态观测 | [Helm 中断测试](../../agent/internal/server/helm_interrupt_test.go) | 已随 v0.3.20 发布，macOS 和 Linux 非 root 定向通过 |
 | Agent 回滚候选 | 要求匹配的成功持久化回执 | [self_upgrade_test.go](../../agent/internal/server/self_upgrade_test.go) | 已发布 |
 | Edge 会话注册 | 落盘后发布，锁内复查容量并保留其他活动连接 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | Edge ID 重用原判 | 分配器递增并隔离已释放 ID | [edge_registry.go](../../agent/internal/server/edge_registry.go) | 原问题撤回 |
@@ -30,5 +30,7 @@
 | DoWeb 安装挂载 | 将自定义目录作为完整挂载参数传递 | [DoWeb 脚本](../../agent/skills/doweb/scripts/doweb.mjs) | 已发布 |
 
 [主分支 CI](https://github.com/symansun/doops/actions/runs/44874825409) 和 [发布验证](https://github.com/symansun/doops/actions/runs/44874825429) 已通过。隔离容器通过官方安装器下载并校验 CLI 和 Skill，安装回执与 CLI 版本确认同一提交。[正式发布](https://github.com/symansun/doops/releases/tag/v0.3.19)
+
+`v0.3.20` 的主分支 CI 和发布验证均通过，隔离 Linux 容器通过正式安装器校验 CLI 和 Skill 的提交身份。该标签的本地合同测试通过 484 项及 8 个子测试。[CI](https://github.com/symansun/doops/actions/runs/44878405583) · [发布验证](https://github.com/symansun/doops/actions/runs/44878405915) · [发布资产](https://github.com/symansun/doops/releases/tag/v0.3.20)
 
 本地浏览器使用合成账号覆盖登录、会话恢复、目标空列表、平台管理导航和凭证接口允许及拒绝响应。随后在本地合成 Gateway 中验证了凭据列表从加载到显示、表单提交暂存版本且页面未回显载荷，以及 Gateway 停止后接口返回 502、页面显示会话恢复错误。线上 T2 验收仍需确定 Gateway、Agent、Web 环境，核对不可变部署身份，并验证线上合成凭证的创建、列表隔离、持久化、验证、提升及撤销。[交付规程](../../../AGENTS.md)
