@@ -37,4 +37,13 @@
 
 使用 `v0.3.20` 同提交构建的本机 Gateway 与 Agent，在隔离 Kubernetes 集群上通过 HTTP 验证合成凭证创建、暂存、绑定、用户列表隔离、Gateway 重启后持久化、验证、提升及撤销。验证后临时 Secret 已清理，提升后读到一个 Secret，撤销后 Secret 数量恢复为零。HTTP 响应与运行日志未回显合成值。正式 Gateway 和 CLI 资产的 SHA-256 另已校验。
 
-实际服务的 T2 验收仍需获得部署范围，核对 Gateway、Agent、Web 的不可变产物身份，并在该环境重复合成凭证生命周期。[交付规程](../../../AGENTS.md)
+## 实际服务验收
+
+只读回读确认，`gw-test` 在线，Agent 报告的提交为 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`。部署与合成凭证验收待确认环境范围，测试目标与其他实例共用 Gateway。
+
+| 验收项 | 需记录的证据 |
+| --- | --- |
+| Gateway | 发布资产 SHA-256、运行中进程的可执行文件 SHA-256、发布提交及目标重连结果。见 [Gateway 发布规程](../BUILD_DEPLOY_SOP.md#一-gateway-发布边界)。 |
+| Agent | 测试目标、候选镜像 digest、实际 Pod imageID、Ready 状态、Gateway 回读的 release_commit。见 [Agent 发布规程](../BUILD_DEPLOY_SOP.md)。 |
+| Web | 发布提交、实际运行的 Web 镜像 digest、公开 HTTPS origin、允许来源和跨源登录响应。见 [Web 部署规程](../DOOPS_WEBUI.md#部署)。 |
+| 合成凭证 | 创建与暂存回执、两个用户的列表隔离结果、持久化回读、验证与提升回执、撤销终态和 Secret 清理结果。保留元数据和审计结果。见 [凭据生命周期](../CREDENTIAL_RESOURCES.md#分步创建和首次激活) 与 [交付规程](../../../AGENTS.md)。 |
