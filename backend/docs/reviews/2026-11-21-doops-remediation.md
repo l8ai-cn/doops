@@ -5,8 +5,8 @@
 | 检查项 | 当前行为 | 证据 | 状态 |
 | --- | --- | --- | --- |
 | 凭证绑定变动 | 修改绑定、撤销和重新启用会作废旧验证 | [credential_store_test.go](../../agent/internal/server/credential_store_test.go) | 已发布 |
-| 模型物化中断 | 持久化待处理记录，恢复时清理未确认的设置 | [model_provider_test.go](../../agent/internal/server/model_provider_test.go) | 已发布，待线上凭证验收 |
-| Registry 授权文件 | 归属记录或授权文件落盘失败时恢复已有内容，并核对 Secret 版本 | [registry_authfile_test.go](../../agent/internal/server/registry_authfile_test.go) | 已发布，待线上凭证验收 |
+| 模型物化中断 | 持久化待处理记录，恢复时清理未确认的设置 | [model_provider_test.go](../../agent/internal/server/model_provider_test.go) | v0.3.21 已发布，隔离 T2 生命周期通过，实际服务待验收 |
+| Registry 授权文件 | 归属记录或授权文件落盘失败时恢复已有内容，并核对 Secret 版本 | [registry_authfile_test.go](../../agent/internal/server/registry_authfile_test.go) | v0.3.21 已发布，隔离 T2 生命周期通过，实际服务待验收 |
 | Linux 凭证清理 | 按凭证类型路由，避免普通凭证受模型目录权限影响 | [credential_materializer_test.go](../../agent/internal/server/credential_materializer_test.go) | 已发布，非 root Linux 定向通过 |
 | DoSQL 直接查询与验证 | 收紧只读语句准入并保留引号中的字面量 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，采用词法规则 |
 | MySQL 查询模式 | 拒绝 INTO 和可执行注释 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，Skill 测试随 CI 通过 |
@@ -21,8 +21,8 @@
 | Git 隧道流和取消 | 失败时中止流，取消回执按 RPC ID 匹配 | [handler_ws_test.go](../../agent/internal/server/handler_ws_test.go) | 已发布，macOS 和 Linux 各重复通过 100 次 |
 | 会话文本文件 | 限制相对路径访问，限制读取大小，Linux 相对路径已修复 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，工作区模板仍支持任意文本 |
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
-| Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | 已发布，待线上验收 |
-| Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | 部署脚本已随 v0.3.21 发布，待实际服务验证 |
+| Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | v0.3.21 已发布，隔离 Web 会话和凭证流程通过，实际服务待验收 |
+| Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | v0.3.21 已发布，隔离 Web 容器和切换回滚分支通过，实际服务待验收 |
 | Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
 | CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [CLI 历史测试](../../cli/cli/doops/auth_test.go) | 已发布，旧文件内容保留 |
@@ -43,7 +43,7 @@
 
 `v0.3.21` 纳入 Web 部署脚本修复，发布提交为 `e6d3d225cd7f5416583ad7d646dbf977173a9228`。主分支 CI 和正式发布复验通过，发布流程从公开资产完成 CLI 与 Skill 安装。该提交构建的 Linux AMD64 Web 镜像 `sha256:89141a437d2eb2ca5f82d735339920b728111c6108d168886ba1be8519c4bdd2` 已通过首页、配置来源登录参数校验（400）及跨源拒绝（403）检查。[CI](https://github.com/symansun/doops/actions/runs/44888902665) · [发布验证](https://github.com/symansun/doops/actions/runs/44888939631) · [发布资产](https://github.com/symansun/doops/releases/tag/v0.3.21)
 
-隔离 Kubernetes 环境使用校验过 SHA-256 的 `v0.3.21` 正式 Gateway 二进制、同提交构建并回读版本的本机 Agent，以及上述 Web 镜像。合成凭证创建、暂存、绑定、列表隔离、Gateway 重启后持久化、验证、提升、撤销、Secret 清理和日志脱敏均通过。Web 会话建立、恢复及跨源拒绝检查通过。部署回归还执行了候选校验失败和切换后校验失败的分支，分别确认保留现有服务和恢复旧容器。[部署合同测试](../../test/test_web_console_deploy_contract.py)
+隔离 Kubernetes 环境使用校验过 SHA-256 的 `v0.3.21` 正式 Gateway 二进制、默认容器入口启动的同提交 Agent 镜像 `sha256:6fd6cc0773fa8927ccf250d534d0ac59c642f4de5d42be4d32f817ce03fd14e7`，以及 Web 镜像 `sha256:89141a437d2eb2ca5f82d735339920b728111c6108d168886ba1be8519c4bdd2`。Agent 的默认入口、镜像 ID、ACP 健康状态和 Gateway 回读提交均通过。合成凭证创建、暂存、绑定、列表隔离、Gateway 重启后持久化、验证、提升、撤销、Secret 清理和日志脱敏均通过。Web 会话建立、恢复及跨源拒绝检查通过。部署回归还执行了候选校验失败和切换后校验失败的分支，分别确认保留现有服务和恢复旧容器。[部署合同测试](../../test/test_web_console_deploy_contract.py)
 
 ## 凭证回归矩阵
 
