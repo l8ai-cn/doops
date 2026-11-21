@@ -58,3 +58,67 @@ if [[ "$*" == *"bash -s"* ]]; then cat >> "$SSH_TRACE"; fi
     rejected = subprocess.run([*args, "--console-origin", "https://console.example.test/login"], env=env, capture_output=True)
     assert rejected.returncode == 2
     assert not trace.exists()
+
+
+def test_origin_check_controls_cutover_and_rollback(tmp_path):
+    remote = DEPLOY.read_text().split("<<'REMOTE'\n", 1)[1].rsplit("\nREMOTE", 1)[0]
+    fake_tools = {
+        "sudo": r'''#!/bin/bash
+set -eu
+shift 2
+printf '%s\n' "$*" >> "$TRACE"
+case "$1 $2" in
+  'inspect --format')
+    if [[ $3 == *Config.Image* ]]; then
+      echo "$IMAGE"
+    else
+      echo 'DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://gateway.invalid'
+    fi ;;
+  'inspect backup') test -f "$STATE" ;;
+  'rename doops-web') touch "$STATE" ;;
+  'rename backup') test -f "$STATE" ;;
+esac
+''',
+        "curl": r'''#!/bin/bash
+for arg in "$@"; do
+  case "$arg" in
+    http://127.0.0.1:300*/api/login) url="$arg" ;;
+    'Origin: http://cross-origin.invalid') cross=yes ;;
+  esac
+done
+if [[ -z ${url:-} ]]; then echo 200
+elif [[ ${cross:-} == yes ]]; then echo 403
+elif [[ $url == *":$FAIL_PORT/"* ]]; then echo 403
+else echo 400
+fi
+''',
+    }
+    for name, body in fake_tools.items():
+        path = tmp_path / name
+        path.write_text(body)
+        path.chmod(0o755)
+
+    image = "registry.invalid/web@sha256:" + "a" * 64
+    for branch in ("success", "3001", "3000"):
+        trace = tmp_path / f"trace-{branch}"
+        env = {
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "TRACE": str(trace),
+            "IMAGE": image,
+            "STATE": str(tmp_path / f"state-{branch}"),
+            "FAIL_PORT": branch,
+        }
+        result = subprocess.run(
+            ["bash", "-s", "--", image, "https://gateway.invalid", "candidate", "backup", "https://console.invalid"],
+            input=remote, text=True, env=env, capture_output=True, timeout=10,
+        )
+        log = trace.read_text().splitlines()
+        assert (result.returncode == 0) == (branch == "success"), result.stderr
+        if branch == "success":
+            assert "rename doops-web backup" in log
+            assert "rename backup doops-web" not in log
+        elif branch == "3001":
+            assert "stop doops-web" not in log
+        else:
+            assert log[-3:] == ["rm -f doops-web", "rename backup doops-web", "start doops-web"]
