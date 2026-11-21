@@ -104,7 +104,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 		if command.mutationID == "" {
 			if (command.operation() == "rollback" || command.operation() == "uninstall") &&
 				(ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown)) {
-				return "", helmStepUnknown("helm_mutation_unverified", "Helm did not confirm the operation; inspect release status before retrying")
+				return "", helmStepUnknown("helm_mutation_unverified", interruptedHelmObservation(ctx, command))
 			}
 			return "", err
 		}
@@ -147,6 +147,33 @@ func runHelmCommand(ctx context.Context, command helmCommand, _ notificationSend
 		return "", err
 	}
 	return verified, nil
+}
+
+// A status read can describe the release after interruption, but cannot
+// attribute that state to a particular rollback or uninstall invocation.
+func interruptedHelmObservation(ctx context.Context, command helmCommand) string {
+	const advice = "inspect release status before retrying"
+	const unknown = "Helm did not confirm the operation; " + advice
+	observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	cmd, err := dispatcher.CommandContext(observeCtx, "helm", "status", command.release,
+		"--namespace", command.namespace, "--output", "json")
+	if err != nil {
+		return unknown
+	}
+	cmd.Dir = command.cwd
+	cmd.WaitDelay = time.Second
+	output, err := cmd.Output()
+	var status helmReleaseJSON
+	if err != nil || json.Unmarshal(output, &status) != nil || status.Version < 1 {
+		return unknown
+	}
+	switch status.Info.Status {
+	case "deployed", "uninstalled", "superseded", "failed", "uninstalling", "pending-install", "pending-upgrade", "pending-rollback":
+		return fmt.Sprintf("Helm did not confirm the operation. Observed revision %d in state %s; %s", status.Version, status.Info.Status, advice)
+	default:
+		return unknown
+	}
 }
 
 func mutateHelmRelease(ctx context.Context, command helmCommand) ([]byte, bool, error) {

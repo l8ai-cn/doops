@@ -51,6 +51,55 @@ func installInterruptFakeHelm(t *testing.T) string {
 	return root
 }
 
+func TestInterruptedHelmObservationUsesReadOnlyStatus(t *testing.T) {
+	root := installInterruptFakeHelm(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, operation := range []string{"rollback", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			command := helmCommand{args: []string{operation}, cwd: root, release: "app", namespace: "apps"}
+			observation := interruptedHelmObservation(ctx, command)
+			if !strings.Contains(observation, "did not confirm") || !strings.Contains(observation, "revision 7 in state deployed") {
+				t.Fatalf("unexpected observation: %s", observation)
+			}
+			if _, err := os.Stat(filepath.Join(root, "rollback-args")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("readback dispatched a rollback: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunHelmCommandObservesInterruptedNativeMutation(t *testing.T) {
+	for _, operation := range []string{"rollback", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			root := installInterruptFakeHelm(t)
+			script := `#!/bin/sh
+case "$1" in
+rollback|uninstall)
+  echo "$1" >> "$ROOT/native-mutations"
+  kill -TERM "$$";;
+status)
+  printf '%s\n' '{"version":7,"info":{"status":"deployed","description":"synthetic-private-note"}}';;
+*) exit 1;;
+esac
+`
+			if err := os.WriteFile(filepath.Join(root, "helm"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			command := helmCommand{args: []string{operation}, cwd: root, release: "app", namespace: "apps"}
+			result, err := runHelmCommand(context.Background(), command, nil)
+			if result != "" || !errors.Is(err, errExecutionOutcomeUnknown) ||
+				!strings.Contains(err.Error(), "revision 7 in state deployed") || strings.Contains(err.Error(), "synthetic-private-note") {
+				t.Fatalf("unexpected result %q, error %v", result, err)
+			}
+			calls, err := os.ReadFile(filepath.Join(root, "native-mutations"))
+			if err != nil || string(calls) != operation+"\n" {
+				t.Fatalf("unexpected mutation calls: %q, error %v", calls, err)
+			}
+		})
+	}
+}
+
 func TestSettleInterruptedHelmRelease(t *testing.T) {
 	const mine = "doops:release:1"
 	entry := func(revision, status, description string) string {
