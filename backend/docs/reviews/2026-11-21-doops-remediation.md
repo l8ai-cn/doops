@@ -37,6 +37,18 @@
 
 使用 `v0.3.20` 同提交构建的本机 Gateway 与 Agent，在隔离 Kubernetes 集群上通过 HTTP 验证合成凭证创建、暂存、绑定、用户列表隔离、Gateway 重启后持久化、验证、提升及撤销。验证后临时 Secret 已清理，提升后读到一个 Secret，撤销后 Secret 数量恢复为零。HTTP 响应与运行日志未回显合成值。正式 Gateway 和 CLI 资产的 SHA-256 另已校验。随后用该正式 Linux AMD64 Gateway 二进制在容器中运行，并连接由同一发布提交构建的 Agent，在隔离 Kubernetes 集群复测上述流程。创建、列表隔离、Gateway 重启后持久化、验证、提升、撤销、Secret 清理和响应及日志脱敏均通过。
 
+## 凭证回归矩阵
+
+| 给定 | 执行 | 预期与回归证据 |
+| --- | --- | --- |
+| 有效绑定和已暂存版本 | 重启 Gateway、提交验证并提升 | 绑定和版本持久化，只有当前有效绑定的验证参与提升。[存储回归](../../agent/internal/server/credential_store_test.go#L49) · [提升回归](../../agent/internal/server/credential_http_test.go#L153) |
+| 非管理员请求平台凭证，或请求目标缺少绑定 | 创建或验证 | 请求被拒绝。[权限回归](../../agent/internal/server/credential_http_test.go#L13) · [目标范围回归](../../agent/internal/server/credential_verify_stored_scope_test.go#L14) |
+| 导入目标离线 | 从目标导入 | 返回 503 且没有暂存版本。[离线回归](../../agent/internal/server/credential_import_failure_test.go#L53) |
+| 审计不可写或外部主密钥不可用 | 创建凭证或写入版本 | 变更失败关闭。[审计回归](../../agent/internal/server/credential_http_test.go#L215) · [主密钥回归](../../agent/internal/server/credential_store_test.go#L12) |
+| 验证失败或结果未知 | 验证 | 返回失败类别并完成对应目标的审计。[失败回归](../../agent/internal/server/credential_audit_target_test.go#L61) |
+| 撤销时部分目标尚未清理 | 撤销、恢复目标后重试 | 在清理通过前保留撤销中状态。[撤销回归](../../agent/internal/server/credential_resource_revocation_test.go#L113) |
+| 写入合成载荷 | 读取 HTTP 响应和审计 | 可读元数据不含载荷。[脱敏回归](../../agent/internal/server/credential_http_test.go#L13) |
+
 ## 实际服务验收
 
 只读回读确认，`gw-test` 在线，Agent 报告的提交为 `e1d2ba7c24b4283efe7a1d2c0c1fa19bba960358`。部署与合成凭证验收待确认环境范围，测试目标与其他实例共用 Gateway。
