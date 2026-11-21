@@ -22,7 +22,7 @@
 | 会话文本文件 | 限制相对路径访问，限制读取大小，Linux 相对路径已修复 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布，工作区模板仍支持任意文本 |
 | 非空工作区替换 | 原子交换，交换不可用时保留现有工作区 | [remediation_regression_test.go](../../agent/internal/server/remediation_regression_test.go) | 已发布 |
 | Web 模型配置 | 本地存储清理旧 API key，发布入口采用凭证引用 | [Web 指南](../DOOPS_WEBUI.md) | 已发布，待线上验收 |
-| Web 同源检查 | 默认使用请求源，反代场景可显式配置可信 origin | [同源测试](../../../lib/server/same-origin.test.mjs) | 已发布 |
+| Web 同源检查 | 默认使用请求源。正式部署脚本可传入公开 HTTPS origin，并检查候选与切换后容器的同源登录行为 | [部署规程](../DOOPS_WEBUI.md) · [PR #27](https://github.com/symansun/doops/pull/27) | 运行时规则已发布，部署脚本已合入 main，待实际发布验证 |
 | Web 升级观察 | 提交前持久化可从操作编号推导的 Job，关联证据补齐命名空间 | [升级面板](../../../components/agent-upgrade-panel.tsx) | 已发布 |
 | CLI 流式终态 | 拒绝缺失或空终态，解析失败以错误返回 | [CLI 流式测试](../../cli/cli/doops/client_test.go) | 已发布 |
 | CLI 历史 | 新历史省略 ask 和 exec 正文，收紧旧文件权限 | [CLI 历史测试](../../cli/cli/doops/auth_test.go) | 已发布，旧文件内容保留 |
