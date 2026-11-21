@@ -33,4 +33,8 @@
 
 `v0.3.20` 的主分支 CI 和发布验证均通过，隔离 Linux 容器通过正式安装器校验 CLI 和 Skill 的提交身份。该标签的本地合同测试通过 484 项及 8 个子测试。[CI](https://github.com/symansun/doops/actions/runs/44878405583) · [发布验证](https://github.com/symansun/doops/actions/runs/44878405915) · [发布资产](https://github.com/symansun/doops/releases/tag/v0.3.20)
 
-本地浏览器使用合成账号覆盖登录、会话恢复、目标空列表、平台管理导航和凭证接口允许及拒绝响应。随后在本地合成 Gateway 中验证了凭据列表从加载到显示、表单提交暂存版本且页面未回显载荷，以及 Gateway 停止后接口返回 502、页面显示会话恢复错误。线上 T2 验收仍需确定 Gateway、Agent、Web 环境，核对不可变部署身份，并验证线上合成凭证的创建、列表隔离、持久化、验证、提升及撤销。[交付规程](../../../AGENTS.md)
+本地浏览器使用合成账号覆盖登录、会话恢复、目标空列表、平台管理导航和凭证接口允许及拒绝响应。随后在本地合成 Gateway 中验证了凭据列表从加载到显示、表单提交暂存版本且页面未回显载荷，以及 Gateway 停止后接口返回 502、页面显示会话恢复错误。
+
+使用 `v0.3.20` 同提交构建的本机 Gateway 与 Agent，在隔离 Kubernetes 集群上通过 HTTP 验证合成凭证创建、暂存、绑定、用户列表隔离、Gateway 重启后持久化、验证、提升及撤销。验证后临时 Secret 已清理，提升后读到一个 Secret，撤销后 Secret 数量恢复为零。HTTP 响应与运行日志未回显合成值。正式 Gateway 和 CLI 资产的 SHA-256 另已校验。
+
+实际服务的 T2 验收仍需获得部署范围，核对 Gateway、Agent、Web 的不可变产物身份，并在该环境重复合成凭证生命周期。[交付规程](../../../AGENTS.md)
