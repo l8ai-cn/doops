@@ -51,6 +51,24 @@ func installInterruptFakeHelm(t *testing.T) string {
 	return root
 }
 
+func TestInterruptedHelmObservationUsesReadOnlyStatus(t *testing.T) {
+	root := installInterruptFakeHelm(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, operation := range []string{"rollback", "uninstall"} {
+		t.Run(operation, func(t *testing.T) {
+			command := helmCommand{args: []string{operation}, cwd: root, release: "app", namespace: "apps"}
+			observation := interruptedHelmObservation(ctx, command)
+			if !strings.Contains(observation, "did not confirm") || !strings.Contains(observation, "revision 7 in state deployed") {
+				t.Fatalf("unexpected observation: %s", observation)
+			}
+			if _, err := os.Stat(filepath.Join(root, "rollback-args")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("readback dispatched a rollback: %v", err)
+			}
+		})
+	}
+}
+
 func TestSettleInterruptedHelmRelease(t *testing.T) {
 	const mine = "doops:release:1"
 	entry := func(revision, status, description string) string {

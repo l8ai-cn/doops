@@ -109,6 +109,8 @@ release/namespace、同一 operation 和原意图时才可记为修复：upgrade
 每次尝试按发生顺序返回完整可信工具结果，修复通过 `resolved_by` 关联原失败与成功调用；
 模型说明单列为 `summary`，不作为终态。缺失目标不得从后续调用倒推。
 缺失结果或证明、传输中断和取消仍保持未知结果，不能用失败文本替代证据。
+直接 rollback 或 uninstall 中断后，Agent 会在五秒内通过 `helm status` 尝试回读同一 release 和 namespace。
+可读时仅报告观察到的 revision 和状态，原操作保持未知。重试前请核对目标状态。
 Agent 应主动反馈定位、修正和验证进度；等待工具时通道持续报告最后观察到的事件及等待时间。
 doagent 将带工具调用的模型说明发送为 `agent_progress`；DoOps 脱敏后作为进度通知转发，
 不计为最终回答或成功证据。DoOps 通过 `wallClockTimeoutSecs` 把剩余调用期限传入 doagent，
