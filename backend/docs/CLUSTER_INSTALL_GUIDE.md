@@ -44,7 +44,7 @@ doops -session agent-upgrade upgrade \
 CLI 会自动发现并写回可见 target 路由：
 
 ```bash
-doops -session setup login --gateway <gateway-url>
+doops login --gateway <gateway-url>
 doops -session preflight list
 doops -session preflight targets --target <自动发现的 target>
 doops -session preflight exec --target <自动发现的 target> --cmd hostname
@@ -82,13 +82,21 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
 
    `DOOPS_RELEASE_ASSET_BASE` 只用于把资产来源指向镜像；sha256、`release=... commit=...`
    身份和 CLI contract 校验不变。
-4. 确认 `~/.local/bin` 在 `PATH` 中，再首次登录并验证：
+4. 确认 `~/.local/bin` 在 `PATH` 中。两条登录命令二选一，不要连续执行：
 
    ```bash
-   doops login --gateway <gateway-url>
+   doops login --gateway <gateway-url> --username <user>
+   ```
+
+   ```bash
    printf '%s' "$TOKEN" | doops login --gateway <gateway-url> --token-stdin
+   ```
+
+   然后用 `doops list` 里实际出现的名字验证，不要另写一个示例名：
+
+   ```bash
    doops list
-   doops targets --target <自动发现的 target>
+   doops targets --target <configured-target>
    ```
 
    首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
@@ -294,7 +302,7 @@ doops -session unicom-install targets --target gw-unicom
 doops -session unicom-install exec --target gw-unicom --cmd hostname
 ```
 
-尚未登录的管理机先执行 `doops -session setup login --gateway <gateway-url>`。
+尚未登录的管理机先执行 `doops login --gateway <gateway-url>`。
 本地健康仅证明隧道连接；管理端 RPC 和 AI 请求还须真实验收，不能仅凭启动完成宣称
 全部功能可用。已有 Docker Agent 后续发布仍走下面的外部升级入口。
 
@@ -345,7 +353,7 @@ Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直
 
 2. **登录 Gateway**:
    ```bash
-   doops -session install-verify login --gateway <gateway-url>
+   doops login --gateway <gateway-url>
    ```
 
 3. **确认精确身份已注册**:

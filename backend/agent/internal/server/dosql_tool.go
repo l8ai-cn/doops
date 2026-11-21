@@ -436,10 +436,13 @@ func detectDatabaseEngine(item map[string]interface{}) string {
 	switch {
 	case strings.Contains(value, "mongodb") || strings.Contains(value, "mongo"):
 		return "mongodb"
-	case strings.Contains(value, "postgres") || strings.Contains(value, "postgresql"):
+	case strings.Contains(value, "postgres") || strings.Contains(value, "cockroachdb") || strings.Contains(value, "cockroach:"):
 		return "postgres"
 	case strings.Contains(value, "mysql") || strings.Contains(value, "mariadb") || strings.Contains(value, "tidb"):
 		return "mysql"
+	case strings.Contains(value, "oracle/database"), strings.Contains(value, "container-registry.oracle.com/database/"),
+		strings.Contains(value, "oracle-xe"), strings.Contains(value, "oracle-free"):
+		return "oracle"
 	case strings.Contains(value, "mssql") || strings.Contains(value, "sqlserver") || strings.Contains(value, "sql-server") || strings.Contains(value, "azure-sql"):
 		return "mssql"
 	default:
@@ -458,7 +461,7 @@ func detectDatabaseName(item map[string]interface{}, engine string) string {
 			return value
 		}
 		if (engine == "postgres" || engine == "mysql") && strings.Contains(name, "DATASOURCE_URL") {
-			if parsed, err := url.Parse(value); err == nil {
+			if parsed, err := url.Parse(strings.TrimPrefix(value, "jdbc:")); err == nil && parsed.Hostname() != "" && doSQLSchemeEngine[strings.ToLower(parsed.Scheme)] == engine && strings.Trim(parsed.Path, "/") != "" {
 				return strings.Trim(parsed.Path, "/")
 			}
 		}
@@ -467,7 +470,7 @@ func detectDatabaseName(item map[string]interface{}, engine string) string {
 }
 
 func detectDatabasePort(item map[string]interface{}, engine string) int {
-	defaults := map[string]int{"mysql": 3306, "postgres": 5432, "mongodb": 27017, "mssql": 1433}
+	defaults := map[string]int{"mysql": 3306, "postgres": 5432, "mongodb": 27017, "mssql": 1433, "oracle": 1521}
 	spec, _ := item["spec"].(map[string]interface{})
 	ports, _ := spec["ports"].([]interface{})
 	for _, raw := range ports {

@@ -57,7 +57,7 @@ DoOps does not replace Kubernetes itself, and it is not a complete monitoring ti
 | --- | --- | --- |
 | Web console | Login, target selection, command and AI task interface, node information, audit, and administration entry points | Built on Next.js; some file, knowledge base, and model configuration pages still need contract alignment with the backend |
 | Unified gateway | Agent registration, target routing, user authentication, scoped authorization, queueing, and concurrency control | SQLite stores control-plane state; public access requires a TLS reverse proxy |
-| Agent reverse connection | Target nodes connect out to the gateway and identify execution targets by `cluster/instance` | Registration only declares cluster/instance and needs no registration token; user tokens are not used for agent registration |
+| Agent reverse connection | Target nodes connect out to the gateway and identify execution targets by `cluster/instance` | After an Agent first connects with an enrollment token issued for its `cluster/instance`, the Gateway requires a valid enrollment token for subsequent registrations of that target. |
 | Deterministic command execution | `exec` runs commands and returns output; background tasks, logs, and status queries are supported | Not a persistent PTY; commands have the system privileges of the agent process |
 | Snapshot and workspace synchronization | `push/pull` use COS snapshots by default; `--storage gateway` synchronizes the current workspace over Git HTTP | Pull and clean can overwrite or delete data; not a permanent backup mechanism |
 | Small text file operations | `read/write` inside a named session | Use workspace-relative paths; use `push/pull` for large files and binaries |
@@ -251,21 +251,27 @@ Installation updates the DoOps skill and companion documentation in the target p
 
 ### 2. First login and target discovery
 
-The following is a placeholder example; replace it with the information provided by your administrator:
+The following is a placeholder example; replace it with the information provided by your administrator. Choose one login command. Do not run both: importing a token after a successful password login replaces the local login for that Gateway.
 
 ```bash
-# With no local route, use --gateway for the first login; password login or token stdin both work
-doops login --gateway https://gateway.example.com
-printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+# Interactive login when you have a username and password. The password is read only as hidden terminal input.
+doops login --gateway https://gateway.example.com --username alice
+```
 
+```bash
+# Import an existing Gateway user token for automation. Do not combine this with --username, and do not pass a password to it.
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+```
+
+```bash
 doops list
 ```
 
 - The first login calls `GET /v1/targets` and writes the online targets visible to this account back to local routes; existing route names, aliases and descriptions are preserved.
 - Operators do not need to know an Agent's `cluster/instance` in advance.
-- Pre-create a route with `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` only when you must pin a route before login (or use a released CLI that does not support `--gateway`), then run `doops login --gateway <url>` (`--target <name>` still works as an alias).
+- Pre-create a route with `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` only when the Gateway cannot discover that Agent (for example it is still offline), then run `doops login --gateway <url>`. `--target <name>` only resolves an existing route to the same Gateway; it is not a separate login.
 - `doops add` stores routing only and never stores a target token; login state lives in the local auth cache.
-- Do not leave real credentials in public logs, scripts or shared terminal history; password login uses interactive input or `--token-stdin`.
+- Do not leave real credentials in public logs, scripts or shared terminal history. A password is read only as hidden terminal input; an existing token uses `--token-stdin`. The two are not interchangeable.
 
 ### 3. Check the connection
 
@@ -281,10 +287,14 @@ doops -session diagnose targets --target <discovered-target> --admission
 doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 ```
 
-To sign in again for an existing route, just run the command below; the password is read only as hidden terminal input (or imported with `--token-stdin`), and the CLI has no `--password` flag:
+Signing in again still logs in to the Gateway, not one target. Choose one command. The CLI has no `--password` flag, and a password cannot be passed to `--token-stdin`:
 
 ```bash
 doops login --gateway <name|url> --username alice
+```
+
+```bash
+printf '%s' "$TOKEN" | doops login --gateway <name|url> --token-stdin
 ```
 
 <a id="self-host"></a>
@@ -327,7 +337,7 @@ backend/bin/doops-gateway token create \
   -name initial-console -expires 24h
 ```
 
-The user token is printed once; save it privately right away. The global `admin` in the example is only for the first trusted initialization — **do not use it as the default permission for ordinary users**. Agent reverse registration only declares `cluster/instance`; the gateway issues no registration credential for ordinary agents, and the current gateway CLI does not provide a general `agent-token create` command either.
+The user token is printed once; save it privately right away. The global `admin` in the example is only for the first trusted initialization — **do not use it as the default permission for ordinary users**.
 
 Start the gateway:
 
@@ -544,7 +554,7 @@ See the [build and deployment SOP](backend/docs/BUILD_DEPLOY_SOP.md) and the [cl
 
 ### Permission and credential principles
 
-1. **Distinguish user tokens from the agent registration identity**: the former operates the gateway; an ordinary agent registers in reverse with only its `cluster/instance` and needs no token. They are not interchangeable passwords.
+1. Operators authenticate with Gateway user tokens. After an Agent first connects with an enrollment token issued for its `cluster/instance`, the Gateway requires a valid enrollment token for subsequent registrations of that target.
 2. **Make the authorization scope and actions explicit**: do not use `admin`, wildcards, or grants without actions as a template for ordinary users.
 3. **Review default authorization on the management side**: different creation entry points may behave differently; do not assume that every new user naturally satisfies least privilege.
 4. **Limit high-privilege capabilities**: `exec`, cluster credentials, host directories, and runtime sockets can all have a wide impact.

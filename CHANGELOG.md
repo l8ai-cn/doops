@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+## [0.3.16] — 2026-11-21
+
+### Fixed
+
+- DoSql 目标发现支持省略 `--request`，识别常见 Oracle Database 和 CockroachDB 镜像，并从 MySQL、PostgreSQL 的 JDBC URL 提取库名。
+
+- `registry sync` 逐端读取并校验非空 manifest，读取失败或 digest 不一致时返回失败。修正发布 Skill 中的工作区路径和 Kubernetes 参数示例。
+
+- CLI、Skill 与中英俄文档统一了 Gateway 登录、路由发现和 Agent enrollment 的说明。
+- 修正工作区文件同步、镜像构建和 Agent 升级示例，区分 COS 快照与远端会话当前文件。
+
 ## [0.3.15] — 2026-11-20
 
 ### Added

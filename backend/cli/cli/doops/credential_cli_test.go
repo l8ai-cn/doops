@@ -241,7 +241,7 @@ func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_expired","auth_domain":"gateway","message":"Gateway user token has expired","next_action":"Run doops login --target <gateway-target>"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_expired","auth_domain":"gateway","message":"Gateway user token has expired","next_action":"Run doops login --gateway <gateway-url> for this Gateway; do not replace the Gateway token with a managed credential or business API key"}`))
 	}))
 	defer gateway.Close()
 
@@ -250,7 +250,7 @@ func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 		t.Fatal("expected credential gateway unauthorized error")
 	}
 	message := err.Error()
-	for _, want := range []string{"gateway_auth_expired", "auth_domain=gateway", "doops login --target <gateway-target>"} {
+	for _, want := range []string{"gateway_auth_expired", "auth_domain=gateway", "doops login --gateway <gateway-url>"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error missing %q: %s", want, message)
 		}

@@ -44,8 +44,8 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 `sshd`，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 反向注册只声明 `cluster/instance`，不使用 token
-- 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
+- 用户用 Gateway user token 操作目标。Agent 用 `cluster/instance` 注册，已启用 enrollment 的目标还需提供对应的 enrollment token。
+- 代码同步：`push/pull` 默认使用 COS 快照。显式选择 `--storage gateway` 时，Gateway 通过 Agent 的反向隧道转发 Git HTTP 请求，同步当前工作区。
 - 镜像构建与操作：统一使用 `buildctl + buildkitd` 构建、`skopeo` 做 OCI copy/inspect；Agent 镜像内置这两套命令。
 
 ## Target 口径
@@ -120,7 +120,7 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
 - 标准运行镜像保留出站 SSH 客户端，但不安装或启动 SSH 服务端
 - 将 doagent 旧叙述收敛为当前 doagent ACP HTTP 路径
-- 新增多用户多集群 `doops-gateway`：SQLite、user token、scope/action 权限、审计和 gateway Git HTTP 反向隧道
+- 新增多用户多集群 `doops-gateway`：SQLite、user token、用户对 `cluster/instance` 的目标授权、审计和 Git HTTP 反向隧道
 - 统一 `push/pull`：gateway 使用 Git 快照语义，并按 `/v1/git/<cluster>/<instance>/<session>.git` 精确路由到目标 agent
 - 加固多人使用：user token 按 token id 单行校验，密码登录 token 默认 24 小时过期，同一 target 默认有界排队串行执行
 - `doops upgrade` 通过集群内 Job 升级标准 Helm Agent；只有 `--dry-run` 是参数预览，Agent 进程不能直接替换自身工作负载
@@ -258,9 +258,8 @@ doops list
 ```
 
 登录态会供同一 Gateway 的全部 target 使用；首次登录会发现在线 target 并写回本机路由。
-只有需要在登录前固定一条路由（或使用的发布 CLI 尚不支持 `--gateway`）时，
-才用完整的四项 `--target-name/--target-gateway/--target-cluster/--target-instance` 预置路由，
-再 `doops login --gateway <url>`（`--target <name>` 仍可作为别名）。
+只有 Gateway 发现不到的 Agent（例如还离线）才用完整的四项 `--target-name/--target-gateway/--target-cluster/--target-instance` 预置路由，
+再 `doops login --gateway <url>`。`--target <name>` 只是把已有路由解析到同一 Gateway 的别名。
 
 - target 支持短名和别名，例如主名 `demo`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-demo/demo-228`。
 
@@ -281,52 +280,12 @@ doops list
 - `401 Unauthorized`：读取结构化 `gateway_auth_*` code；具体区分缺少、无效、过期、撤销、用户停用和元数据损坏。
 - `403 Forbidden`：token 有效，但该用户没有当前 target grant，或缺少独立的管理员、高危管理权限
 
-### 2. 通过 gateway 添加内网集群目标
+### 通过 Gateway 接入内网集群
 
-gateway 由管理员维护用户、user token 和授权。agent 部署只声明绑定的
-`cluster/instance`；业务侧 CLI 配置只消费管理员发放的 user token，不直接维护
-gateway 数据库。
-
-gateway 支持用户名密码登录，先换取 user token 再用 token 操作；本地还没有路由时可先用
-Gateway URL 首次登录并自动发现可见路由：
-
-```bash
-doops login --gateway https://gateway.example.com --username alice
-doops login --gateway https://gateway.example.com --username alice
-```
-
-内网 agent 主动连接公网 gateway：
-
-```bash
-doops-agent \
-  -gateway-url https://gateway.example.com \
-  -cluster prod \
-  -instance master-1 \
-```
-
-客户端配置 gateway target：
-
-```bash
-doops add \
-  --name prod-master \
-  --gateway https://gateway.example.com \
-  --cluster prod \
-  --instance master-1 \
-  --aliases prod,master \
-  --use 'prod cluster via gateway'
-
-doops login --gateway https://gateway.example.com
-```
-
-CLI 和 agent 对非回环 gateway 都要求 `https` / `wss`：明文 `http` / `ws` 会被拒绝，只有本机回环地址，或显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1` 的受控测试例外才放行。
+Agent 通过反向隧道向 Gateway 注册部署时配置的 `cluster/instance`。管理员在 Gateway 管理账号和目标授权。
+新集群的部署步骤见[集群接入指南](docs/CLUSTER_INSTALL_GUIDE.md)。操作员按 [Gateway 登录说明](docs/DOOPS_USAGE_GUIDE.md#login-and-logout)登录，
+用 `doops list` 选择实际路由名，再通过 `doops targets --target <configured-target>` 检查在线状态。
 TLS 与用户鉴权要求见 [API 指南](docs/DOOPS_API_GUIDE.md)。
-
-验证：
-
-```bash
-doops targets --target prod-master
-doops -session smoke exec --target prod-master --cmd 'hostname'
-```
 
 ### 3. 验证连接
 
@@ -368,7 +327,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'uptime && df -h'
 doops -session demo ssh --target gpu-ampere01 --host ops@app.internal -- bash -lc 'hostname'
 doops -session demo ask --target gpu-ampere01 --msg '检查磁盘和内存压力，给出结论'
 doops -session demo push --target gpu-ampere01 --src .
-doops -session demo pull --target gpu-ampere01 --dest ./demo-output
+doops -session demo pull --storage gateway --target gpu-ampere01 --dest ./demo-output
 doops -session demo image build --target gpu-ampere01 --context /root/ws/demo --output oci --output-path /tmp/demo.oci
 doops -session demo image copy --target gpu-ampere01 --source oci-archive:/tmp/demo.oci --destination docker://registry.example.com/team/demo:release
 doops -session demo write --target gpu-ampere01 --storage gateway --path pod.yaml --file ./pod.yaml
@@ -379,7 +338,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 
 | 命令 | 说明 |
 | :--- | :--- |
-| `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
+| `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` | 添加 gateway target 路由 |
 | `doops -session <s> remove --target <name>` | Gateway 查询确认不可见后，淘汰本机离线 target 路由 |
 | `doops login --gateway <name|url>` | 登录指定 Gateway（登录属于 Gateway）；`--target <name>` 仍可作为别名 |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
@@ -447,7 +406,7 @@ git push origin v1.2.4
 
 - `doops` 日常连接不依赖 SSH。
 - 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 凭据记录中，记录 token ID、用户、来源和生命周期元数据。
-- agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
+- Agent 注册和 enrollment 的启用、轮换与恢复见 [Gateway 隧道指南](docs/DOOPS_GATEWAY_TUNNEL.md#agent-enrollment-迁移与恢复)。
 - CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
 - `targets`、`sql`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
 - 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --gateway <name|url>`；`--target <name>` 仍可作为别名。

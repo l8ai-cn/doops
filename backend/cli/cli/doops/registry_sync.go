@@ -82,6 +82,8 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 
 func buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string, images []string, timeoutSeconds int) string {
 	parts := []string{"set -eu", "command -v timeout >/dev/null 2>&1", "command -v sha256sum >/dev/null 2>&1", "command -v skopeo >/dev/null 2>&1"}
+	// Keep inspect as a standalone command so its failure propagates under POSIX sh.
+	parts = append(parts, `manifest=$(mktemp)`, `trap 'rm -f -- "$manifest"' EXIT`)
 	// An authfile path is optional. Without one, skopeo reads the target's own
 	// registry authfile, which the Gateway delivers to the Agent for the
 	// credentials granted on it.
@@ -113,8 +115,12 @@ func buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfil
 		dstInspect := append([]string{"skopeo", "inspect", "--raw"}, dstInspectArgs...)
 		dstInspect = append(dstInspect, shellQuote("docker://"+targetRef))
 		parts = append(parts,
-			fmt.Sprintf("src_digest=$(timeout %ds %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, strings.Join(srcInspect, " ")),
-			fmt.Sprintf("dst_digest=$(timeout %ds %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, strings.Join(dstInspect, " ")),
+			fmt.Sprintf(`timeout %ds %s > "$manifest"`, timeoutSeconds, strings.Join(srcInspect, " ")),
+			`test -s "$manifest"`,
+			`src_digest=$(sha256sum < "$manifest")`,
+			fmt.Sprintf(`timeout %ds %s > "$manifest"`, timeoutSeconds, strings.Join(dstInspect, " ")),
+			`test -s "$manifest"`,
+			`dst_digest=$(sha256sum < "$manifest")`,
 			fmt.Sprintf("test -n \"${src_digest}\" && test \"${src_digest}\" = \"${dst_digest}\" || { echo 'registry manifest digest mismatch for %s' >&2; exit 1; }", image),
 		)
 	}

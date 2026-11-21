@@ -65,8 +65,8 @@ func targetNotFound(servers []Server, name string) string {
 	}
 	if len(names) == 0 {
 		return withNext(fmt.Sprintf("Error: target %q is not configured and no targets exist yet", name),
-			"doops login --gateway <gateway-url>",
-			"or pin a route first: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
+			"doops login --gateway <gateway-url>   # discover visible online targets",
+			"doops list   # use an actual configured route name")
 	}
 	if closest := closestWord(name, names); closest != "" {
 		return withNext(fmt.Sprintf("Error: target %q is not configured; did you mean %q?", name, closest),

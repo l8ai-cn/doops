@@ -109,7 +109,7 @@ bash scripts/deploy-gateway.sh \
 - 禁止用 base64/tar/分片临时传输替代 gateway 发布脚本。
 - 不保留 gateway host agent 作为默认 target；需要主机巡检时走独立 SSH/监控流程。
 
-如果 `doops push` 卡住，应修复 Git HTTP 反向隧道或目标 agent 版本，不允许用分片绕过。
+排查 `doops push` 时先确认存储模式。默认模式检查 COS 配置、快照能力和工作区同步结果。指定 `--storage gateway` 时检查 Git HTTP 反向隧道。
 
 ---
 

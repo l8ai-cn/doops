@@ -246,7 +246,7 @@ No tool can do security for you. The real division of labor looks like this:
 **Three known boundaries at the architecture level:**
 
 1. **The control plane is a single point.** If it is compromised, every managed target under it is compromised with it — so it must be deployed in a controlled network and expose only an encrypted entry point.
-2. **Agent onboarding relies on the network boundary.** When an Agent registers, it only declares which target it is, with no additional credential; the control plane's network position, ACLs, and anomalous-registration monitoring are therefore the security boundary for this channel. (The channel that serves web traffic to the outside is a separate link, with a registration token scoped to an exact target.)
+2. **Agent registration.** Network ACLs and monitoring protect the default open registration path. Once an Agent connects with the enrollment token issued for its `cluster/instance`, the Gateway requires a valid enrollment token on subsequent registrations of that target. Edge proxies use separate enrollment tokens.
 3. **Audit is not yet a tamper-proof ledger.** It lives in the control-plane database, where anyone with the right permissions can delete it; the correct practice is to ship it off-site in real time.
 
 In one sentence: **DoOps gathers operations behind a single door, but the lock, the monitoring, and the key management on that door are still yours to configure.**

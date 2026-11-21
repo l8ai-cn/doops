@@ -96,15 +96,12 @@ CLI 之外，DoOps Console 提供一屏总览：连接、会话、集群、任�
 
 **安装 CLI 和 Skill**
 
-安装脚本会把对应平台的预构建 CLI 放到`~/.local/bin/doops`，并把官方 Skill 装进你的项目：
+安装脚本会把对应平台的预构建 CLI 放到`~/.local/bin/doops`，并把官方 Skill 装进你的项目。完整约束见仓库 `backend/docs/CLUSTER_INSTALL_GUIDE.md`。`TAG` 必须是已发布的 tag，`PROJECT` 是已有业务项目的绝对路径；检出的安装脚本和下载的 CLI 使用同一个 tag：
 
 ```bash
-# 克隆仓库并安装。--version 必须是已发布的 tag，--project 指向业务项目
-git clone https://github.com/symansun/doops.git
+git clone --branch "$TAG" https://github.com/symansun/doops.git
 cd doops
-bash scripts/install.sh \
-  --version <tag> \
-  --project /absolute/path/to/your/project
+bash scripts/install.sh --version "$TAG" --project "$PROJECT"
 # 如果 ~/.local/bin 不在 PATH 里
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -113,15 +110,19 @@ export PATH="$HOME/.local/bin:$PATH"
 
 **登录 Gateway**
 
-登录属于 Gateway，不属于某一个 target。向管理员要 Gateway 地址，用用户名密码登录，或从标准输入导入已有 user token。首次登录会发现该账号可见的在线 target，并写回本机路由。token 不要放进命令参数，也不要写进 `doops add`。
+登录属于 Gateway，不属于某一个 target。向管理员要 Gateway 地址后，下面两条命令二选一。密码只从终端隐藏输入；已有 user token 走标准输入。不要连续执行，后一条会替换这次登录。token 不要放进命令参数，也不要写进 `doops add`。
 
 ```bash
-doops login --gateway https://gateway.example.com
-printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
-doops list
+doops login --gateway https://gateway.example.com --username alice
 ```
 
-只有 Gateway 发现不到的 Agent（例如还离线）才手工添加路由。这条命令只保存路由：
+```bash
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+```
+
+首次登录成功后会发现该账号可见的在线 target，并写回本机路由。认证失败要核对账号或 token。若提示登录已成功但发现失败，不要当作密码错误重登，先看 Gateway 的 `/v1/targets`。发现成功但没有可见的在线 target 时，不会新增路由。核对 Agent 在线状态和账号授权。
+
+只有 Gateway 发现不到的 Agent（例如还离线）才手工添加路由。这条命令只保存路由，名字由部署决定，后面的命令用 `doops list` 里的实际名字，不假设它叫某个示例名：
 
 ```bash
 doops add \
@@ -133,20 +134,19 @@ doops add \
   --use 'prod cluster via gateway'
 ```
 
-`cluster/instance`是路由键，名字由部署决定；别名`prod`、`master`之后可以直接当操作命令的`--target`用。
+`cluster/instance`是路由键。后续操作使用 `doops list` 显示的名称或别名。首次登录直接使用 Gateway URL。
 
 **3**
 
 **验证链路**
 
+`doops list` 只显示本机保存的路由。`doops targets` 检查其中一条路由在 Gateway 上是否在线。`exec` 成功才说明命令到达了该 Agent。三步使用同一个、刚刚列出来的名字：
+
 ```bash
 doops list
-
-# 列出已配置节点
-doops targets --target prod-master
-
-# 看到 cluster/instance 在线才算通
-doops -session smoke exec --target prod-master --cmd 'hostname'
+read -r -p 'Target name: ' TARGET
+doops targets --target "$TARGET"
+doops -session smoke exec --target "$TARGET" --cmd 'hostname'
 ```
 
 `targets`能看到在线，说明内网 Agent 已注册到 Gateway——**此后不再需要 SSH**。
@@ -156,7 +156,7 @@ doops -session smoke exec --target prod-master --cmd 'hostname'
 **把任务交给 AI**
 
 ```bash
-doops -session smoke ask --target prod-master \
+doops -session smoke ask --target "$TARGET" \
   --msg '检查磁盘和内存压力，给出结论'
 ```
 
@@ -164,13 +164,13 @@ doops -session smoke ask --target prod-master \
 
 **关于服务端 Agent**
 
-如果目标机器还没有 Agent：K8s 集群用**DaemonSet 标准安装**（方式 A），单机用**Docker/nerdctl 容器**（方式 B），首次自举才用一次性 SSH（方式 C）。Agent 启动只需三个参数：`-gateway-url`、`-cluster`、`-instance`，注册不需要 token。详细命令见仓库 README。
+Kubernetes 首装按 GitOps 流程部署 Helm 管理的 Deployment。单机按运行时选择安装方式。Agent 以 `cluster/instance` 注册，已启用 enrollment 的目标还需要该目标的 enrollment token。[集群接入指南](../../backend/docs/CLUSTER_INSTALL_GUIDE.md)
 
 ## 05 六个高频实战场景
 
 所有命令都遵循同一个直觉：`doops -session <会话> <动作> --target <目标>`。
 
-### 场景一：批量巡检，一条命令
+### 场景一：检查指定节点的负载和磁盘
 
 ```bash
 doops -session demo exec --target prod-node --cmd 'uptime && df -h'
@@ -193,46 +193,51 @@ AI 在远端沙盒里自主排查，所有动作落在审计里。它干活，�
 doops -session demo push --target prod-node --src .
 
 # 本地 → /root/ws/demo
-doops -session demo pull --target prod-node --dest ./demo-output
+doops -session demo pull --storage gateway --target prod-node --dest ./demo-output
 # 远端产物拉回本地
 ```
 
-`push`尊重`.gitignore`/`.doopsignore`；底层走 Git HTTP 反向隧道，不再是 tar 分块上传。每个会话有独立工作区`/root/ws/<session>`，互不污染。
+上例的 `push` 默认上传 COS 快照，并在 Agent 在线时同步到 `/root/ws/demo`。`pull --storage gateway` 通过 Git HTTP 拉取该会话当前的工作区，包含 Agent 随后生成的文件。默认的 `pull` 读取已上传的 COS 快照。
 
-### 场景四：写个配置，立刻生效
+### 场景四：向会话工作区写入配置文件
 
 ```bash
 doops -session demo write --target prod-node \
-  --path /root/ws/demo/pod.yaml --file ./pod.yaml
+  --path pod.yaml --file ./pod.yaml
 doops -session demo exec --target prod-node --cmd 'ls -la /root/ws/demo'
 ```
 
 ### 场景五：远端构建镜像（BuildKit）
 
 ```bash
-doops -session prod exec --target gpu-master --cmd \
-  "cd /root/ws/prod/labelu && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
---frontend dockerfile.v0 --local context=. --local dockerfile=. \
---opt platform=linux/amd64 \
---output type=image,name=registry.example.com/library/labelu:latest,push=true"
+doops -session demo image build --target prod-node \
+  --context /root/ws/demo \
+  --output image \
+  --image "${IMAGE_REF:?请设置带发布标签的目标镜像引用}" \
+  --push
 ```
 
-构建在 Agent 容器内完成，宿主机不沾构建垃圾。
+构建在目标 Agent 的 BuildKit 里完成，宿主机不沾构建垃圾。`image build` 默认输出 OCI 归档：
+要多阶段构建后推仓库就用 `--output image --image <ref>` 加 `--push`，要落 OCI 归档就用
+`--output oci --output-path <远端路径>`，两者不能混用。
 
-### 场景六：批量升级所有 Agent
+### 场景六：升级 Agent
 
 ```bash
 doops -session upgrade_demo upgrade \
-  --target prod --cluster prod \
-  --image <your-registry>/doops:<release> \
+  --target prod-node \
+  --image <your-registry>/doops-agent@sha256:<verified-digest> \
   --mode k8s --namespace doops-system \
-  --workload daemonset/doops-agent --container doops-agent \
+  --release <helm-release> \
   --dry-run
 
-# 先演练，确认无误后去掉再执行
+# 仅预览参数。正式升级前按 SOP 核对目标、制品与回滚条件。
 ```
 
-K8s 模式自动执行`kubectl set image`和`rollout status`；裸二进制 Agent 会被明确拒绝，不会误伤。
+`doops upgrade` 只替换 **Helm 管理的 Deployment**：集群内独立 Job 先备份当前 revision，
+再升级该 workload，新 Pod 未 Ready 或 `release_commit` 不匹配就自动回滚。tag 不是不可变版本
+证据，生产用 `repository@sha256:<verified-digest>`。DaemonSet、裸二进制和独立 Docker Agent
+不走这条通道，迁移、正式升级前置条件与外部入口见[构建与部署 SOP](../../backend/docs/BUILD_DEPLOY_SOP.md)。
 
 ## 06 二次开发（一）：写一个自己的 Skill
 
@@ -266,10 +271,13 @@ priority: 50
 
 ## 标准工作流
 
-cd platform-tools/labelU
-doops -session prod push --target gpu-master --src ./ --dest /root/ws/prod/labelu
-doops -session prod exec --target gpu-master --cmd "cd /root/ws/prod/labelu && buildctl ..."
-doops -session prod exec --target gpu-master --cmd "kubectl rollout restart deployment/labelu -n ai"
+如发布使用本地 Chart，由操作员将项目根目录上传到发布会话：
+`doops -session prod push --target "$TARGET" --src platform-tools/labelU`。核对工作区已同步。
+
+通过同一会话提交 Helm 任务：
+`doops -session prod ask --target "$TARGET" --apply --msg "$RELEASE_TASK"`。
+任务中写明 release、namespace、工作区内实际 Chart 路径及本次选用的 values。
+以 Helm 执行终态和 release revision 核对结果。
 
 ## 异常处理红线
 
@@ -284,7 +292,7 @@ doops -session prod exec --target gpu-master --cmd "kubectl rollout restart depl
 
 **编写纪律**
 
-一个子业务一个 Skill 目录；远端操作一律收敛到`/root/ws/$SESSION/`沙盒；绝对禁止在 Skill 里引用旧的 SCP / SSH 手工手段。通用能力优先复用官方`deploy/SKILL.md`，别重复造轮子。
+一个子业务一个 Skill 目录；远端操作一律收敛到`/root/ws/$SESSION/`沙盒；绝对禁止在 Skill 里引用旧的 SCP / SSH 手工手段。Helm 发布步骤见[业务发布指南](../../backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ## 07 二次开发（二）：API 对接你的平台
 
@@ -335,7 +343,7 @@ Content-Type: application/json
 
 这是所有人第一反应。DoOps 的答案是把安全做在链路上，而不是贴在文档上。
 
-- **统一认证**：用户用 gateway user token；Agent 注册不需要 token，天然少一份要保管的凭据。
+- **认证**：用户通过 Gateway user token 操作目标。启用 enrollment 的 Agent 使用单独签发的目标注册令牌。
 - **细粒度授权**：默认全功能，需要隔离时按`cluster / instance / action`显式收窄；`agent:upgrade`、`admin`等高敏权限单独授予。
 - **全链路审计**：每条记录可按`user_id、token_id、cluster、instance、action、session、status`追溯——AI 干的和人干的，同样可查。
 - **沙盒纪律**：所有远端操作收敛在`/root/ws/$SESSION/`；Agent 容器默认不开 SSH、不开 WebIDE；高危操作默认拒绝。
@@ -362,7 +370,7 @@ Content-Type: application/json
 
 ### 支持哪些平台？
 
-CLI 预构建二进制覆盖 darwin / linux 的 amd64 与 arm64；Agent 推荐 K8s/DaemonSet 或 Docker/nerdctl 容器部署，containerd 环境把 docker 命令换成 nerdctl 即可。
+CLI 提供 darwin / linux 的 amd64 与 arm64 二进制。Kubernetes、独立 Docker 和其他容器运行时的维护路径见[发布 SOP](../../backend/docs/BUILD_DEPLOY_SOP.md)。
 
 ## 现在，轮到你把 SSH 关掉了
 

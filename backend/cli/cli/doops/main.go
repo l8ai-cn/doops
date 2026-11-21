@@ -656,7 +656,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, gateway, username, label string
 		var tokenStdin bool
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
-		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL or a configured target name that resolves to that Gateway")
+		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL (also accepts a configured route name). When used alone, discovers visible online targets")
 		loginFlag.StringVar(&target, "target", "", "Backward-compatible alias: resolve this target's Gateway and log in there")
 		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Validate and import a Gateway token from stdin without issuing another token")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
@@ -728,6 +728,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			live, err := fetchGatewayTargets(gateway, credential.Token)
 			if err != nil {
 				fmt.Printf("Error: gateway login succeeded but target discovery failed: %v\n", err)
+				fmt.Println("Gateway login is saved. Check Gateway target discovery and retry once the target list is available.")
 				os.Exit(1)
 			}
 			routes, err := persistVisibleGatewayRoutes(servers, gateway, live)

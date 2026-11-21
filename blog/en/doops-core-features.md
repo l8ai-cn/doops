@@ -65,7 +65,7 @@ The first thing DoOps solves is reachability:
 - **Structured SSH**: when you have to hop from machine A to machine B, a parameterized SSH proxy keeps multiple layers of quoting from being re-parsed by the remote shell;
 - **Node information**: CPU, memory, disk, and toolchain (build / image / runtime) at a glance;
 - **Files and code**: small text files are read and written directly (with explicit size limits); code and artifacts synchronize with push/pull, stored through the Gateway or a Git tunnel, and .gitignore is respected;
-- **Hosts and physical machines**: a Kubernetes Agent can enter the node it runs on to perform host checks; a physical machine can be onboarded on its own, or reached through an existing VM as a hop; the first connection still uses a DaemonSet, Docker, or a one-time SSH bootstrap.
+- **Hosts and physical machines**: a Kubernetes Agent can enter the node it runs on to perform host checks; a physical machine can be onboarded on its own, or reached through an existing VM as a hop; Kubernetes onboarding uses a Helm-managed Deployment. Standalone hosts follow the Docker or host bootstrap procedures.
 
 One detail: a timeout, a dropped connection, or termination by a signal is marked **"outcome unknown"** rather than "success" — a reminder to check the actual state before deciding whether to retry.
 
@@ -160,7 +160,7 @@ specified by the task and does not add a CI or provenance precondition.
 
 ### 9. Nodes and Agent: how machines join, and how they are updated
 
-- **Onboarding**: Kubernetes DaemonSet, Docker, or a one-time SSH bootstrap; online / offline / history / archived views; instance records offline for more than 24 hours are cleaned up automatically, while grants are retained;
+- **Onboarding**: see the [cluster installation guide](../../backend/docs/CLUSTER_INSTALL_GUIDE.md) for Kubernetes and standalone hosts; online / offline / history / archived views; instance records offline for more than 24 hours are cleaned up automatically, while grants are retained;
 - **Registration tokens**: issued for the Edge channel per exact target, with the plaintext returned only once;
 - **Capability gates**: `capabilities` checks the protocol capabilities of the target Agent; an old Agent fails outright instead of silently degrading (both ssh and upgrade enforce the check);
 - **Upgrades**: run as a separate Job — precheck → change → verify (pod Ready, image digest, version number, Gateway reconnection) → automatic rollback on failure;

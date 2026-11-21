@@ -20,15 +20,15 @@ var guideScenarios = map[string]guideScenario{
 	"onboard": {
 		summary: "connect this machine to a Gateway target",
 		steps: []string{
-			"doops login --gateway <url> --username <u>       # first login; discovers the live targets this account can use",
-			"doops list                                       # stored routes; a route is named after its instance",
-			"doops login --gateway <name|url> --username <u>  # later logins; --target still works as an alias",
-			"doops sync --target <t>                          # add live agents that appeared after the first login",
+			"doops login --gateway <gateway-url> --username <user>  # enter the password at the hidden terminal prompt",
+			"doops list                                              # choose an actual configured route name for <t>",
 			"doops targets --target <t>",
 			"doops exec --target <t> --cmd hostname            # online heartbeat is not enough; this proves the command channel",
 		},
 		notes: []string{
-			"a target the first login cannot discover, for example an Agent that is still offline, is added deliberately: doops add --name <t> --gateway <url> --cluster <c> --instance <i>",
+			`For automation, substitute the following for the login step: printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --gateway <gateway-url> --token-stdin`,
+			"Login is shared by routes on this Gateway. Login by URL adds visible online routes without renaming existing ones.",
+			"To discover routes later with the saved login, use doops sync --target <t>. If no route exists yet, use doops login --gateway <gateway-url> again.",
 		},
 	},
 	"diagnose": {

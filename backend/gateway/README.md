@@ -47,8 +47,7 @@ bash scripts/deploy-gateway.sh \
 
 Gateway 本体不登记为 doops target，也不通过 doops target 发布。target 是
 `doops-agent` 执行通道，可能处在容器/agent root 中，不能代表 gateway 服务的宿主机
-root。也不要用 base64/tar/分片临时传输替代发布脚本；如果 `doops push` 卡住，应修复
-Git HTTP 反向隧道或目标 agent 版本。
+root。也不要用 base64/tar/分片临时传输替代发布脚本；`doops push` 的故障排查按实际存储模式进行，见[构建与发布 SOP](../docs/BUILD_DEPLOY_SOP.md)。
 
 `--verify-target` 只复用本机 DoOps CLI 已配置的认证来读取发布前后 target 基线，不导出
 或落盘 user token。发布脚本不接受独立 token 文件。

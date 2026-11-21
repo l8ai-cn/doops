@@ -54,6 +54,28 @@ func TestDatabaseInventoryGroupsOnlyVerifiedStatefulSetMembers(t *testing.T) {
 	}
 }
 
+func TestDatabaseDiscoveryRecognizesSupportedImagesAndJDBCNames(t *testing.T) {
+	for _, tc := range []struct{ image, jdbc, engine, database string }{
+		{"cockroachdb/cockroach:v24", "jdbc:postgresql://orders:26257/sales", "postgres", "sales"},
+		{"mysql:8", "jdbc:mysql://orders:3306/sales?useSSL=true", "mysql", "sales"},
+		{"gvenzl/oracle-free:23", "", "oracle", ""},
+		{"container-registry.oracle.com/database/enterprise:19", "", "oracle", ""},
+		{"oraclelinux:9", "", "", ""},
+	} {
+		t.Run(tc.image, func(t *testing.T) {
+			container := map[string]interface{}{"image": tc.image, "env": []interface{}{map[string]interface{}{"name": "SPRING_DATASOURCE_URL", "value": tc.jdbc}}}
+			obj := map[string]interface{}{"kind": "Pod", "metadata": map[string]interface{}{"name": "orders", "namespace": "qa"}, "spec": map[string]interface{}{"containers": []interface{}{container}}}
+			rows := databaseInventoryRows([]map[string]interface{}{obj}, "local", "desktop")
+			if tc.engine == "" && len(rows) == 0 {
+				return
+			}
+			if len(rows) != 1 || rows[0].Engine != tc.engine || rows[0].DatabaseName != tc.database {
+				t.Fatalf("unexpected discovery: %#v", rows)
+			}
+		})
+	}
+}
+
 func TestDatabaseInventoryKeepsLegacyPodAssetUsable(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, filepath.Join(bin, "kubectl"), "#!/bin/sh\ncat <<'JSON'\n{\"items\":"+databaseInventorySample+"}\nJSON\n")

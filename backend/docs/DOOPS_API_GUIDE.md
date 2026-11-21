@@ -416,7 +416,7 @@ workspace/resource 正在执行，但其他 session 仍可使用同一 Agent。`
 
 ## Git 工作区同步
 
-`push/pull` 使用 Git HTTP，不使用 stdout、base64 或 tar 分块传输。标准公共 API 只通过 Gateway 访问：
+`push/pull --storage gateway` 通过 Git HTTP 同步所选会话的当前工作区。默认 `cos` 模式保存或读取已上传的快照。Git HTTP 端点如下。
 
 ```http
 GET/POST /v1/git/<cluster>/<instance>/<session>.git/...
@@ -425,10 +425,7 @@ Authorization: Basic doops:<USER_TOKEN>
 
 CLI 会自动把 user token 放到 Git Basic Auth 的密码字段。Gateway 验证 token 后，按 `<cluster>/<instance>` 找到在线 agent，并通过该 agent 已建立的 `/v1/agent/connect` WebSocket 连接反向透传 Git HTTP 请求。Agent 在本地调用自己的 `/git/<session>.git/...` handler，完成 Git push 或 fetch。
 
-权限映射：
-
-- `git-receive-pack`：需要 `push` 权限。
-- `git-upload-pack`：需要 `pull` 权限。
+Gateway 按用户对该 `cluster/instance` 的授权检查 Git 请求。`git-receive-pack` 写入工作区，`git-upload-pack` 读取工作区。
 
 典型 API 路径：
 
@@ -442,8 +439,8 @@ POST /v1/git/doops-oilan/oilan-node/deploy_20260514.git/git-receive-pack
 外部系统通常不需要手写 Git HTTP 报文，直接调用 CLI 更安全：
 
 ```bash
-doops -session deploy_20260514 push --target oilan --src .
-doops -session deploy_20260514 pull --target oilan --dest ./deploy-output
+doops -session deploy_20260514 push --storage gateway --target oilan --src .
+doops -session deploy_20260514 pull --storage gateway --target oilan --dest ./deploy-output
 ```
 
 ## 执行操作

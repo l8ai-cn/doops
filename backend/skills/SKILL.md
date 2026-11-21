@@ -78,12 +78,13 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | DoSql 原样查询 | `doops -session <s> sql --target <t> --mode query (--sql '<sql>'\|--file <f>) [--credential <name>]` |
 | DoSql 原样变更 | `doops -session <s> sql --target <t> --mode apply (--sql '<sql>'\|--file <f>) [--credential <name>] [--verify '<select>'] [--dry-run]`（`--dry-run` 先执行再回滚，拒绝隐式提交 DDL） |
 | DoSql 跨库复制表 | `doops -session <s> sql --target <t> --mode apply --copy-from <源库> --database <目标库> --tables a,b [--dry-run]` |
-| K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [-n <ns>\|-A] [-l <sel>] [-o jsonpath=...]`（Secret 与 ServiceAccount 不开放读取） |
-| Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
-| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|uncordon\|delete pod ...` |
+| K8s 只读 | `doops k8s --target <t> get pods -n <ns> -l <selector>` 或 `doops k8s --target <t> logs <resource> -n <ns> --tail 100`。其他操作的参数见 `doops k8s -h`。 |
+| Helm 只读 | `doops k8s --target <t> helm list -n <ns>` 列出 release。`doops k8s --target <t> helm status <release> -n <ns>` 查看指定 release。`helm values` 返回键路径。 |
+| K8s 运维变更 | `doops k8s --target <t> rollout restart deployment/<name> -n <ns>` 或 `doops k8s --target <t> scale deployment/<name> --replicas <n> -n <ns>`。节点命令为 `node cordon <node>` 和 `node uncordon <node>`。 |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
-| 工作区推送 / 下载 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
+| 上传 / 下载 COS 快照 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
+| 拉取远端工作区当前文件 | `doops -session <existing-session> pull --storage gateway --target <t> --dest <new-download-dir>` |
 | OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...` |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
@@ -91,8 +92,11 @@ DoOps 提供执行通道、target 授权和审计；是否发布及业务准入�
 | 网站代理路由 | `doops -session <s> admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（普通 ask 不提供） |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览参数，不校验活体 release、挂载或权限）；`--rollback` 恢复上一已验证 revision。旧 Agent 无 `upgradeAudit v1` 时失败（`upgrade_audit_unsupported`），首升须经 Gateway exec 提交独立 Job，见 `docs/BUILD_DEPLOY_SOP.md` |
-| CI 非交互登录 | `printf '%s' "$TOKEN" \| doops -session <s> login --gateway <u> --token-stdin` |
-| 首次登录 | `doops -session <s> login --gateway <url>`（自动发现 target） |
+| Gateway 交互登录 | `doops login --gateway <gateway-url>`（密码由终端隐藏输入） |
+| CI 导入已有 Gateway user token | `printf '%s' "$DOOPS_GATEWAY_TOKEN" \| doops login --gateway <gateway-url> --token-stdin` |
+
+登录方式二选一。同一 Gateway 的路由共享登录态。按 URL 登录会补齐可见的在线路由。
+用 `doops list` 选择实际路由名。故障处理见 [CLI 使用指南](docs/DOOPS_USAGE_GUIDE.md#login-and-logout)。
 
 DoSql 必须从 `doops sql` 进入，普通 `ask` 不保证注入工具；默认绑定当前 target 全部 active
 `use=database` 凭据，多库用 `--database` 选、多账号用 `--credential` 选；MongoDB 用 JSON 操作

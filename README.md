@@ -63,7 +63,7 @@ DoOps 不替代 Kubernetes 本身，也不是完整的监控时序数据库、IT
 | --- | --- | --- |
 | Web 控制台 | 登录、目标选择、命令和 AI 任务界面、节点信息、审计及管理入口 | 基于 Next.js；部分文件、知识库和模型配置界面仍需与后端契约联调 |
 | 统一 Gateway | Agent 注册、目标路由、用户鉴权、作用域授权、排队与并发控制 | SQLite 保存控制面状态；公网访问需部署 TLS 反向代理 |
-| Agent 反向连接 | 目标节点主动连接 Gateway，以 `cluster/instance` 标识执行目标 | 注册只声明 cluster/instance，不需要注册令牌；用户 Token 不用于 Agent 注册 |
+| Agent 反向连接 | 目标节点主动连接 Gateway，以 `cluster/instance` 标识执行目标 | Agent 首次使用为其 `cluster/instance` 签发的 enrollment token 连接成功后，Gateway 要求该目标后续注册携带有效的 enrollment token。 |
 | 确定性命令执行 | `exec` 运行命令并返回输出；支持后台任务、日志及状态查询 | 不是持久 PTY；命令具有 Agent 进程对应的系统权限 |
 | 快照与工作区同步 | `push/pull` 默认使用 COS 快照；`--storage gateway` 通过 Git HTTP 同步当前工作区 | 拉取与清理存在覆盖、删除风险；不是永久备份机制 |
 | 小文本文件操作 | 在指定 session 内执行 `read/write` | 使用工作区相对路径；大文件和二进制使用 `push/pull` |
@@ -256,21 +256,27 @@ bash scripts/install.sh --version <release-tag> --project /absolute/path/to/exis
 
 ### 2. 首次登录并发现目标
 
-以下为占位示例，需换成管理员提供的信息：
+以下为占位示例，需换成管理员提供的信息。两条登录命令二选一，不要连续执行：密码登录成功后再导入 token，会替换该 Gateway 的本地登录态。
 
 ```bash
-# 没有本地路由时用 --gateway 首次登录；密码交互或 token stdin 都可以
-doops login --gateway https://gateway.example.com
-printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+# 交互登录：有用户名和密码时使用。密码只从终端隐藏输入。
+doops login --gateway https://gateway.example.com --username alice
+```
 
+```bash
+# 导入已有 Gateway user token：供自动化使用。不能与 --username 同时使用，也不能把密码交给这条命令。
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+```
+
+```bash
 doops list
 ```
 
 - 首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回本机路由；已有路由的名称、别名和描述不会被改写。
 - 操作员不需要预先知道 Agent 的 `cluster/instance`。
-- 只有需要在登录前固定一条路由（或使用尚不支持 `--gateway` 的旧发布 CLI）时，才先用 `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` 预置路由，再 `doops login --gateway <url>`（`--target <name>` 仍可作为别名）。
+- 只有 Gateway 发现不到的 Agent（例如还离线）才先用 `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` 预置路由，再 `doops login --gateway <url>`。`--target <name>` 只是把已有路由解析到同一 Gateway 的别名，不是另一次登录。
 - `doops add` 只保存 Gateway 路由，不保存 target token；用户登录态单独保存在本地 auth 缓存。
-- 实际凭据不要保留在公开日志、脚本或共享终端历史中；密码登录使用交互式输入或 `--token-stdin`。
+- 实际凭据不要保留在公开日志、脚本或共享终端历史中。密码只从终端隐藏输入；已有 token 只用 `--token-stdin`。二者不能互换。
 
 ### 3. 检查连接
 
@@ -286,10 +292,14 @@ doops -session diagnose targets --target <自动发现的 target> --admission
 doops -session inspect-001 exec --target <自动发现的 target> --cmd 'hostname'
 ```
 
-已有目标需要重新密码登录时，直接运行以下命令即可；密码只能由终端隐藏输入（或 `--token-stdin` 导入），CLI 没有 `--password` 参数：
+已有路由后再次登录，登录的仍是 Gateway。二选一；CLI 没有 `--password`，也不能把密码交给 `--token-stdin`：
 
 ```bash
 doops login --gateway <name|url> --username alice
+```
+
+```bash
+printf '%s' "$TOKEN" | doops login --gateway <name|url> --token-stdin
 ```
 
 <a id="self-host"></a>
@@ -332,7 +342,7 @@ backend/bin/doops-gateway token create \
   -name initial-console -expires 24h
 ```
 
-用户 Token 会输出一次，请立即私密保存。示例中的全局 `admin` 仅用于首次受信任初始化，**不要作为普通用户默认权限**。Agent 反向注册只声明 `cluster/instance`，Gateway 不为普通 Agent 签发注册凭据；当前 Gateway CLI 也不提供通用的 `agent-token create` 命令。
+用户 Token 会输出一次，请立即私密保存。示例中的全局 `admin` 仅用于首次受信任初始化，**不要作为普通用户默认权限**。
 
 启动 Gateway：
 
@@ -553,7 +563,7 @@ doops -session agent-upgrade upgrade \
 
 ### 权限与凭据原则
 
-1. **区分用户 Token 与 Agent 注册标识**：前者用于操作 Gateway；普通 Agent 反向注册只用 `cluster/instance` 标识，不需要令牌，两者不是可互换的密码。
+1. 用户 Token 用于操作 Gateway。 Agent 首次使用为其 `cluster/instance` 签发的 enrollment token 连接成功后，Gateway 要求该目标后续注册携带有效的 enrollment token。
 2. **明确授权范围与动作**：不要将 `admin`、通配符或省略 actions 的授权当作普通用户模板。
 3. **审阅管理端的默认授权**：不同创建入口的默认行为可能不同，不要假定所有新用户天然符合最小权限。
 4. **限制高权限能力**：`exec`、集群凭据、宿主目录和运行时 socket 都可能具有较大影响范围。

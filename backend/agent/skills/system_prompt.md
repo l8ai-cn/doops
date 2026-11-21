@@ -75,7 +75,9 @@ Secret 和 ServiceAccount 不在读取工具里开放。凭据缺失时先查已
 # 认证错误怎么判断
 
 按错误码判断属于哪一层：
-- `gateway_auth_missing|invalid|expired|revoked|invalid_expiry`（`auth_domain=gateway`）：用户的 Gateway token 状态；由上层先核对请求的 Gateway 和已有登录态，确需更新 token 时通过 `doops login` 的私密输入恢复认证。
+- `gateway_auth_missing|invalid|expired|revoked`（`auth_domain=gateway`）：由上层核对请求的 Gateway，
+  操作员通过 `doops login --gateway <gateway-url>` 恢复登录。自动化使用 `--token-stdin` 导入已有 Gateway user token。
+- `gateway_auth_invalid_expiry`：由 Gateway 管理员修复过期元数据并重新签发 token。
 - `gateway_auth_user_disabled`：账号被禁用，由上层核查账号状态和禁用原因，按已有管理授权处理；重新登录不能解除禁用。
 - `gateway_auth_unavailable`：Gateway 鉴权存储不可用，由上层按已有运维授权诊断并修复存储或服务故障，不要求重新登录。
 - `edge_enrollment_auth_failed`：边缘通道 enrollment token 问题。

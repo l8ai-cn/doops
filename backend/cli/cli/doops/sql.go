@@ -56,7 +56,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	flags := flag.NewFlagSet("sql", flag.ContinueOnError)
 	flags.SetOutput(nil)
 	target := flags.String("target", "", "Configured Gateway target")
-	request := flags.String("request", "", "Database request in natural language (--mode query, plan, or discover)")
+	request := flags.String("request", "", "Database request in natural language (optional for discover)")
 	mode := flags.String("mode", string(sqlModeQuery), "DoSql mode: query, plan, apply, or discover")
 	database := flags.String("database", "", "Optional logical database or asset hint")
 	root := flags.String("root", "", "Local code/Helm root for --mode discover")
@@ -168,7 +168,10 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 			"doops guide database   # check engine/statement rollback limits before apply",
 			"doops sql --target "+*target+" --mode apply --sql '<sql>' --verify '<select>'   # add --dry-run only for rollback-capable batches; MySQL/Oracle implicit-commit DDL must run separately from DML"))
 	}
-	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
+	if parsedMode == sqlModeDiscover && strings.TrimSpace(*request) == "" {
+		*request = "列出当前目标上的数据库实例。"
+	}
+	if strings.TrimSpace(*request) == "" {
 		return fmt.Errorf("%s", withNext("sql needs --sql, --file or --request", "doops sql --target "+*target+" --mode query --sql 'select ...'", "doops guide database"))
 	}
 	if parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "" {

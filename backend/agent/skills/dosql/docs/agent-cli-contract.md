@@ -1,7 +1,7 @@
 # DoSql Agent CLI Contract
 
-The DoSql Skill should expose a CLI that doagent can call. The CLI is the only
-database execution path.
+The DoSql Skill provides an internal Node.js CLI for structured operations.
+Explicit SQL and bound table copies use the Agent’s direct execution path.
 
 ## Current Implementation
 
@@ -13,7 +13,7 @@ node backend/agent/skills/dosql/scripts/dosql-agent.mjs <command> \
   --output response.json
 ```
 
-Users normally reach this wrapper through `doops sql`. The wrapper is an
+Users enter through `doops sql`. The Agent selects the execution path. The wrapper is an
 internal deterministic executor, not a second login or target authorization
 entrypoint. Gateway identity, target scope and managed credential scope are
 already established before the Agent invokes it.
