@@ -144,7 +144,7 @@ func handleFileWrite(argBytes json.RawMessage) (string, error) {
 		return "", err
 	}
 	defer root.Close()
-	name, err := filepath.Rel(root.Name(), path)
+	name, err := filepath.Rel(filepath.Join(workspaceRoot(), args.SessionID), path)
 	if err != nil {
 		return "", err
 	}
@@ -186,7 +186,7 @@ func handleFileRead(argBytes json.RawMessage) (string, error) {
 		return "", err
 	}
 	defer root.Close()
-	name, err := filepath.Rel(root.Name(), path)
+	name, err := filepath.Rel(filepath.Join(workspaceRoot(), args.SessionID), path)
 	if err != nil {
 		return "", err
 	}

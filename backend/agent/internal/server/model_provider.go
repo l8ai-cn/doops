@@ -321,8 +321,18 @@ func materializeModelProviderCredential(ctx context.Context, req CredentialMater
 // does not look for a Kubernetes Secret a model credential never creates. A
 // settings file owned by another grant is left alone.
 func cleanupModelProviderCredential(req CredentialCleanupRequest) (bool, error) {
+	if req.CredentialType != "" && req.CredentialType != CredentialTypeModelProvider {
+		return false, nil
+	}
 	modelProviderSettingsMu.Lock()
 	defer modelProviderSettingsMu.Unlock()
+	// Older Gateways omitted the type. Avoid routing their Kubernetes cleanup
+	// through an inaccessible model directory on Agents without local model settings.
+	if req.CredentialType == "" {
+		if _, err := os.Lstat(modelProviderPendingPath()); errors.Is(err, os.ErrPermission) {
+			return false, nil
+		}
+	}
 	if err := recoverPendingModelSettings(); err != nil {
 		return false, errors.New("credential_target_outcome_unknown")
 	}

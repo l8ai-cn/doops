@@ -44,13 +44,14 @@ type CredentialMaterializeRequest struct {
 }
 
 type CredentialCleanupRequest struct {
-	SessionID    string                 `json:"session_id"`
-	CredentialID string                 `json:"credential_id"`
-	GrantID      string                 `json:"grant_id"`
-	VersionID    string                 `json:"version_id"`
-	AnyVersion   bool                   `json:"any_version,omitempty"`
-	Namespace    string                 `json:"namespace"`
-	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
+	CredentialType CredentialType         `json:"credential_type,omitempty"`
+	SessionID      string                 `json:"session_id"`
+	CredentialID   string                 `json:"credential_id"`
+	GrantID        string                 `json:"grant_id"`
+	VersionID      string                 `json:"version_id"`
+	AnyVersion     bool                   `json:"any_version,omitempty"`
+	Namespace      string                 `json:"namespace"`
+	Workload       CredentialPlanWorkload `json:"workload,omitempty"`
 	// AuthfileOnly limits the cleanup to the Agent's own OCI authfile. The
 	// Kubernetes Secret is the kubelet's pull credential and outlives the Pod,
 	// so a failed reconnect delivery must not remove it: a workload pulling

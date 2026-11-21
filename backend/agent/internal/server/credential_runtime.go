@@ -928,6 +928,7 @@ func (h *GatewayHub) cleanupCredentialVersion(ctx context.Context, request Crede
 		"session_id": request.SessionID, "credential_id": request.CredentialID,
 		"grant_id": request.GrantID, "version_id": request.VersionID,
 		"namespace": request.Scope.Namespace, "workload": request.Scope.Workload,
+		"credential_type": request.CredentialType,
 	}
 	if request.AuthfileOnly {
 		// The restore owns only the Agent's authfile. The Kubernetes Secret
@@ -949,6 +950,7 @@ func (h *GatewayHub) cleanupCredentialMaterializationContext(
 		"session_id": request.SessionID, "credential_id": request.CredentialID,
 		"grant_id": request.GrantID, "version_id": request.VersionID, "any_version": true,
 		"namespace": request.Scope.Namespace, "workload": request.Scope.Workload,
+		"credential_type": request.CredentialType,
 	}
 	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err
