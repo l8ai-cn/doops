@@ -97,7 +97,7 @@ export function FilesPanel(props: {
         </label>
       )}
       <AgentPathsLoader session={props.session} target={props.target}>
-        {(paths) => <FilesPanelContent key={JSON.stringify([props.session.gateway, props.target.cluster, props.target.instance, paths])} {...props} base={paths.workspace_root} />}
+        {(paths) => <FilesPanelContent key={JSON.stringify([props.session.gateway, props.target.cluster, props.target.instance, props.sessionId, paths])} {...props} base={paths.workspace_root} />}
       </AgentPathsLoader>
     </div>
   )

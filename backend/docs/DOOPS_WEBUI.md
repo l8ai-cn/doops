@@ -6,6 +6,8 @@ session 输入保留独立草稿，按 Enter 或移开焦点时只有有效名�
 
 Agent 目录配置查询失败时，AI 助手显示错误及「重试」按钮；重试成功后才创建代码工作区。
 
+文件页面提交新的有效 session 时清空原会话的打开文件和编辑状态，session 输入框保持挂载。
+
 文件页面使用目标 Agent 的 `DOOPS_WORKSPACE_ROOT/<session>`，知识库页面使用目标 Agent 的 `DOOPS_KB_ROOT`。控制台通过 `doops_node_info` 的 `paths` section 读取实际目录；未配置时分别为 `/root/ws` 和 `/root/kb`。旧版 Agent 返回 `-32602: unsupported node info section` 时沿用这两个默认目录；其他读取配置失败均显示错误，不尝试访问默认目录。
 
 从本机 3000 端口打开控制台时，登录页默认填写 Gateway 地址 `http://127.0.0.1:42222`。手动连接其他 Gateway 后，登录页会记住该地址。
