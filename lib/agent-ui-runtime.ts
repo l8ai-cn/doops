@@ -23,6 +23,7 @@ export function createDoopsAgentUiRuntime(options: {
   session: Session
   target: Target
   sessionId: string
+  workspaceRoot?: string
   codeWorkspace?: CodeWorkspaceSource
   readOnly?: boolean
 }): ConnectedAgentSessionRuntime {

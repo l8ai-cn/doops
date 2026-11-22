@@ -13,6 +13,7 @@ import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { browserSessionStorage, loadDeployState, saveDeployDraft, saveDeploySession } from "@/lib/console-persistence"
 import { DeploymentForm } from "./deployment-form"
+import { AgentPathsLoader } from "./agent-paths"
 
 // Helm release channel: the same `doops.operations/apply` command as `doops ask --apply`,
 // sent through the hosted agent session so the native timeline shows the trace and the Agent's live evidence.
@@ -22,6 +23,16 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   // Passed only for platform admins; it decides what is shown, the Gateway still checks every operation.
   onOpenCredentials?: () => void
   onOpenUpgrade?: () => void
+}) {
+  return <AgentPathsLoader session={session} target={target}>{(paths) => <WorkloadDeployPanelContent key={JSON.stringify([session.gateway, target.key, paths])} session={session} target={target} onOpenCredentials={onOpenCredentials} onOpenUpgrade={onOpenUpgrade} workspaceRoot={paths.workspace_root} />}</AgentPathsLoader>
+}
+
+function WorkloadDeployPanelContent({ session, target, onOpenCredentials, onOpenUpgrade, workspaceRoot }: {
+  session: Session
+  target: Target
+  onOpenCredentials?: () => void
+  onOpenUpgrade?: () => void
+  workspaceRoot: string
 }) {
   // Keep the release session across view switches so a running apply stays visible after returning. It is kept per
   // Gateway, user and target; a token login keeps it in memory only. Logout clears both (console-persistence.ts).
@@ -37,7 +48,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   }, [session, target.key, releaseState.sessionId, releaseState.previousRelease])
   const loadDraft = useCallback(() => loadDeployState(browserSessionStorage(), session, target.key).draft, [session, target.key])
   const saveDraft = useCallback((text: string | null) => saveDeployDraft(browserSessionStorage(), session, target.key, text), [session, target.key])
-  const codeWorkspace = useMemo(() => createDoopsCodeWorkspace({ session, target, sessionId }), [session, target.cluster, target.instance, sessionId])
+  const codeWorkspace = useMemo(() => createDoopsCodeWorkspace({ session, target, sessionId, workspaceRoot }), [session, target.cluster, target.instance, sessionId, workspaceRoot])
   const runtime = useMemo(
     () => createDoopsAgentUiRuntime({ session, target, sessionId, codeWorkspace, readOnly }),
     [session, target.cluster, target.instance, sessionId, codeWorkspace, readOnly],

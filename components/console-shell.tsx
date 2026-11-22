@@ -40,6 +40,8 @@ import { TerminalPanel } from "./terminal-panel"
 import { nextTerminalPrefill, prefillToApply, targetSwitchBlocker, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
+import { workspaceRootPath } from "@/lib/workspace-path"
+import { useAgentPaths } from "./agent-paths"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { DatabasePanel } from "./database-panel"
@@ -102,6 +104,9 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const [targets, setTargets] = useState<Target[]>([])
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
+  const [sessionDraft, setSessionDraft] = useState(sessionId)
+  useEffect(() => { setSessionDraft(sessionId) }, [sessionId])
+  const agentPaths = useAgentPaths(session, selected)
   const [tab, setTab] = useState<Tab>("overview")
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
   // 终端标签按需挂载；记录已消费的 nonce，避免重新进入终端时再次预填旧命令。
@@ -209,9 +214,9 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }, [autoOpenPending, session, showGuide, openWhatsNew])
 
   const codeWorkspace = useMemo(() => {
-    if (!session || !selected) return null
-    return createDoopsCodeWorkspace({ session, target: selected, sessionId })
-  }, [session, selected?.cluster, selected?.instance, sessionId])
+    if (!session || !selected || !agentPaths?.paths || !workspaceRootPath(sessionId)) return null
+    return createDoopsCodeWorkspace({ session, target: selected, sessionId, workspaceRoot: agentPaths.paths.workspace_root })
+  }, [session, selected?.cluster, selected?.instance, sessionId, agentPaths?.paths])
   const agentRuntime = useMemo(() => {
     if (!session || !selected || !codeWorkspace) return null
     return createDoopsAgentUiRuntime({ session, target: selected, sessionId, codeWorkspace })
@@ -405,7 +410,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
 
   function changeSession(next: string) {
     if (next !== sessionId && blockTerminalSwitch()) return
-    setSessionId(next)
+    setSessionDraft(next)
+    if (next === next.trim() && workspaceRootPath(next)) setSessionId(next)
+  }
+
+  function draftSession(next: string) {
+    if (next !== sessionDraft && blockTerminalSwitch()) return
+    setSessionDraft(next)
   }
 
   function selectTarget(t: Target) {
@@ -657,9 +668,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
                     <Input
-                      value={sessionId}
+                      value={sessionDraft}
                       disabled={skillRunning}
-                      onChange={(e) => changeSession(e.target.value)}
+                      onChange={(e) => draftSession(e.target.value)}
+                      onBlur={(e) => changeSession(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") changeSession(e.currentTarget.value) }}
                       scale="sm"
                       className="w-44 font-mono"
                     />
@@ -718,11 +731,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 )}
                 {tab === "files" && (
                   <FilesPanel
-                    key={`files-${selected.key}-${sessionId}`}
+                    key={`files-${selected.key}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
-                    onSessionChange={changeSession}
+                    onSessionChange={draftSession}
+                    onSessionCommit={changeSession}
+                    sessionDraft={sessionDraft}
                   />
                 )}
                 {tab === "kb" && (

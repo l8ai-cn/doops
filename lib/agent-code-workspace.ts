@@ -9,6 +9,7 @@ interface CodeWorkspaceOptions {
   session: Session
   target: Target
   sessionId: string
+  workspaceRoot?: string
 }
 
 function normalizeCodePath(path: string): string | null {
@@ -101,7 +102,7 @@ async function readFile(options: CodeWorkspaceOptions, path: string, signal: Abo
 }
 
 export function createDoopsCodeWorkspace(options: CodeWorkspaceOptions): CodeWorkspaceSource {
-  const root = workspaceRootPath(options.sessionId)
+  const root = workspaceRootPath(options.sessionId, options.workspaceRoot)
   if (!root) throw new Error("代码工作区 session 无效")
   const source: CodeWorkspaceSource = {
     workspaceKey: `${options.target.cluster}/${options.target.instance}`,

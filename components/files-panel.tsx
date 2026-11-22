@@ -78,7 +78,9 @@ export function FilesPanel(props: {
   session: Session
   target: Target
   sessionId: string
+  sessionDraft?: string
   onSessionChange?: (id: string) => void
+  onSessionCommit?: (id: string) => void
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -86,8 +88,10 @@ export function FilesPanel(props: {
         <label className="flex shrink-0 items-center gap-1.5 border-b px-4 py-2 text-xs text-muted-foreground">
           session
           <input
-            value={props.sessionId}
+            value={props.sessionDraft ?? props.sessionId}
             onChange={(e) => props.onSessionChange?.(e.target.value)}
+            onBlur={(e) => props.onSessionCommit?.(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") props.onSessionCommit?.(e.currentTarget.value) }}
             className="w-40 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
           />
         </label>
