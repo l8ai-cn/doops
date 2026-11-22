@@ -28,7 +28,12 @@ export function AgentPathsLoader({ session, target, sessionId, children }: {
         const paths = parseAgentPaths(text)
         if (active) setState({ key, paths })
       } catch (error) {
-        if (active) setState({ key, error: (error as Error).message })
+        const failure = error as Error & { code?: number }
+        if (active) {
+          if (failure.code === -32602 && failure.message === "unsupported node info section") {
+            setState({ key, paths: parseAgentPaths("{}") })
+          } else setState({ key, error: failure.message })
+        }
       }
     }
     void load()
