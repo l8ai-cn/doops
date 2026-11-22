@@ -1,5 +1,7 @@
 # Doops WebUI
 
+文件页面使用目标 Agent 的 `DOOPS_WORKSPACE_ROOT/<session>`，知识库页面使用目标 Agent 的 `DOOPS_KB_ROOT`。控制台通过 `doops_node_info` 的 `paths` section 读取实际目录；未配置时分别为 `/root/ws` 和 `/root/kb`。读取配置失败时显示错误，不尝试访问默认目录。
+
 从本机 3000 端口打开控制台时，登录页默认填写 Gateway 地址 `http://127.0.0.1:42222`。手动连接其他 Gateway 后，登录页会记住该地址。
 
 登录页使用 14 px 文字，表单标签和输入提示采用浅色，博客链接使用浅蓝色并带下划线。

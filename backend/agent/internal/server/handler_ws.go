@@ -851,6 +851,16 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_node_info":
 		var args api.NodeInfoParams
 		json.Unmarshal(argBytes, &args)
+		if args.Section == "paths" {
+			kb, err := knowledgeBaseRoot()
+			if err != nil {
+				writeJSON(buildToolErrorResponse(reqID, err.Error()))
+				return
+			}
+			paths, _ := json.Marshal(map[string]string{"workspace_root": filepath.Clean(workspaceRoot()), "kb_root": kb})
+			writeJSON(buildSuccessResponse(reqID, string(paths)))
+			return
+		}
 		if args.Section != "" {
 			if args.Section != "admission" {
 				writeJSON(buildErrorResponse(reqID, -32602, "unsupported node info section"))

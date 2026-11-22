@@ -13,23 +13,28 @@ import {
   CheckIcon,
 } from "./icons"
 import { SegmentedControl, Input } from "./ui"
+import { AgentPathsLoader } from "./agent-paths"
 
-// 知识库根目录（持久化，不随会话工作区清理）
-const KB_ROOT = "/root/kb"
 type Mode = "edit" | "preview" | "split"
 
 function shq(s: string) {
   return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
-export function KnowledgeBase({
+export function KnowledgeBase(props: { session: Session; target: Target; sessionId: string }) {
+  return <AgentPathsLoader {...props}>{(paths) => <KnowledgeBaseContent key={JSON.stringify([props.target.cluster, props.target.instance, paths])} {...props} KB_ROOT={paths.kb_root} />}</AgentPathsLoader>
+}
+
+function KnowledgeBaseContent({
   session,
   target,
   sessionId,
+  KB_ROOT,
 }: {
   session: Session
   target: Target
   sessionId: string
+  KB_ROOT: string
 }) {
   const [docs, setDocs] = useState<string[]>([])
   const [listBusy, setListBusy] = useState(false)
@@ -50,7 +55,7 @@ export function KnowledgeBase({
   const [nameErr, setNameErr] = useState("")
   const documentNames = [...new Set([...docs, ...drafts.current.keys()])].sort((a, b) => a.localeCompare(b))
 
-  const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
+  const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [KB_ROOT])
 
   const refresh = useCallback(async () => {
     setListBusy(true)
@@ -83,7 +88,7 @@ export function KnowledgeBase({
     } finally {
       setListBusy(false)
     }
-  }, [session, target.cluster, target.instance, sessionId])
+  }, [session, target.cluster, target.instance, sessionId, KB_ROOT])
 
   useEffect(() => {
     refresh()

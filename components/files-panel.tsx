@@ -37,6 +37,7 @@ import {
   TrashIcon,
 } from "./icons"
 import { useAppDialog } from "./app-dialog"
+import { AgentPathsLoader } from "./agent-paths"
 
 interface Entry {
   name: string
@@ -73,19 +74,30 @@ function looksTextual(file: File) {
   return !/\.[a-z0-9]+$/i.test(file.name) || file.type.startsWith("text/") || file.type === "application/json"
 }
 
-export function FilesPanel({
-  session,
-  target,
-  sessionId,
-  onSessionChange,
-}: {
+export function FilesPanel(props: {
   session: Session
   target: Target
   sessionId: string
   onSessionChange?: (id: string) => void
 }) {
-  const [cwd, setCwd] = useState(() => workspaceRootPath(sessionId) || "")
-  const workspaceRoot = workspaceRootPath(sessionId)
+  return <AgentPathsLoader {...props}>{(paths) => <FilesPanelContent key={JSON.stringify([props.target.cluster, props.target.instance, paths])} {...props} base={paths.workspace_root} />}</AgentPathsLoader>
+}
+
+function FilesPanelContent({
+  session,
+  target,
+  sessionId,
+  onSessionChange,
+  base,
+}: {
+  session: Session
+  target: Target
+  sessionId: string
+  onSessionChange?: (id: string) => void
+  base: string
+}) {
+  const [cwd, setCwd] = useState(() => workspaceRootPath(sessionId, base) || "")
+  const workspaceRoot = workspaceRootPath(sessionId, base)
   const [entries, setEntries] = useState<Entry[]>([])
   const [listBusy, setListBusy] = useState(false)
   const [listErr, setListErr] = useState("")
@@ -113,8 +125,8 @@ export function FilesPanel({
       setListErr("")
       let buf = ""
       try {
-        const safeDir = workspaceRelativePath(sessionId, dir)
-        const safeRoot = workspaceRootPath(sessionId)
+        const safeDir = workspaceRelativePath(sessionId, dir, base)
+        const safeRoot = workspaceRootPath(sessionId, base)
         if (safeDir === null || !safeRoot) {
           setEntries([])
           setListErr("工作区路径无效")
@@ -146,7 +158,7 @@ export function FilesPanel({
         setListBusy(false)
       }
     },
-    [session, target, sessionId],
+    [session, target, sessionId, base],
   )
 
   useEffect(() => {
@@ -159,7 +171,7 @@ export function FilesPanel({
     setStatus(null)
     let buf = ""
     try {
-      const relativePath = workspaceRelativePath(sessionId, path)
+      const relativePath = workspaceRelativePath(sessionId, path, base)
       if (relativePath === null || !relativePath) {
         setStatus({ kind: "err", text: "文件路径必须位于当前工作区内" })
         return
@@ -193,7 +205,7 @@ export function FilesPanel({
     setBusy(true)
     setStatus(null)
     try {
-      const relativePath = workspaceRelativePath(sessionId, openPath)
+      const relativePath = workspaceRelativePath(sessionId, openPath, base)
       if (relativePath === null || !relativePath) {
         setStatus({ kind: "err", text: "文件路径必须位于当前工作区内" })
         return
@@ -230,7 +242,7 @@ export function FilesPanel({
       confirmLabel: "创建",
     })
     if (!name) return
-    const path = joinWorkspacePath(sessionId, cwd, name)
+    const path = joinWorkspacePath(sessionId, cwd, name, base)
     if (!path) {
       setStatus({ kind: "err", text: "文件名必须位于当前工作区内" })
       return
@@ -317,7 +329,7 @@ export function FilesPanel({
 
   // 通过 doops_file_write 逐个写入文件，子目录先 mkdir -p
   async function writeRemoteFile(path: string, text: string) {
-    const relativePath = workspaceRelativePath(sessionId, path)
+    const relativePath = workspaceRelativePath(sessionId, path, base)
     if (relativePath === null || !relativePath) throw new Error("上传路径必须位于当前工作区内")
     let err: string | null = null
     await callTool(
@@ -336,8 +348,8 @@ export function FilesPanel({
   }
 
   async function mkdirRemote(dir: string) {
-    const safeDir = workspaceRelativePath(sessionId, dir)
-    const safeRoot = workspaceRootPath(sessionId)
+    const safeDir = workspaceRelativePath(sessionId, dir, base)
+    const safeRoot = workspaceRootPath(sessionId, base)
     if (safeDir === null || !safeRoot) throw new Error("上传目录必须位于当前工作区内")
     const remoteDir = safeDir ? `${safeRoot}/${safeDir}` : safeRoot
     await callTool(
@@ -360,7 +372,7 @@ export function FilesPanel({
     const dirsToMake = new Set<string>()
     const destinations = files.map((file) => {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-      return { file, rel, path: joinWorkspacePath(sessionId, cwd, rel) }
+      return { file, rel, path: joinWorkspacePath(sessionId, cwd, rel, base) }
     })
     if (destinations.some((item) => !item.path)) {
       setStatus({ kind: "err", text: "上传路径必须位于当前工作区内" })
@@ -374,7 +386,7 @@ export function FilesPanel({
     for (const { rel } of safeDestinations) {
       const slash = rel.lastIndexOf("/")
       if (slash > 0) {
-        const dir = joinWorkspacePath(sessionId, cwd, rel.slice(0, slash))
+        const dir = joinWorkspacePath(sessionId, cwd, rel.slice(0, slash), base)
         if (dir) dirsToMake.add(dir)
       }
     }
@@ -445,7 +457,7 @@ export function FilesPanel({
     }
   }
 
-  const crumbs = (workspaceRelativePath(sessionId, cwd) || "").split("/").filter(Boolean)
+  const crumbs = (workspaceRelativePath(sessionId, cwd, base) || "").split("/").filter(Boolean)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -633,7 +645,7 @@ export function FilesPanel({
         <div className="shrink-0 border-b bg-muted/30 px-3 py-3">
           <div className="mb-1.5 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              大文件 / 整个目录用 CLI 极速同步（Git HTTP），上传到 <code className="font-mono">/root/ws/{sessionId}</code>
+              大文件 / 整个目录用 CLI 极速同步（Git HTTP），上传到 <code className="font-mono">{workspaceRoot}</code>
             </p>
             <Button
               onClick={copyCommand}
@@ -722,7 +734,7 @@ export function FilesPanel({
               <p className="px-2 py-2 text-xs text-muted-foreground">空目录</p>
             )}
             {entries.map((e) => {
-              const full = joinWorkspacePath(sessionId, cwd, e.name)
+              const full = joinWorkspacePath(sessionId, cwd, e.name, base)
               if (!full) return null
               const active = openPath === full
               return (
