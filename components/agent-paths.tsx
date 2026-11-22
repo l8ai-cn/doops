@@ -6,8 +6,9 @@ import { TOOLS } from "@/lib/gateway"
 import { parseAgentPaths, type AgentPaths } from "@/lib/agent-paths"
 
 export function useAgentPaths(session: Session | null, target: Target | null) {
+  const [attempt, setAttempt] = useState(0)
   const [state, setState] = useState<{ key: string; paths?: AgentPaths; error?: string } | null>(null)
-  const key = JSON.stringify([session?.gateway, target?.cluster, target?.instance])
+  const key = JSON.stringify([session?.gateway, target?.cluster, target?.instance, attempt])
   useEffect(() => {
     if (!session || !target) return
     let active = true
@@ -36,7 +37,7 @@ export function useAgentPaths(session: Session | null, target: Target | null) {
     void load()
     return () => { active = false }
   }, [session?.gateway, session?.demo, target?.cluster, target?.instance, key])
-  return state?.key === key ? state : null
+  return { ...(state?.key === key ? state : null), retry: () => setAttempt((value) => value + 1) }
 }
 
 export function AgentPathsLoader({ session, target, children }: {
@@ -45,7 +46,7 @@ export function AgentPathsLoader({ session, target, children }: {
   children: (paths: AgentPaths) => ReactNode
 }) {
   const state = useAgentPaths(session, target)
-  if (!state) return <p>正在读取 Agent 目录配置…</p>
-  if (!state.paths) return <p role="alert">{state.error}</p>
+  if (!state.paths && !state.error) return <p>正在读取 Agent 目录配置…</p>
+  if (!state.paths) return <div><p role="alert">{state.error}</p><button onClick={state.retry}>重试</button></div>
   return children(state.paths)
 }

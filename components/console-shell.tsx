@@ -660,7 +660,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 </Button>
               </div>
             </div>
-          ) : tab === "ask" ? null : (
+          ) : tab === "ask" ? (
+            !agentPaths?.paths ? (
+              <div className="p-4 text-sm">
+                {agentPaths?.error ? <><p role="alert">{agentPaths.error}</p><Button onClick={agentPaths.retry} size="sm">重试</Button></> : <p role="status">正在读取 Agent 目录配置…</p>}
+              </div>
+            ) : null
+          ) : (
             <>
               {/* files / ask / kb 面板自带头部，避免重复占一行 */}
               {tab !== "files" && tab !== "kb" && (
