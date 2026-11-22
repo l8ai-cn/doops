@@ -80,20 +80,34 @@ export function FilesPanel(props: {
   sessionId: string
   onSessionChange?: (id: string) => void
 }) {
-  return <AgentPathsLoader {...props}>{(paths) => <FilesPanelContent key={JSON.stringify([props.target.cluster, props.target.instance, paths])} {...props} base={paths.workspace_root} />}</AgentPathsLoader>
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {props.onSessionChange && (
+        <label className="flex shrink-0 items-center gap-1.5 border-b px-4 py-2 text-xs text-muted-foreground">
+          session
+          <input
+            value={props.sessionId}
+            onChange={(e) => props.onSessionChange?.(e.target.value)}
+            className="w-40 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
+          />
+        </label>
+      )}
+      <AgentPathsLoader session={props.session} target={props.target}>
+        {(paths) => <FilesPanelContent key={JSON.stringify([props.session.gateway, props.target.cluster, props.target.instance, paths])} {...props} base={paths.workspace_root} />}
+      </AgentPathsLoader>
+    </div>
+  )
 }
 
 function FilesPanelContent({
   session,
   target,
   sessionId,
-  onSessionChange,
   base,
 }: {
   session: Session
   target: Target
   sessionId: string
-  onSessionChange?: (id: string) => void
   base: string
 }) {
   const [cwd, setCwd] = useState(() => workspaceRootPath(sessionId, base) || "")
@@ -461,20 +475,9 @@ function FilesPanelContent({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* 上传工具条（含 session） */}
+      {/* 上传工具条 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-4 py-2">
-        {onSessionChange ? (
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            session
-            <input
-              value={sessionId}
-              onChange={(e) => onSessionChange(e.target.value)}
-              className="w-40 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
-            />
-          </label>
-        ) : (
-          <span className="text-xs font-medium text-muted-foreground">上传到</span>
-        )}
+        <span className="text-xs font-medium text-muted-foreground">上传到</span>
         <code className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline">
           {cwd}
         </code>

@@ -1,5 +1,7 @@
 # Doops WebUI
 
+Agent 目录配置按 Gateway 和目标读取，不随 session 名称输入重新加载。文件页面的 session 输入框在名称为空、目录配置加载中或加载失败时仍可使用，错误显示在输入框旁的面板中。
+
 文件页面使用目标 Agent 的 `DOOPS_WORKSPACE_ROOT/<session>`，知识库页面使用目标 Agent 的 `DOOPS_KB_ROOT`。控制台通过 `doops_node_info` 的 `paths` section 读取实际目录；未配置时分别为 `/root/ws` 和 `/root/kb`。旧版 Agent 返回 `-32602: unsupported node info section` 时沿用这两个默认目录；其他读取配置失败均显示错误，不尝试访问默认目录。
 
 从本机 3000 端口打开控制台时，登录页默认填写 Gateway 地址 `http://127.0.0.1:42222`。手动连接其他 Gateway 后，登录页会记住该地址。

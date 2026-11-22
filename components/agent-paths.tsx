@@ -5,14 +5,13 @@ import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import { parseAgentPaths, type AgentPaths } from "@/lib/agent-paths"
 
-export function AgentPathsLoader({ session, target, sessionId, children }: {
+export function AgentPathsLoader({ session, target, children }: {
   session: Session
   target: Target
-  sessionId: string
   children: (paths: AgentPaths) => ReactNode
 }) {
   const [state, setState] = useState<{ key: string; paths?: AgentPaths; error?: string } | null>(null)
-  const key = JSON.stringify([session.gateway, target.cluster, target.instance, sessionId])
+  const key = JSON.stringify([session.gateway, target.cluster, target.instance])
   useEffect(() => {
     let active = true
     async function load() {
@@ -21,7 +20,7 @@ export function AgentPathsLoader({ session, target, sessionId, children }: {
         if (session.demo) text = "{}"
         else await callTool(session, {
           cluster: target.cluster, instance: target.instance, tool: TOOLS.nodeInfo,
-          arguments: { session_id: sessionId, section: "paths" },
+          arguments: { session_id: "console-agent-paths", section: "paths" },
         }, (event) => {
           if (event.type === "result") text += extractText(event.result)
         })
@@ -38,7 +37,7 @@ export function AgentPathsLoader({ session, target, sessionId, children }: {
     }
     void load()
     return () => { active = false }
-  }, [session, target.cluster, target.instance, sessionId, key])
+  }, [session.gateway, session.demo, target.cluster, target.instance, key])
   if (state?.key !== key) return <p>正在读取 Agent 目录配置…</p>
   if (!state.paths) return <p role="alert">{state.error}</p>
   return children(state.paths)
