@@ -7,22 +7,35 @@
     "build": "next build",
     "start": "next start",
     "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs",
-    "test:console": "node --no-warnings --test lib/agent-ui-display.test.mjs lib/client.test.mjs lib/k8s.test.mjs lib/k8s-overview.test.mjs lib/database-browser.test.mjs lib/database-sql.test.mjs lib/deployment.test.mjs lib/image.test.mjs lib/gateway.test.mjs lib/demo-policy.test.mjs lib/agent-session-transport.test.mjs lib/workspace-path.test.mjs lib/agent-output.test.mjs lib/agent-error.test.mjs lib/files-listing.test.mjs lib/shell-blocks.test.mjs lib/proxy-routes.test.mjs lib/credential-import.test.mjs lib/credential-bundles.test.mjs lib/grant-form.test.mjs lib/admin-views.test.mjs lib/empty-targets.test.mjs lib/console-refresh.test.mjs lib/credential-errors.test.mjs lib/credential-binding.test.mjs lib/console-persistence.test.mjs lib/session-display.test.mjs lib/interrupted-banner.test.mjs lib/unload-journal.test.mjs lib/command-journal.test.mjs lib/console-views.test.mjs lib/server/agent-session.test.mjs lib/server/agent-attachments.test.mjs lib/server/rpc-route.test.mjs lib/server/credential-bundles-route.test.mjs lib/server/session-route.test.mjs lib/server/same-origin.test.mjs lib/files-maintenance.test.mjs lib/network-error.test.mjs lib/markdown-images.test.mjs lib/cicd-gateway.test.mjs lib/server/gateway-proxy.test.mjs lib/gateway-auth.test.mjs lib/changelog.test.mjs lib/whats-new.test.mjs",
+    "test:console": "node --no-warnings --test lib/agent-ui-display.test.mjs lib/machine-text-import.test.mjs lib/client.test.mjs lib/k8s.test.mjs lib/k8s-overview.test.mjs lib/database-browser.test.mjs lib/database-sql.test.mjs lib/deployment.test.mjs lib/image.test.mjs lib/gateway.test.mjs lib/demo-policy.test.mjs lib/agent-session-transport.test.mjs lib/workspace-path.test.mjs lib/agent-output.test.mjs lib/agent-error.test.mjs lib/files-listing.test.mjs lib/shell-blocks.test.mjs lib/proxy-routes.test.mjs lib/credential-import.test.mjs lib/credential-bundles.test.mjs lib/grant-form.test.mjs lib/admin-views.test.mjs lib/empty-targets.test.mjs lib/console-refresh.test.mjs lib/credential-errors.test.mjs lib/credential-binding.test.mjs lib/console-persistence.test.mjs lib/session-display.test.mjs lib/interrupted-banner.test.mjs lib/unload-journal.test.mjs lib/command-journal.test.mjs lib/console-views.test.mjs lib/ui-kit.test.mjs lib/server/agent-session.test.mjs lib/server/agent-attachments.test.mjs lib/server/rpc-route.test.mjs lib/server/credential-bundles-route.test.mjs lib/server/session-route.test.mjs lib/server/same-origin.test.mjs lib/files-maintenance.test.mjs lib/network-error.test.mjs lib/markdown-images.test.mjs lib/cicd-gateway.test.mjs lib/server/gateway-proxy.test.mjs lib/gateway-auth.test.mjs lib/changelog.test.mjs lib/whats-new.test.mjs",
     "test:dosql": "node --no-warnings --test backend/agent/skills/dosql/scripts/dosql-agent.test.mjs backend/agent/skills/dosql/Server/lib/database-operation-executor.test.mjs backend/agent/skills/dosql/Server/lib/resource-discovery.test.mjs"
   },
   "dependencies": {
-    "@agent-cloud/agent-ui": "0.1.4",
+    "@agent-cloud/agent-ui": "0.3.52",
     "@bufbuild/protobuf": "2.16.0",
     "@connectrpc/connect": "2.1.2",
+    "@radix-ui/react-dialog": "^1.3.1",
+    "@radix-ui/react-dropdown-menu": "^2.2.1",
+    "@radix-ui/react-label": "^2.1.17",
+    "@radix-ui/react-scroll-area": "^1.4.0",
+    "@radix-ui/react-separator": "^1.2.0",
+    "@radix-ui/react-slot": "^1.5.0",
+    "@radix-ui/react-tabs": "^1.2.1",
+    "@radix-ui/react-tooltip": "^1.4.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@zip.js/zip.js": "2.25.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.577.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.24.1",
     "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.7.1",
+    "tw-animate-css": "^1.4.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -34,5 +47,10 @@
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@agent-cloud/agent-ui@0.3.52": "patches/@agent-cloud__agent-ui@0.3.52.patch"
+    }
   }
 }

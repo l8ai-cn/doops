@@ -2,7 +2,7 @@
 
 import {
   createAgentWorkbenchRuntime,
-  type AgentSessionRuntimeV2,
+  type ConnectedAgentSessionRuntime,
 } from "@agent-cloud/agent-ui/runtime"
 import type { AgentAttachmentReference } from "@agent-cloud/agent-ui"
 import type { Session, Target } from "./client"
@@ -25,7 +25,7 @@ export function createDoopsAgentUiRuntime(options: {
   sessionId: string
   codeWorkspace?: CodeWorkspaceSource
   readOnly?: boolean
-}): AgentSessionRuntimeV2 {
+}): ConnectedAgentSessionRuntime {
   const codeWorkspace = options.codeWorkspace || createDoopsCodeWorkspace(options)
   const transport = createDoopsAgentSessionTransport(options)
   if (options.readOnly) {
@@ -33,7 +33,7 @@ export function createDoopsAgentUiRuntime(options: {
   }
   return createAgentWorkbenchRuntime({
     sessionId: options.sessionId,
-    title: "DoAgent",
+    title: "AI 助手会话",
     agentLabel: "DoAgent",
     interactionMode: "acp",
     transport,

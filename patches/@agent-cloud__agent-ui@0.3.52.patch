@@ -1,0 +1,17 @@
+diff --git a/chunks/AgentWorkspace-BToyLHcA.js b/chunks/AgentWorkspace-BToyLHcA.js
+index c231431404acb3a9982bc81105bd22fbc272e6b0..7db0cd0afb791c2f856f8fa8dd20bd84784f6432 100644
+--- a/chunks/AgentWorkspace-BToyLHcA.js
++++ b/chunks/AgentWorkspace-BToyLHcA.js
+@@ -391,9 +391,11 @@ function ToolActivityCard({
+       expandable ? /* @__PURE__ */ jsx(ChevronRight, { "aria-hidden": "true", className: "size-3.5 text-muted-foreground transition-transform group-open/tool-item:rotate-90" }) : null
+     ] })
+   ] });
++  const progress = [cleanToolEvidence(item.progress?.stage), cleanToolEvidence(item.progress?.message)].filter(Boolean).join(" · ");
+   const summary = /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+     row,
+-    inlinePreview ? /* @__PURE__ */ jsx(ToolActivityPreviewLine, { preview: inlinePreview }) : null
++    inlinePreview ? /* @__PURE__ */ jsx(ToolActivityPreviewLine, { preview: inlinePreview }) : null,
++    progress ? /* @__PURE__ */ jsx("div", { className: "ml-6 break-words pb-1 text-xs text-muted-foreground", children: progress }) : null
+   ] });
+   if (!expandable) return /* @__PURE__ */ jsx("article", { children: summary });
+   return /* @__PURE__ */ jsxs("details", { className: "group/tool-item", children: [

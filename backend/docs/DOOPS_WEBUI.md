@@ -1,14 +1,38 @@
 # Doops WebUI
 
-登录后的主导航按工作范围组织。顶栏「目标运维」面向选中的 Agent，「当前目标」显示所选 Agent 的运行状态和操作入口，AI 助手可直接打开。「操作资源」包含数据库、网站、Kubernetes、镜像和文件；「运维工具」包含凭据、审计、知识库和高级终端。
+从本机 3000 端口打开控制台时，登录页默认填写 Gateway 地址 `http://127.0.0.1:42222`。手动连接其他 Gateway 后，登录页会记住该地址。
 
-「资产」按平台、机器和集群范围展示。「发布部署」集中工作负载发布、Agent 升级、首次接入和 CI/CD 接入。「平台管理」仅对管理员显示，负责 Gateway 账号、实例、令牌和平台配置。
+登录页使用 14 px 文字，表单标签和输入提示采用浅色，博客链接使用浅蓝色并带下划线。
+
+登录后的顶栏以 34 px 高显示 DoOps 标志与字标，右上角是目标 Agent 选择器：显示当前目标的集群/实例和在线状态，可切换目标或返回全部 Agent。登录后默认进入「首页」，可查看在线连接、活跃会话、机器和集群规模、正在执行、近期执行，以及集群概览和近期活动。未连接 Agent 时仍可查看首页。首页提供 AI 助手、文件管理、知识库、终端和 CI/CD 接入快捷入口。
+
+主导航是一行拉平的功能入口，不出现「Agent 工作区」「平台控制面」这类内部工作台名称，也没有展开出来的第二行。窗口变窄时导航不换行、不堆叠：放不下的入口收进行尾的「更多」下拉菜单，当前页面对应的入口仍保持高亮。下拉菜单基于 Radix Primitives（shadcn/ui 同款底层），支持方向键、Enter、Esc 和焦点回填。目标类入口为：首页、概览、AI 助手、终端、数据库、网站、Kubernetes、镜像、文件、Agent 资产、Agent 监控、凭据、审计记录、知识库；平台类入口紧随其后，以细分隔线相隔：平台监控、机器台账、集群台账、业务系统、Agent 资产分配、发布工作负载、升级 Agent、首次接入、CI/CD 接入、实例、配置中心、用户、权限、令牌、代理路由。其中「Agent 资产分配」和「实例」及其后的管理项仅对管理员显示。目标相关入口共享右上角选择的目标；尚未选定 Agent 时先显示 Agent 目录，选定后直达所点工具。「发布工作负载」和「升级 Agent」需要目标，未选目标时置灰。刷新或断线后，仍获授权的目标会保留。离线时导航仍可使用，可查看登记资产、历史指标、凭据和审计记录；需要 Agent 执行的工具会提示等待连接，当前目标重新上线后自动恢复。
+
+「平台监控」汇总当前可见范围的资产、异常和采集中断，页面内的看板视图（概览、拓扑、监控、巡检、覆盖率）切换的是同一份数据，不属于导航层级。「机器台账」「集群台账」「业务系统」「Agent 资产分配」各自直接打开对应台账分区，页面内不再重复一组页签。发布与管理的各个分区同样直接出现在顶部导航，页面内不再重复页签。
+
+## 前端组件层
+
+控制台的界面由 shadcn/ui 风格的基础组件组成，底层是 Radix Primitives，样式仍用 Tailwind v4 与仓库既有主题令牌，不引入自带设计语言的整套 UI 框架。
+
+- 布局：`components/ui/layout.tsx` 提供 `Stack`、`Inline`、`Grid`、`Container`、`Spacer`，页面用它们表达纵向节奏、工具行和卡片墙，不再手写 `grid-cols-*` 字符串
+- 容器：`Card` 系列（`components/ui/card.tsx`）、`Badge`、`Separator`
+- 交互：`DropdownMenu`（`更多` 菜单）、`Tabs`、`Tooltip`、`ScrollArea`，以及基于 `react-resizable-panels` 的 `ResizablePanelGroup` 分栏
+- 类名合并统一走 `lib/cn.ts` 的 `cn()`，变体矩阵用 `class-variance-authority`
+
+新增页面应优先复用这些组件；需要新原语时在同一目录按同样方式封装 Radix，不另起一套样式体系。
+
+控制台的下拉选项使用跟随主题的菜单，支持方向键选择、Enter 确认和 Esc 收起。资产看板仅有全平台可见范围时，直接显示范围名称。
+
+控制台导航、目标选择器、AI 助手的状态与模型标签以及消息输入框均使用 14 px 字号。
+
+目标选择器的在线状态表示 Agent 已连接 Gateway。「AI 助手会话」中的连接状态表示控制台能否读取该会话并接收事件。AI 助手的模型标签显示目标已下发的模型。旧版 Agent 在启动后收到凭据时，控制台会核对目标上报的模型列表和连接状态。读取会话状态失败时，可在「目标运维 → 审计记录」查看该目标的请求记录。
 
 ## 资产台账
 
-登录 Gateway 后点顶栏的「资产」。即使机器尚未接入 Agent，管理员也可以先登记配置。普通用户看到自己获授权目标关联的资产。
+登录 Gateway 后打开顶部导航的「机器台账」。即使机器尚未接入 Agent，管理员也可以先登记配置。普通用户看到自己获授权目标关联的资产。
 
 - **机器**支持手工新增、搜索和编辑。物理机登记物理核心数，虚拟机登记 vCPU 数，内存与磁盘容量单位为 GiB。虚拟机可引用已登记的宿主。详情页可反查虚拟机、宿主和手工关联的 K8s Node。修改规格会更新资产记录。
+- **文本导入**支持在机器台账或手工新增页粘贴多行清单。机器行格式为 `管理IPv4 账号 密码 [内网IPv4] [SSH端口]`，也支持 `-p 端口`；仅登记资产时可只填写管理 IP。分组名单独占一行（有空格的名称可用方括号包围），作用到下一分组。新机器以管理 IP 生成编号，可选物理机或虚拟机，分组、内网地址和显式端口保存在显示名称中。已有机器按唯一管理 IP 匹配。默认只导入资产，勾选「同时保存登录账号和密码」才会将登录资料送交 Gateway。核对右侧字段后点「预览导入」，再确认写入。
 - **CSV 导入**先选择导入内容。选「机器台账」后，使用 UTF-8 模板填写 `asset_id,name,kind,address,cpu_count,memory_gib,disk_gib,host_asset_id`，上传后点「预览 CSV」。必填列为编号、名称和类型。`physical` 表示物理机，`vm` 表示虚拟机。宿主可以出现在同一批次的任意位置。确认前核对可新增、重复和错误行数，只导入可新增记录。每批最多 2,000 行、1 MiB。按批次号回查能看到台账写入结果和本批保存的机器密码数。
 - **机器登录凭据**可从已有机器详情点击「添加登录凭据」，填写账号、密码，预览后确认。批量处理时选择「机器和登录凭据」：已有机器可用 `asset_id,username,password` 补录，新增机器在 CSV 中一并填写 `name,kind`。XLSX 可以按资产编号或台账中唯一匹配的管理 IP 关联，预览时请核对跳过的源行。每个账号单独计数。相同凭据再次上传会显示「已有」，密码冲突会阻止确认。管理员可以查看已保存的账号与本批回执。密码由 Gateway 加密保存。
 - **集群台账**中点「从 Agent 导入」，填写资产编号、名称和来源 Agent。指定命名空间时仅验证该空间的 Pod 列举权限；留空时读取 Namespace 对象。先预览再确认，Gateway 在确认时重新读取。集群列表保存来源、验证时间和命名空间，断线后仍可查询。展开命名空间可进入对应范围的实时工作负载。
@@ -16,11 +40,15 @@
 
 迁移顺序、接口和权限见 [API 指南](DOOPS_API_GUIDE.md#资产台账)。
 
-### 从平台看板进入集群
+打开顶部导航的「Agent 资产分配」，选择已登记的 Agent，按机器、集群或业务系统逐项分配。每项资产可以供多个 Agent 查看。撤销仅影响所选目标的显式分配，台账直接关联由对应资产详情维护。登录凭据及目标授权沿用各自的管理流程。
 
-顶栏「资产」默认打开平台看板。集群对比按稳定资产编号统计多个 Agent 来源，列出可见机器、在役系统、命名空间和最后核验时间。点集群名称进入该集群，点未关联机器可回到它的台账详情。集群拓扑支持按关系层或命名空间筛选，从数据库反查依赖应用，以及查看关系证据。
+### 在资产看板切换范围
 
-平台巡检在「资产 → 平台看板 → 巡检」，集群巡检在对应集群详情的「巡检」。进入集群详情后，一级导航高亮「集群台账」；返回按钮回到打开该详情的平台看板或集群台账。 从机器详情点「进入目标运维」，或从集群命名空间点工作负载入口，页面会切换到该 Agent 的操作区。目标选择器旁的返回按钮回到原资产，恢复筛选和展开位置。主动切换 Agent 后，操作区采用新目标。
+「平台监控」用一组页签查看概览、拓扑、监控、巡检和覆盖率。「看板范围」默认显示全平台可见资产，选择集群可在当前页签查看该集群。集群对比按稳定资产编号统计多个 Agent 来源，列出可见机器、在役系统、命名空间和最后核验时间。点集群名称进入该集群，点未关联机器可回到它的台账详情。集群拓扑支持按关系层或命名空间筛选，从数据库反查依赖应用，以及查看关系证据。
+
+从集群台账点「打开集群看板」进入同一个资产看板，范围自动选中该集群。点「集群台账」可回到原集群列表，恢复搜索和展开位置。
+
+从机器详情点「进入目标运维」，或从集群命名空间点工作负载入口，页面会切换到该 Agent 的操作区。目标选择器旁的返回按钮回到原资产，恢复筛选和展开位置。主动切换 Agent 后，操作区采用新目标。
 
 在「业务系统」登记系统编号、负责人和服役状态，再添加来源目标、命名空间、应用与可选数据库。保存表示操作员已核对所填关系。管理员维护记录，其他用户仅能查询自己目标内的部署。
 
@@ -28,9 +56,9 @@
 
 从集群概览进入「拓扑」，选择已纳管的命名空间获取运行快照。管理员将已登记的应用绑定到实际工作负载 UID；有对应的 Node 与机器台账关系后，就可以从宿主机反查受影响的业务系统。Agent 掉线时请核对最后一次成功观测时间。
 
-平台看板的「覆盖率」分别展示在役服务器、业务系统的分母、已覆盖数和距 80% 的差额。首次进入可选择「当前台账预览」核查范围，管理员可确认宿主关系并冻结基线。从已有基线导出的 CSV 使用当前用户可见的证据。分母为空时界面显示无适用资产。
+资产看板的「覆盖率」分别展示在役服务器、业务系统的分母、已覆盖数和距 80% 的差额。首次进入可选择「当前台账预览」核查范围，管理员可确认宿主关系并冻结基线。从已有基线导出的 CSV 使用当前用户可见的证据。分母为空时界面显示无适用资产。
 
-「监控」按目标、资产及时间范围读取已采集样本。原生 Pod 采集依赖目标的 Kubernetes 指标读取权限。主机、设备和业务计数器需要对应的采集源。可按序列查看单位、数据中断、告警及阈值规则。
+「平台监控」汇总当前可见范围的资产、异常和采集中断。也可在「按采集目标查看指标」选择该范围内的来源。从主导航进入「Agent 监控」可按资产和时间范围读取当前目标的已采集样本。登记机器后仍需由对应的采集源上报指标。原生 Pod 采集依赖目标的 Kubernetes 指标读取权限。主机、设备和业务计数器需要对应的采集源。可按序列查看单位、数据中断、告警及阈值规则。
 
 平台和集群概览均可直接查看未恢复的异常、采集中断和本周巡检。点异常明细可打开对应来源和时窗内的曲线；点周检记录可进入同一范围的报告与整改。本周无应检资产、证据不足、漏检和已检分别显示。
 
@@ -252,9 +280,11 @@ and document previews use bounded reading widths. Desktop and mobile share the s
 components. Use `components/ui.tsx` for buttons, inputs, selects, textareas, segmented
 controls and page tabs; keep business behavior and permission checks in the host panel.
 
-The pinned `@agent-cloud/agent-ui@0.1.4` display patch is tracked in `patches/`
-and applied by pnpm in local and Docker builds. Tool activity remains in the
-conversation list; the developer trace retains independent interactions without
-rendering the same execution/tool items again. Titles that repeat the workspace
-path or translated tool label are omitted; tool results, actions and textual
-progress stages/messages remain available, including progress without a fraction.
+The pinned `@agent-cloud/agent-ui@0.3.52` display patch is tracked in `patches/`
+and applied by pnpm in local and Docker builds through `pnpm.patchedDependencies`
+in `package.json`. Tool activity remains in the conversation list, and 0.3 keeps
+execution evidence in the "Execution trace" drawer whose trigger counts interactions
+and runs, so tool rows are not rendered a second time inline. Titles that repeat the
+workspace path or translated tool label are omitted by the SDK; the patch keeps
+textual progress stages/messages on the tool row, including progress without a
+fraction.

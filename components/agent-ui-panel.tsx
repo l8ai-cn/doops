@@ -133,13 +133,12 @@ export function AgentUiPanel({
           </Button>
         </div>
       }
-      defaultView="conversation"
+      defaultMode="work"
       locale="zh-CN"
       presentation="developer"
       runtime={runtime}
       sessionId={sessionId}
       codeWorkspace={codeWorkspace}
-      defaultWorkbenchMode="work"
       workspaceArtifacts={workspaceArtifacts}
       showFullscreen={false}
     />

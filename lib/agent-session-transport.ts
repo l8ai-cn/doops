@@ -1,6 +1,6 @@
 "use client"
 
-import { fromJson, toJson, type DescMessage, type JsonValue, type MessageShape } from "@bufbuild/protobuf"
+import { create, fromJson, toJson, type DescMessage, type JsonValue, type MessageShape } from "@bufbuild/protobuf"
 import { Code, ConnectError } from "@connectrpc/connect"
 import type { AgentWorkbenchSessionTransport } from "@agent-cloud/agent-ui/runtime"
 import {
@@ -8,6 +8,7 @@ import {
   CommandReceiptSchema,
   SessionCursorSchema,
   SessionDeltaBatchSchema,
+  SessionHistoryPageSchema,
   SessionSnapshotSchema,
 } from "@agent-cloud/agent-ui/protocol"
 import type { Session, Target } from "./client"
@@ -66,6 +67,11 @@ export function createDoopsAgentSessionTransport({ session, target, sessionId }:
       const query = new URLSearchParams({ ...scope, view: "snapshot" })
       const response = await request(`/api/agent-sessions?${query}`, { signal })
       return readMessage(response, SessionSnapshotSchema, signal)
+    },
+    async getHistoryPage(_signal, beforeSequence = BigInt(0)) {
+      // DoOps 快照从不报告更早的历史（hasOlderItems 恒为 false），runtime 因此不会请求
+      // 分页；返回空页保持传输接口完整，而不是编造或丢弃真实历史。
+      return create(SessionHistoryPageSchema, { nextBeforeSequence: beforeSequence })
     },
     async *streamDeltas(cursor, signal) {
       const query = new URLSearchParams({

@@ -167,16 +167,15 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               key={`deploy-${target.key}-${sessionId}`}
               className="agent-ui h-full min-h-0"
               clientLabel="doops-console"
-              defaultView="conversation"
+              defaultMode="work"
               locale="zh-CN"
               presentation="developer"
               runtime={runtime}
               sessionId={sessionId}
               readOnly={readOnly}
               codeWorkspace={readOnly ? undefined : codeWorkspace}
-              defaultWorkbenchMode="work"
               showFullscreen={false}
-              composer={<RunStatus outcome={outcome} stopError={stopError} onOpenCredentials={onOpenCredentials} />}
+              composer={{ header: <RunStatus outcome={outcome} stopError={stopError} onOpenCredentials={onOpenCredentials} /> }}
             />
           </div>
         </div>

@@ -9,6 +9,7 @@ import {
   MessageRole,
   SessionCursorSchema,
   SessionDeltaBatchSchema,
+  SessionHistoryPageSchema,
   SessionSnapshotSchema,
   SessionStatus,
   TimelineItemStatus,
@@ -77,6 +78,15 @@ class DemoAgentSession implements AgentWorkbenchSessionTransport {
 
   async getSnapshot(): Promise<SessionSnapshot> {
     return clone(SessionSnapshotSchema, this.state.snapshot)
+  }
+
+  async getHistoryPage(_signal?: AbortSignal, beforeSequence = BigInt(0)) {
+    // 演示会话只保留当前快照，没有更早的分页；返回空页保持传输接口完整。
+    return create(SessionHistoryPageSchema, {
+      sessionId: this.state.snapshot.sessionId,
+      streamEpoch: this.state.snapshot.streamEpoch,
+      nextBeforeSequence: beforeSequence,
+    })
   }
 
   async *streamDeltas(cursor: SessionCursor, signal: AbortSignal): AsyncIterable<SessionDeltaBatch> {
